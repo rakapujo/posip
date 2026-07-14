@@ -46,5 +46,8 @@ graphify-out/
 **/Homestead.yaml
 **/auth.json
 
-# Old package names
+# Installer zip (published via GitHub Releases, not git)
+installer/*.zip
 **/sipos-shared-hosting.zip
+**/posip-installer.zip
+**/posip-shared-hosting.zip
