@@ -1,0 +1,23 @@
+node_modules
+coverage
+*.log*
+.nuxt
+.nitro
+.cache
+.output
+.env
+dist
+.DS_Store
+.idea
+.eslintcache
+api-generator/typedoc.json
+**/.DS_Store
+
+# Backup snapshots (bulk-copy recovery)
+src.backup-*/
+
+# Vite temp files
+*.timestamp-*
+
+# Graphify output
+graphify-out/

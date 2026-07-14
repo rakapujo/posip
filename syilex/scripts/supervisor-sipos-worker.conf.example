@@ -1,0 +1,31 @@
+; Supervisor configuration for SIPOS queue worker
+;
+; USAGE:
+; 1. Copy file ini ke /etc/supervisor/conf.d/sipos-worker.conf
+; 2. Edit path dengan lokasi aktual project
+; 3. Reload supervisor:
+;    sudo supervisorctl reread
+;    sudo supervisorctl update
+;    sudo supervisorctl start sipos-worker:*
+;
+; VERIFY jalan:
+;    sudo supervisorctl status sipos-worker:*
+
+[program:sipos-worker]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/sipos/artisan queue:work --sleep=3 --tries=3 --max-time=3600 --queue=default
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/www/sipos/storage/logs/worker.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=10
+stopwaitsecs=3600
+
+; ALTERNATIF jika pakai Redis queue (lebih cepat):
+; Ubah .env: QUEUE_CONNECTION=redis
+; command=php /var/www/sipos/artisan queue:work redis --sleep=3 --tries=3 --max-time=3600

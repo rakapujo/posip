@@ -1,0 +1,5 @@
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+python-escpos==3.1.*
+pywin32>=308
+pyinstaller>=6.12

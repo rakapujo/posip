@@ -1,0 +1,1 @@
+import{e as a}from"./index-DO5hXg_b.js";const i={getAll:(e={})=>a.get("/serial-intakes",{params:e}),get:e=>a.get(`/serial-intakes/${e}`),create:e=>a.post("/serial-intakes",e),calculate:e=>a.post("/serial-intakes/calculate",e),update:(e,t)=>a.put(`/serial-intakes/${e}`,t),delete:e=>a.delete(`/serial-intakes/${e}`),approve:e=>a.post(`/serial-intakes/${e}/approve`)};export{i as s};

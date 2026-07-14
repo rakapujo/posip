@@ -1,0 +1,1 @@
+import{e as s}from"./index-DO5hXg_b.js";const u={getAll:(e={})=>s.get("/users",{params:e}),get:e=>s.get(`/users/${e}`),create:e=>s.post("/users",e),update:(e,t)=>s.put(`/users/${e}`,t),delete:e=>s.delete(`/users/${e}`),toggleStatus:e=>s.patch(`/users/${e}/toggle-status`),getList:(e={})=>s.get("/users/list",{params:e}),getRoles:()=>s.get("/users/roles")};export{u};

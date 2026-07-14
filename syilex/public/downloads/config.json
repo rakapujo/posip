@@ -1,0 +1,11 @@
+{
+    "port": 5123,
+    "host": "127.0.0.1",
+    "printers": {
+        "network": [
+            {"name": "Virtual Thermal", "ip": "127.0.0.1", "port": 9100}
+        ]
+    },
+    "paper_width": 80,
+    "char_per_line": 48
+}

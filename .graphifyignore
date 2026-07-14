@@ -1,0 +1,32 @@
+﻿# deps & build
+vendor/
+node_modules/
+dist/
+storage/
+bootstrap/cache/
+public/build/
+public/hot/
+*.min.js
+*.map
+graphify-out/
+
+# backend noise / already-understood layers
+syilex/vendor/
+syilex/storage/
+syilex/node_modules/
+syilex/public/
+syilex/tests/
+syilex/database/
+syilex/config/
+syilex/resources/
+syilex/scripts/
+syilex/print-service/
+syilex/bootstrap/
+
+# frontend noise
+syilex-frontend/node_modules/
+syilex-frontend/dist/
+syilex-frontend/e2e/
+syilex-frontend/tests/
+syilex-frontend/.vscode/
+syilex-frontend/public/

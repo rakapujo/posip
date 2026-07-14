@@ -1,0 +1,50 @@
+# Dependencies & builds
+**/node_modules/
+**/vendor/
+**/dist/
+**/coverage/
+**/.phpunit.cache/
+**/.phpunit.result.cache
+
+# Env & secrets
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.production.example
+
+# Laravel runtime
+**/storage/logs/*.log
+**/storage/pail/
+**/storage/*.key
+**/storage/installed
+**/bootstrap/cache/*.php
+**/public/hot
+**/public/storage
+**/public/build
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.fleet/
+.zed/
+.nova/
+*.log
+
+# Nested repo backups (local only)
+.git-backup-*/
+**/.git.bak-*/
+
+# Generated / test artifacts
+graphify-out/
+**/.graphify_*/
+**/test-results/
+**/playwright-report/
+**/.eslintcache
+**/Homestead.json
+**/Homestead.yaml
+**/auth.json
+
+# Old package names
+**/sipos-shared-hosting.zip

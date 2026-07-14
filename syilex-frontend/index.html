@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+      <meta charset="UTF-8">
+      <link rel="icon" href="/favicon.ico">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>POSIP - Point of Sales</title>
+      <link href="https://fonts.cdnfonts.com/css/lato" rel="stylesheet">
+      <style id="preloader-style">
+          #app-preloader {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              width: 100vw;
+              height: 100vh;
+              background: #f8fafc;
+              position: fixed;
+              top: 0;
+              left: 0;
+              z-index: 99999;
+          }
+          #app-preloader .spinner {
+              box-sizing: border-box;
+              width: 40px;
+              height: 40px;
+              border: 3px solid #e2e8f0;
+              border-top-color: #3b82f6;
+              border-radius: 50%;
+              animation: spin 0.8s linear infinite;
+          }
+          #app-preloader .label {
+              margin-top: 12px;
+              font-family: system-ui, -apple-system, sans-serif;
+              font-size: 14px;
+              color: #94a3b8;
+          }
+          @keyframes spin {
+              to { transform: rotate(360deg); }
+          }
+          @media (prefers-color-scheme: dark) {
+              #app-preloader { background: #1e293b; }
+              #app-preloader .spinner { border-color: #334155; border-top-color: #60a5fa; }
+              #app-preloader .label { color: #64748b; }
+          }
+      </style>
+</head>
+
+<body>
+      <!-- Preloader: OUTSIDE #app so Vue mount doesn't remove it.
+           hideHtmlPreloader() in App.vue fades it out after settings load. -->
+      <div id="app-preloader">
+          <div class="spinner"></div>
+          <div class="label">Memuat aplikasi...</div>
+      </div>
+
+      <!-- Vue app mount point -->
+      <div id="app"></div>
+
+      <script type="module" src="/src/main.js"></script>
+      <script>
+          // Fallback: hide preloader after 10s even if Vue fails to mount
+          setTimeout(function() {
+              var el = document.getElementById('app-preloader');
+              if (el) el.style.display = 'none';
+          }, 10000);
+      </script>
+</body>
+
+</html>
