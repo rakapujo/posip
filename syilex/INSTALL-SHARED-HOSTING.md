@@ -25,7 +25,7 @@ Output: `installer/posip-installer.zip` (berisi `INSTALL.md`, `INSTALL.txt`, dan
 
 ## Langkah 1: Download / Ambil Paket
 
-Ambil file `posip-installer.zip` dari folder `installer/` (hasil rebuild) atau dari [halaman releases](https://github.com/rakapujo/sipos-baru/releases).
+Download **`posip-installer.zip`** dari [GitHub Releases](https://github.com/rakapujo/posip/releases) (Assets), atau bangun ulang lokal ke `installer/posip-installer.zip` dengan script di atas.
 
 File ini sudah berisi:
 - Semua kode POSIP + SPA frontend (`public/`)
