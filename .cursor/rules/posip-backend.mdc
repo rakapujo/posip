@@ -1,0 +1,60 @@
+---
+description: POSIP Laravel — Actions, permissions, stock, API patterns
+globs: syilex/**
+alwaysApply: false
+---
+
+# POSIP backend
+
+## Layering
+
+```
+Route → Controller (thin) → Action (write + transaction) → Model
+                         ↘ Service (HPP, Promo, Settings, …)
+```
+
+- Actions: `app/Actions/{Domain}/{Verb}Action.php`
+- Response: `BaseApiController` (`success` / `created` / `forbidden` / …)
+
+## Exceptions (422)
+
+- `BusinessException`, `StockInsufficientException`, `DocumentStateException`
+- Idempotency conflict = middleware inline — **bukan** exception class
+- Jangan catch `\Exception` generik di controller (kecuali infra)
+
+## Permission
+
+- Check: `auth()->user()->can('…')`
+- Seed: `database/seeders/RolePermissionSeeder.php`
+- Laporan: `laporan.{penjualan|pembelian|keuangan|performa|promo|inventory}`; export = `laporan.export`; `laporan.view` = Dashboard saja
+- Nilai sensitif (orthogonal): `stok.view_hpp`, `po.view_harga`, `serial-intake.view_harga`, `hutang.view_nominal` — view yang strip **WAJIB** strip export
+
+## Feature flags
+
+- Serial: `modules.elektronik_enabled` + middleware `feature.elektronik`
+- Retur free: `returns.sales_allow_free` / `returns.purchase_allow_free`
+
+## Write path
+
+- Multi-table → `DB::transaction()` + `lockForUpdate` bila race
+- Touch stock → pair `stock_card` (sering skip observer + `StockCard::record()`)
+- ULID di API; `$hidden = ['id']`; `$fillable` explicit
+- Filter DATETIME: akhir `23:59:59` / `whereDate()` / trait `HasDateRangeScope`
+
+## Scheduler
+
+- `price-change:apply` di `routes/console.php` + cron — bukan middleware API
+
+## Test
+
+- PHPUnit DB: `posip_db_test`
+- Action baru → feature test + permission
+
+## JANGAN
+
+- Trust promo/diskon 1–4 dari FE
+- Mutasi `inventory_stock` tanpa `stock_card`
+- `queue:sync` di production
+- Endpoint tanpa `->can()` + seeder
+
+Detail: `docs/ai/backend.md` · `docs/ai/business-rules.md`

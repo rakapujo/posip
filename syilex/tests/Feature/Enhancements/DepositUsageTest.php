@@ -25,9 +25,11 @@ class DepositUsageTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Permission::firstOrCreate(['name' => 'deposit-supplier.view', 'guard_name' => 'web']);
+        foreach (['deposit-supplier.view', 'hutang.view_nominal'] as $permission) {
+            Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
+        }
         $this->viewer = User::factory()->create();
-        $this->viewer->givePermissionTo('deposit-supplier.view');
+        $this->viewer->givePermissionTo(['deposit-supplier.view', 'hutang.view_nominal']);
 
         $this->supplierId = DB::table('master_supplier')->insertGetId([
             'ulid' => (string) Str::ulid(),
@@ -270,22 +272,15 @@ class DepositUsageTest extends TestCase
     }
 
     /**
-     * SupplierDeposit::use() — pemakaian MELEBIHI sisa di-cap ke sisa (tidak boleh
-     * saldo negatif), status jadi used_all. Ini guard "melebihi ditolak" di level
-     * model: actual_used = min(amount, sisa) dan saldo TIDAK pernah < 0.
+     * SupplierDeposit::use() — pemakaian melebihi sisa harus gagal (hard fail).
      */
-    public function test_model_use_melebihi_sisa_dibatasi_tidak_negatif(): void
+    public function test_model_use_melebihi_sisa_throws(): void
     {
         $dep = $this->createDeposit(500_000, 200_000); // sisa 300k
         $model = \App\Models\SupplierDeposit::find($dep['id']);
 
-        $actual = $model->use(1_000_000); // minta lebih dari sisa 300k
-
-        $this->assertEquals(300_000.0, $actual); // dibatasi ke sisa
-        $fresh = \App\Models\SupplierDeposit::find($dep['id']);
-        $this->assertEquals(500_000, $fresh->nominal_terpakai); // 200k + 300k
-        $this->assertEquals(0, $fresh->sisa_deposit); // tidak negatif
-        $this->assertEquals('used_all', $fresh->status);
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $model->use(1_000_000);
     }
 
     /**

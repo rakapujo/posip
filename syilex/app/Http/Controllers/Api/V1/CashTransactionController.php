@@ -11,6 +11,7 @@ use App\Models\PosCashTransaction;
 use App\Models\PosTerminalShift;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class CashTransactionController extends BaseApiController
 {
@@ -27,6 +28,14 @@ class CashTransactionController extends BaseApiController
         $shiftId = $request->input('shift_id');
         if (!$shiftId) {
             return $this->error('shift_id is required', 422);
+        }
+
+        $shift = PosTerminalShift::find($shiftId);
+        if (!$shift) {
+            return $this->error('Shift tidak ditemukan', 404);
+        }
+        if ($denied = $this->authorizeShiftAccess($shift)) {
+            return $denied;
         }
 
         // Get payment method IDs by type
@@ -117,7 +126,7 @@ class CashTransactionController extends BaseApiController
         return $this->success([
             'tunai' => $tunaiTx,
             'non_tunai' => $nonTunaiTx,
-            'subtotal_tunai' => $tunaiTx->sum(fn ($t) => $t['tipe'] === 'kas_keluar' ? -$t['nominal'] : $t['nominal']),
+            'subtotal_tunai' => $tunaiTx->sum(fn ($t) => in_array($t['tipe'], ['kas_keluar', 'refund_retur'], true) ? -$t['nominal'] : $t['nominal']),
             'subtotal_non_tunai' => $nonTunaiTx->sum('nominal'),
         ]);
     }
@@ -144,10 +153,19 @@ class CashTransactionController extends BaseApiController
             return $this->error('Nominal harus lebih dari 0', 422);
         }
 
-        // Verify shift is active
+        // Verify shift is active and caller owns it
         $shift = PosTerminalShift::find($validated['shift_id']);
         if (!$shift || !$shift->isActive()) {
             return $this->error('Shift tidak aktif', 422);
+        }
+        if ($shift->user_id !== auth()->id()) {
+            return $this->error('Anda tidak memiliki akses ke shift ini', 403);
+        }
+        if ((int) $validated['terminal_id'] !== (int) $shift->terminal_id) {
+            return $this->error('Terminal tidak sesuai dengan shift aktif', 422);
+        }
+        if ($shift->isLocked()) {
+            return $this->error('Shift sedang dikunci', 422);
         }
 
         // Keterangan wajib for kas_keluar
@@ -155,34 +173,35 @@ class CashTransactionController extends BaseApiController
             return $this->error('Keterangan wajib diisi untuk kas keluar', 422);
         }
 
-        // Setor awal: allow update if existing nominal is 0, block if > 0
-        if ($validated['tipe'] === 'setor_awal') {
-            $existing = PosCashTransaction::byShift($validated['shift_id'])
-                ->setorAwal()
-                ->first();
+        return DB::transaction(function () use ($validated) {
+            if ($validated['tipe'] === 'setor_awal') {
+                $existing = PosCashTransaction::byShift($validated['shift_id'])
+                    ->setorAwal()
+                    ->lockForUpdate()
+                    ->first();
 
-            if ($existing) {
-                if ((float) $existing->nominal > 0) {
-                    return $this->error('Setor awal sudah dilakukan untuk shift ini', 422);
+                if ($existing) {
+                    if ((float) $existing->nominal > 0) {
+                        return $this->error('Setor awal sudah dilakukan untuk shift ini', 422);
+                    }
+                    $existing->update([
+                        'nominal' => $validated['nominal'],
+                        'keterangan' => $validated['keterangan'] ?? $existing->keterangan,
+                    ]);
+
+                    return $this->success([
+                        'transaction' => $existing->fresh(),
+                    ], 'Setor awal berhasil diperbarui', 200);
                 }
-                // Update existing setor_awal (was 0)
-                $existing->update([
-                    'nominal' => $validated['nominal'],
-                    'keterangan' => $validated['keterangan'] ?? $existing->keterangan,
-                ]);
-                return $this->success([
-                    'transaction' => $existing->fresh(),
-                ], 'Setor awal berhasil diperbarui', 200);
             }
-        }
 
-        $validated['created_by'] = auth()->id();
+            $validated['created_by'] = auth()->id();
+            $transaction = PosCashTransaction::create($validated);
 
-        $transaction = PosCashTransaction::create($validated);
-
-        return $this->success([
-            'transaction' => $transaction,
-        ], 'Transaksi kas berhasil dicatat', 201);
+            return $this->success([
+                'transaction' => $transaction,
+            ], 'Transaksi kas berhasil dicatat', 201);
+        });
     }
 
     /**
@@ -199,23 +218,22 @@ class CashTransactionController extends BaseApiController
             return $this->error('shift_id is required', 422);
         }
 
+        $shift = PosTerminalShift::find($shiftId);
+        if (!$shift) {
+            return $this->error('Shift tidak ditemukan', 404);
+        }
+        if ($denied = $this->authorizeShiftAccess($shift)) {
+            return $denied;
+        }
+
         // Cash transactions from pos_cash_transactions
         $transactions = PosCashTransaction::byShift($shiftId)->get();
         $setorAwal = (float) $transactions->where('tipe', 'setor_awal')->sum('nominal');
         $kasMasuk = (float) $transactions->where('tipe', 'kas_masuk')->sum('nominal');
 
-        // kas_keluar total (includes auto-created refund entries)
-        $kasKeluarAll = $transactions->where('tipe', 'kas_keluar');
-
-        // Separate refund entries (keterangan starts with "Refund retur")
-        $refundTunai = (float) $kasKeluarAll->filter(function ($tx) {
-            return str_starts_with($tx->keterangan ?? '', 'Refund retur');
-        })->sum('nominal');
-
-        // Manual kas keluar (excluding refund)
-        $kasKeluarManual = (float) $kasKeluarAll->filter(function ($tx) {
-            return !str_starts_with($tx->keterangan ?? '', 'Refund retur');
-        })->sum('nominal');
+        // Manual kas keluar vs auto-created refund entries (tipe berbeda sejak Wave B)
+        $kasKeluarManual = (float) $transactions->where('tipe', 'kas_keluar')->sum('nominal');
+        $refundTunai = (float) $transactions->where('tipe', 'refund_retur')->sum('nominal');
 
         // Get cash payment method IDs (metode = 'tunai')
         $tunaiMethodIds = MasterMetodePembayaran::where('metode', 'tunai')->pluck('id')->toArray();
@@ -263,5 +281,20 @@ class CashTransactionController extends BaseApiController
             'total_penjualan' => $penjualanTunai + $penjualanNonTunai,
             'has_setor_awal' => $transactions->where('tipe', 'setor_awal')->isNotEmpty(),
         ]);
+    }
+
+    /**
+     * Read access: shift owner or supervisor with terminal.force-release.
+     */
+    private function authorizeShiftAccess(PosTerminalShift $shift): ?JsonResponse
+    {
+        if ($shift->user_id === auth()->id()) {
+            return null;
+        }
+        if (auth()->user()->can('terminal.force-release')) {
+            return null;
+        }
+
+        return $this->error('Anda tidak memiliki akses ke shift ini', 403);
     }
 }

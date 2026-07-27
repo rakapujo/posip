@@ -203,7 +203,6 @@ class InstallerController extends Controller
             'rounding_sales_precision' => '100',
             'negative_mode' => 'block',
             'discount_mode' => 'recursive',
-            'cost_allocation_mode' => 'by_value',
             'price_input_mode' => 'auto',
             'elektronik_enabled' => true,
         ]);
@@ -227,7 +226,6 @@ class InstallerController extends Controller
             'rounding_sales_precision' => 'required|in:1,10,100,500,1000',
             'negative_mode' => 'required|in:block,warn',
             'discount_mode' => 'required|in:recursive,sum',
-            'cost_allocation_mode' => 'required|in:by_value,equal',
             'price_input_mode' => 'required|in:auto,manual',
         ]);
 
@@ -758,7 +756,6 @@ class InstallerController extends Controller
             'rounding.sales_precision' => $tax['rounding_sales_precision'] ?? 100,
             'stock.negative_mode' => $tax['negative_mode'] ?? 'block',
             'calculation.discount_mode' => $tax['discount_mode'] ?? 'recursive',
-            'calculation.cost_allocation_mode' => $tax['cost_allocation_mode'] ?? 'by_value',
             'product.price_input_mode' => $tax['price_input_mode'] ?? 'auto',
             'modules.elektronik_enabled' => $tax['elektronik_enabled'] ?? true,
             'promo.enabled' => $promo['enabled'] ?? true,

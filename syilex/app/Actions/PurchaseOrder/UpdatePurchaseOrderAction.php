@@ -23,14 +23,14 @@ class UpdatePurchaseOrderAction
     {
         $this->ensureAuthenticated();
 
-        // Validate status
-        if (!$po->isDraft()) {
-            throw ValidationException::withMessages([
-                'status' => ['Hanya PO dengan status draft yang dapat diedit.'],
-            ]);
-        }
-
         return DB::transaction(function () use ($po, $data) {
+            $po = DocPurchaseOrder::whereKey($po->id)->lockForUpdate()->firstOrFail();
+            if (! $po->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Hanya PO dengan status draft yang dapat diedit.'],
+                ]);
+            }
+
             // Get supplier for tempo default
             $supplier = MasterSupplier::find($data['supplier_id']);
             $tempoHari = $data['tempo_hari'] ?? $supplier->tempo_default ?? 0;

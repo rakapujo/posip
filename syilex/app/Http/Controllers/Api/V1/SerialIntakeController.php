@@ -14,6 +14,7 @@ use App\Services\PurchaseMasterRules;
 use App\Services\PurchaseOrderCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -56,6 +57,15 @@ class SerialIntakeController extends BaseApiController
         if ($intake->relationLoaded('units')) {
             $intake->units->each(fn ($u) => $u->makeHidden(['harga_modal', 'cost_per_unit']));
         }
+    }
+
+    private function maybeHideHargaFromResponse(DocSerialIntake $intake): DocSerialIntake
+    {
+        if (! auth()->user()->can('serial-intake.view_harga')) {
+            $this->hideHargaFromIntake($intake);
+        }
+
+        return $intake;
     }
 
     /**
@@ -167,7 +177,9 @@ class SerialIntakeController extends BaseApiController
 
         $intake = $this->createAction->execute($this->resolveRefs($request));
 
-        return $this->created(['serial_intake' => $intake], 'Pembelian serial disimpan sebagai draft');
+        return $this->created([
+            'serial_intake' => $this->maybeHideHargaFromResponse($intake),
+        ], 'Pembelian serial disimpan sebagai draft');
     }
 
     /**
@@ -186,7 +198,9 @@ class SerialIntakeController extends BaseApiController
 
         $intake = $this->updateAction->execute($serialIntake, $this->resolveRefs($request));
 
-        return $this->success(['serial_intake' => $intake], 'Pembelian serial diperbarui');
+        return $this->success([
+            'serial_intake' => $this->maybeHideHargaFromResponse($intake),
+        ], 'Pembelian serial diperbarui');
     }
 
     /**
@@ -200,7 +214,9 @@ class SerialIntakeController extends BaseApiController
 
         $intake = $this->approveAction->execute($serialIntake);
 
-        return $this->success(['serial_intake' => $intake], 'Pembelian serial disetujui & stok diperbarui');
+        return $this->success([
+            'serial_intake' => $this->maybeHideHargaFromResponse($intake),
+        ], 'Pembelian serial disetujui & stok diperbarui');
     }
 
     /**
@@ -211,12 +227,20 @@ class SerialIntakeController extends BaseApiController
         if (!auth()->user()->can('serial-intake.delete')) {
             return $this->forbidden();
         }
-        if (!$serialIntake->isDraft()) {
-            return $this->error('Hanya draft yang dapat dihapus.', 422);
+        try {
+            DB::transaction(function () use ($serialIntake) {
+                $serialIntake = DocSerialIntake::whereKey($serialIntake->id)->lockForUpdate()->firstOrFail();
+                if (! $serialIntake->isDraft()) {
+                    throw ValidationException::withMessages([
+                        'status' => ['Hanya draft yang dapat dihapus.'],
+                    ]);
+                }
+                $serialIntake->units()->forceDelete();
+                $serialIntake->delete();
+            });
+        } catch (ValidationException $e) {
+            return $this->validationError($e->errors(), $e->getMessage());
         }
-
-        $serialIntake->units()->forceDelete();
-        $serialIntake->delete();
 
         return $this->success(null, 'Pembelian serial dihapus');
     }
@@ -231,8 +255,12 @@ class SerialIntakeController extends BaseApiController
         }
 
         $units = $request->input('units', []);
+        $product = MasterProduk::where('ulid', $request->input('product_id'))->first();
+        if (! $product) {
+            throw ValidationException::withMessages(['product_id' => ['Produk tidak ditemukan.']]);
+        }
         $details = array_map(fn ($u) => [
-            'product_id' => 0,
+            'product_id' => $product->id,
             'unit_used' => 'UNIT',
             'unit_konversi' => 1,
             'qty_in_unit' => 1,
@@ -302,6 +330,7 @@ class SerialIntakeController extends BaseApiController
             'units.*.grade' => 'required|string|in:A,B,C,D,E,F',
             'units.*.battery_condition' => 'required|string|max:30',
             'units.*.battery_health' => 'required|numeric|min:0|max:100',
+            'units.*.battery_cycle_count' => 'required|integer|min:0',
             'units.*.account_status' => 'required|string|in:locked,unlocked',
             'units.*.catatan' => 'nullable|string|max:255',
         ];

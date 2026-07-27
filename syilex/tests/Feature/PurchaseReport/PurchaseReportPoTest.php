@@ -4,9 +4,14 @@ namespace Tests\Feature\PurchaseReport;
 
 use App\Actions\PurchaseOrder\ApprovePurchaseOrderAction;
 use App\Actions\PurchaseOrder\CreatePurchaseOrderAction;
+use App\Actions\PurchaseReturn\CreatePurchaseReturnAction;
+use App\Actions\PurchaseReturn\LockPurchaseReturnAction;
+use App\Models\DocPurchaseOrder;
+use App\Models\InventoryStock;
 use App\Models\MasterProduk;
 use App\Models\MasterSupplier;
 use App\Models\MasterWarehouse;
+use App\Models\StockCard;
 use App\Models\User;
 use App\Services\SettingService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -191,6 +196,59 @@ class PurchaseReportPoTest extends TestCase
                 ->getJson($this->q("/api/v1/purchase-report/{$type}"))
                 ->assertForbidden();
         }
+    }
+
+    public function test_per_dokumen_mode_net_nets_list_row_not_just_summary(): void
+    {
+        foreach (['retur-beli.create', 'retur-beli.lock'] as $perm) {
+            Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        }
+        $this->admin->givePermissionTo(['retur-beli.create', 'retur-beli.lock']);
+
+        StockCard::$skipObserver = true;
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 0, 'avg_cost' => 5000]
+        );
+        StockCard::$skipObserver = false;
+
+        $nomor = $this->approvedPo(10, 6000);
+        /** @var DocPurchaseOrder $po */
+        $po = DocPurchaseOrder::where('nomor_dokumen', $nomor)->with('details')->first();
+        $poDetail = $po->details->first();
+
+        $retur = (new CreatePurchaseReturnAction())->execute([
+            'tanggal' => '2026-06-05',
+            'supplier_id' => $this->supplier->id,
+            'warehouse_id' => $this->warehouse->id,
+            'po_id' => $po->id,
+            'details' => [[
+                'product_id' => $this->product->id,
+                'po_detail_id' => $poDetail->id,
+                'unit_used' => 'PCS',
+                'unit_konversi' => 1,
+                'qty_in_unit' => 3,
+                'harga_per_unit' => 6000,
+            ]],
+        ]);
+        (new LockPurchaseReturnAction())->execute($retur->fresh());
+
+        // Bruto (default): list row stays at the full PO grand_total, retur is not deducted.
+        $bruto = $this->getJson($this->q('/api/v1/purchase-report/per-dokumen'))->assertOk();
+        $brutoRow = collect($bruto->json('data.items'))->firstWhere('nomor_dokumen', $nomor);
+        $this->assertEquals(60000, (float) $brutoRow['subtotal']);
+        $this->assertEquals(60000, (float) $brutoRow['grand_total']);
+
+        // Net: the LIST row itself (not just the summary) must be reduced by the locked retur (3 x 6000 = 18000).
+        $net = $this->getJson($this->q('/api/v1/purchase-report/per-dokumen', ['mode' => 'net']))->assertOk();
+        $netRow = collect($net->json('data.items'))->firstWhere('nomor_dokumen', $nomor);
+        $this->assertEquals(42000, (float) $netRow['subtotal']);
+        $this->assertEquals(42000, (float) $netRow['grand_total']);
+        $this->assertEquals(42000, (float) $net->json('data.summary.total_grand_total'));
+
+        // Export (net) must reflect the same netted grand_total, not the bruto value.
+        $export = $this->get($this->q('/api/v1/purchase-report/per-dokumen/export', ['mode' => 'net']))->assertOk();
+        $this->assertStringContainsString('spreadsheetml', $export->headers->get('content-type'));
     }
 
     public function test_per_dokumen_empty_when_date_range_excludes_po(): void

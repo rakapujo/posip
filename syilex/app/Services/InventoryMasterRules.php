@@ -45,8 +45,8 @@ class InventoryMasterRules
     {
         return self::mergeErrors(
             PurchaseMasterRules::warehouseErrors($validated['warehouse_id']),
-            PurchaseMasterRules::inventoryProductLinesErrors($validated['inputs'], 'inputs'),
-            PurchaseMasterRules::inventoryProductLinesErrors($validated['outputs'], 'outputs'),
+            PurchaseMasterRules::inventoryProductLinesErrors($validated['inputs'], 'inputs', 'product_id', true),
+            PurchaseMasterRules::inventoryProductLinesErrors($validated['outputs'], 'outputs', 'product_id', true),
         );
     }
 
@@ -56,7 +56,7 @@ class InventoryMasterRules
      */
     public static function hppCorrectionPayloadErrors(array $validated): ?array
     {
-        return PurchaseMasterRules::inventoryProductLinesErrors($validated['details'], 'details');
+        return PurchaseMasterRules::inventoryProductLinesErrors($validated['details'], 'details', 'product_id', true);
     }
 
     public static function transferDocumentErrors(DocTransfer $transfer): ?array
@@ -98,8 +98,8 @@ class InventoryMasterRules
 
         return self::mergeErrors(
             PurchaseMasterRules::warehouseErrors($repack->warehouse_id),
-            PurchaseMasterRules::inventoryProductLinesErrors($inputs, 'inputs'),
-            PurchaseMasterRules::inventoryProductLinesErrors($outputs, 'outputs'),
+            PurchaseMasterRules::inventoryProductLinesErrors($inputs, 'inputs', 'product_id', true),
+            PurchaseMasterRules::inventoryProductLinesErrors($outputs, 'outputs', 'product_id', true),
         );
     }
 
@@ -109,7 +109,7 @@ class InventoryMasterRules
 
         $details = $correction->details->map(fn ($detail) => ['product_id' => $detail->product_id])->all();
 
-        return PurchaseMasterRules::inventoryProductLinesErrors($details, 'details');
+        return PurchaseMasterRules::inventoryProductLinesErrors($details, 'details', 'product_id', true);
     }
 
     /**

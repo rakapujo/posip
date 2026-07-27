@@ -77,7 +77,7 @@ class MetodePembayaransExport implements FromQuery, WithHeadings, WithMapping, W
         $biayaTipeLabel = '-';
         if ($biayaTipe === 'nominal') {
             $biayaTipeLabel = 'Nominal';
-        } elseif ($biayaTipe === 'persen') {
+        } elseif ($biayaTipe === 'percent') {
             $biayaTipeLabel = 'Persen';
         }
 

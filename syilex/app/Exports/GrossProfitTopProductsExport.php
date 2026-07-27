@@ -25,8 +25,12 @@ class GrossProfitTopProductsExport implements FromCollection, WithHeadings, With
         protected string $dateTo,
         protected int $limit = 10,
         protected ?int $terminalId = null,
+        protected ?int $warehouseId = null,
     ) {
-        $this->rows = GrossProfitReportResolver::topProductRows($dateFrom, $dateTo, $limit, $terminalId);
+        $this->rows = GrossProfitReportResolver::topProductRows($dateFrom, $dateTo, $limit, [
+            'terminal_id' => $terminalId,
+            'warehouse_id' => $warehouseId,
+        ]);
     }
 
     public function collection(): Collection

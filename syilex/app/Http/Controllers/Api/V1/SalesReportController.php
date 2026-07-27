@@ -8,6 +8,7 @@ use App\Http\Controllers\Concerns\AttachesSerialUnits;
 use App\Models\DocSales;
 use App\Models\MasterMetodePembayaran;
 use App\Models\MasterPosTerminal;
+use App\Models\MasterWarehouse;
 use App\Models\User;
 use App\Services\ReportHelperService;
 use Illuminate\Http\JsonResponse;
@@ -23,7 +24,7 @@ class SalesReportController extends BaseApiController
      */
     public function index(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan penjualan.');
         }
 
@@ -33,17 +34,17 @@ class SalesReportController extends BaseApiController
             'customer:id,ulid,nama',
             'payments.metodePembayaran:id,ulid,nama_pembayaran',
         ])
-        ->addSelect(['doc_sales.*'])
-        ->addSelect(ReportHelperService::salesReceiptQtySelects('doc_sales.id'));
+            ->addSelect(['doc_sales.*'])
+            ->addSelect(ReportHelperService::salesReceiptQtySelects('doc_sales.id'));
 
         // Search by nomor_dokumen or customer nama
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('nomor_dokumen', 'like', "%{$search}%")
-                  ->orWhereHas('customer', function ($cq) use ($search) {
-                      $cq->where('nama', 'like', "%{$search}%");
-                  });
+                    ->orWhereHas('customer', function ($cq) use ($search) {
+                        $cq->where('nama', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -55,7 +56,7 @@ class SalesReportController extends BaseApiController
             } elseif ($status === 'completed') {
                 // Only truly completed (no returns)
                 $query->where('status', 'completed')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id') . ' = 0');
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id').' = 0');
             }
             // retur_partial and retur_full are handled below
         }
@@ -64,10 +65,21 @@ class SalesReportController extends BaseApiController
         if ($request->filled('terminal_id')) {
             $query->where('terminal_id', $request->terminal_id);
         }
+        if ($request->filled('warehouse_id')) {
+            $query->where('warehouse_id', $request->warehouse_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $query->where('source', $request->source);
+        }
 
         // Filter by kasir (created_by)
         if ($request->filled('user_id')) {
             $query->where('created_by', $request->user_id);
+        }
+
+        // Filter by customer (B3.5 drill-down dari Top Customer)
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', $request->customer_id);
         }
 
         // Filter by metode pembayaran
@@ -103,12 +115,12 @@ class SalesReportController extends BaseApiController
             $status = $request->status;
             if ($status === 'retur_partial') {
                 $query->where('status', 'completed')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id') . ' > 0')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id') . ' < ' . ReportHelperService::sqlSalesBoughtBase('doc_sales.id'));
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id').' > 0')
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id').' < '.ReportHelperService::sqlSalesBoughtBase('doc_sales.id'));
             } elseif ($status === 'retur_full') {
                 $query->where('status', 'completed')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id') . ' >= ' . ReportHelperService::sqlSalesBoughtBase('doc_sales.id'))
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id') . ' > 0');
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id').' >= '.ReportHelperService::sqlSalesBoughtBase('doc_sales.id'))
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('doc_sales.id').' > 0');
             }
         }
 
@@ -129,6 +141,7 @@ class SalesReportController extends BaseApiController
             }
             // Remove helper fields from response
             unset($item->total_bought_base, $item->total_returned_base);
+
             return $item;
         });
 
@@ -148,7 +161,7 @@ class SalesReportController extends BaseApiController
      */
     public function show(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan penjualan.');
         }
 
@@ -159,13 +172,15 @@ class SalesReportController extends BaseApiController
             'terminal:id,ulid,kode_terminal,nama_terminal',
             'createdBy:id,name',
             'voidedBy:id,name',
-            'returns.details.product:id,ulid,kode_produk,nama_produk',
-            'returns.createdBy:id,name',
-            'returns.terminal:id,ulid,kode_terminal,nama_terminal',
-            'returns.shift:id,ulid,started_at',
+            'returns' => fn ($query) => $query->whereIn('status', ['lock', 'approved'])->with([
+                'details.product:id,ulid,kode_produk,nama_produk',
+                'createdBy:id,name',
+                'terminal:id,ulid,kode_terminal,nama_terminal',
+                'shift:id,ulid,started_at',
+            ]),
         ])->where('ulid', $ulid)->first();
 
-        if (!$sales) {
+        if (! $sales) {
             return $this->notFound('Transaksi tidak ditemukan.');
         }
 
@@ -195,7 +210,7 @@ class SalesReportController extends BaseApiController
      */
     public function export(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
+        if (! auth()->user()->can('laporan.export')) {
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
@@ -208,7 +223,7 @@ class SalesReportController extends BaseApiController
         $dateFrom = $request->date_from ?? now()->startOfMonth()->toDateString();
         $dateTo = $request->date_to ?? now()->toDateString();
 
-        $filename = 'laporan_penjualan_per_nota_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'laporan_penjualan_per_nota_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(new SalesPerNotaExport(
             $dateFrom,
@@ -218,6 +233,8 @@ class SalesReportController extends BaseApiController
             $request->filled('metode_bayar_id') ? (int) $request->metode_bayar_id : null,
             $request->input('status'),
             $request->input('search'),
+            $request->input('source'),
+            $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
         ), $filename);
     }
 
@@ -226,7 +243,7 @@ class SalesReportController extends BaseApiController
      */
     public function dropdowns(): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -252,10 +269,17 @@ class SalesReportController extends BaseApiController
             ->get()
             ->makeVisible('id');
 
+        $warehouses = MasterWarehouse::select('id', 'kode_warehouse', 'nama_warehouse')
+            ->whereIn('id', DocSales::distinct()->pluck('warehouse_id'))
+            ->orderBy('nama_warehouse')
+            ->get()
+            ->makeVisible('id');
+
         return $this->success([
             'terminals' => $terminals,
             'users' => $users,
             'metode_bayar' => $metodeBayar,
+            'warehouses' => $warehouses,
         ]);
     }
 }

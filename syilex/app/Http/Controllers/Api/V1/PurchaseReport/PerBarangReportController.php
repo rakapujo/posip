@@ -36,10 +36,20 @@ class PerBarangReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
         $canViewHarga = auth()->user()->can('po.view_harga');
         $source = ReportHelperService::resolveSource($request);
+        $mode = ReportHelperService::resolveMode($request);
+        $applyNet = $mode === 'net' && $source !== 'serial';
+
+        $retFilters = [
+            'supplier_id' => $request->input('supplier_id'),
+            'warehouse_id' => $request->input('warehouse_id'),
+            'brand_id' => $request->input('brand_id'),
+            'kategori_id' => $request->input('kategori_id'),
+            'search' => $request->input('search'),
+        ];
 
         // Base query: aggregate baris pembelian (PO detail + unit serial) per produk
         $query = DB::query()
@@ -69,6 +79,16 @@ class PerBarangReportController extends BaseApiController
             });
         }
 
+        // ACC-3 Wave B: LEFT JOIN retur beli per produk (pre-aggregated) so mode=net nets each row.
+        // Values are constant per product, MAX() avoids multiplying them across the group's PO lines.
+        if ($canViewHarga && $applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnLinesByProductSubquery($dateFrom, $dateToEnd, $retFilters),
+                'pret',
+                fn ($join) => $join->on('pret.product_id', '=', 'mp.id')
+            );
+        }
+
         // Select columns (jumlah_po = jumlah dokumen distinct yang memuat produk ini)
         $selectColumns = [
             'mp.ulid',
@@ -76,12 +96,18 @@ class PerBarangReportController extends BaseApiController
             'mp.nama_produk',
             'mb.nama_brand as brand',
             'mk.nama_kategori as kategori',
-            DB::raw('SUM(dpod.qty_in_base) as total_qty'),
+            $applyNet
+                ? DB::raw('GREATEST(SUM(dpod.qty_in_base) - COALESCE(MAX(pret.ret_qty), 0), 0) as total_qty')
+                : DB::raw('SUM(dpod.qty_in_base) as total_qty'),
             DB::raw('COUNT(DISTINCT dpod.nomor_dokumen) as jumlah_po'),
         ];
 
         if ($canViewHarga) {
-            $selectColumns = array_merge($selectColumns, [
+            $selectColumns = array_merge($selectColumns, $applyNet ? [
+                DB::raw('GREATEST(COALESCE(SUM(dpod.harga_bruto), 0) - COALESCE(MAX(pret.ret_bruto), 0), 0) as total_bruto'),
+                DB::raw('GREATEST(COALESCE(SUM(dpod.total_diskon_item), 0) - COALESCE(MAX(pret.ret_diskon), 0), 0) as total_diskon'),
+                DB::raw('GREATEST(COALESCE(SUM(dpod.subtotal), 0) - COALESCE(MAX(pret.ret_subtotal), 0), 0) as total_subtotal'),
+            ] : [
                 DB::raw('COALESCE(SUM(dpod.harga_bruto), 0) as total_bruto'),
                 DB::raw('COALESCE(SUM(dpod.total_diskon_item), 0) as total_diskon'),
                 DB::raw('COALESCE(SUM(dpod.subtotal), 0) as total_subtotal'),
@@ -151,10 +177,24 @@ class PerBarangReportController extends BaseApiController
             $summary['total_bruto'] = round((float) ($summaryRaw->total_bruto ?? 0), 2);
             $summary['total_diskon'] = round((float) ($summaryRaw->total_diskon ?? 0), 2);
             $summary['total_subtotal'] = round((float) ($summaryRaw->total_subtotal ?? 0), 2);
+
+            if ($mode === 'net' && $source !== 'serial') {
+                $ret = ReportHelperService::sumPurchaseReturnLines($dateFrom, $dateToEnd, [
+                    'supplier_id' => $request->input('supplier_id'),
+                    'warehouse_id' => $request->input('warehouse_id'),
+                    'brand_id' => $request->input('brand_id'),
+                    'kategori_id' => $request->input('kategori_id'),
+                    'search' => $request->input('search'),
+                ]);
+                $summary['total_bruto'] = round(max(0, $summary['total_bruto'] - $ret->total_bruto), 2);
+                $summary['total_diskon'] = round(max(0, $summary['total_diskon'] - $ret->total_diskon), 2);
+                $summary['total_subtotal'] = round(max(0, $summary['total_subtotal'] - $ret->total_subtotal), 2);
+                $summary['total_qty'] = max(0, (float) $summary['total_qty'] - $ret->total_qty);
+            }
         }
 
         return $this->success(
-            ReportHelperService::buildPaginatedResponse($paginator, $summary, ['can_view_harga' => $canViewHarga, 'source' => $source])
+            ReportHelperService::buildPaginatedResponse($paginator, $summary, ['can_view_harga' => $canViewHarga, 'source' => $source, 'mode' => $mode])
         );
     }
 
@@ -287,7 +327,7 @@ class PerBarangReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         $filename = 'laporan_pembelian_per_barang_' . date('Y-m-d_His') . '.xlsx';
 
@@ -301,6 +341,7 @@ class PerBarangReportController extends BaseApiController
             $request->filled('kategori_id') ? (int) $request->kategori_id : null,
             $request->input('search'),
             ReportHelperService::resolveSource($request),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 }

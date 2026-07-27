@@ -55,17 +55,8 @@ class CustomerPromoReportResolver
     public static function eligiblePromosFor(?int $tipeId, ?int $kategoriId, Collection $promos): Collection
     {
         return $promos->filter(function ($p) use ($tipeId, $kategoriId) {
-            if ($p->customer_type_id === null && $p->customer_category_id === null) {
-                return true;
-            }
-            if ($p->customer_type_id !== null && (int) $p->customer_type_id === (int) $tipeId) {
-                return true;
-            }
-            if ($p->customer_category_id !== null && (int) $p->customer_category_id === (int) $kategoriId) {
-                return true;
-            }
-
-            return false;
+            return ($p->customer_type_id === null || (int) $p->customer_type_id === (int) $tipeId)
+                && ($p->customer_category_id === null || (int) $p->customer_category_id === (int) $kategoriId);
         });
     }
 

@@ -1,34 +1,29 @@
 import fs from 'fs';
 import path from 'path';
 import { expect } from '@playwright/test';
+import { getAuthData, injectAuth } from './helpers/auth.js';
 
 export const OUT_DIR = path.resolve(process.cwd(), '../docs/assets/screenshots');
 
-export async function loginViaApi(page, apiURL, baseURL) {
-    await page.goto(baseURL);
-    const res = await page.request.post(`${apiURL}/auth/login`, {
-        headers: { Accept: 'application/json' },
-        data: { email: 'admin@posip.com', password: 'password' },
-    });
-    expect(res.ok()).toBeTruthy();
-    const auth = (await res.json()).data;
-    await page.evaluate(({ token, user, permissions }) => {
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
-        localStorage.setItem('permissions', JSON.stringify(permissions || []));
-    }, auth);
+/** Login sekali (cache shared) lalu inject auth ke page. */
+export async function loginViaApi(page, _apiURL, _baseURL) {
+    const auth = await getAuthData(page.request);
+    await injectAuth(page, auth);
 }
 
 /** Tunggu DataTable selesai loading (overlay hilang). */
 export async function waitForDataTable(page, timeout = 45000) {
     await page.waitForSelector('.p-datatable', { timeout });
-    await page.waitForFunction(() => {
-        const overlay = document.querySelector('.p-datatable-loading-overlay');
-        if (overlay && overlay.offsetParent !== null) return false;
-        const spinner = document.querySelector('.p-datatable .p-progressspinner');
-        if (spinner && spinner.offsetParent !== null) return false;
-        return true;
-    }, { timeout });
+    await page.waitForFunction(
+        () => {
+            const overlay = document.querySelector('.p-datatable-loading-overlay');
+            if (overlay && overlay.offsetParent !== null) return false;
+            const spinner = document.querySelector('.p-datatable .p-progressspinner');
+            if (spinner && spinner.offsetParent !== null) return false;
+            return true;
+        },
+        { timeout }
+    );
     await page.waitForTimeout(400);
 }
 
@@ -36,14 +31,17 @@ export async function waitForDataTable(page, timeout = 45000) {
 export async function waitForDetailDialog(page, timeout = 45000) {
     const dialog = page.locator('.p-dialog').last();
     await expect(dialog).toBeVisible({ timeout: 15000 });
-    await page.waitForFunction(() => {
-        const d = document.querySelector('.p-dialog:last-of-type');
-        if (!d) return false;
-        const loading = d.querySelector('.p-progressspinner');
-        if (loading && loading.offsetParent !== null) return false;
-        const text = d.innerText || '';
-        return text.length > 80 && !text.includes('Memuat');
-    }, { timeout });
+    await page.waitForFunction(
+        () => {
+            const d = document.querySelector('.p-dialog:last-of-type');
+            if (!d) return false;
+            const loading = d.querySelector('.p-progressspinner');
+            if (loading && loading.offsetParent !== null) return false;
+            const text = d.innerText || '';
+            return text.length > 80 && !text.includes('Memuat');
+        },
+        { timeout }
+    );
     await page.waitForTimeout(500);
 }
 
@@ -61,13 +59,18 @@ export async function snap(page, name, opts = {}) {
     await page.waitForTimeout(opts.delay ?? 300);
     await page.screenshot({
         path: path.join(OUT_DIR, `${name}.png`),
-        fullPage: opts.fullPage ?? false,
+        fullPage: opts.fullPage ?? false
     });
 }
 
 export async function gotoMenu(page, baseURL, route) {
     await page.goto(`${baseURL}${route}`);
-    if (await page.locator('text=Akses Ditolak').isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (
+        await page
+            .locator('text=Akses Ditolak')
+            .isVisible({ timeout: 2000 })
+            .catch(() => false)
+    ) {
         return false;
     }
     try {
@@ -113,6 +116,11 @@ export const ALL_MENU_ROUTES = [
     ['menu-pembelian-pembayaran', '/app/pembelian/pembayaran', true],
     ['menu-pembelian-retur', '/app/pembelian/retur', true],
     ['menu-pembelian-deposit', '/app/pembelian/deposit', true],
+    ['menu-penjualan-sales', '/app/penjualan/sales', true],
+    ['menu-penjualan-retur', '/app/penjualan/retur', true],
+    ['menu-penjualan-piutang', '/app/penjualan/piutang', true],
+    ['menu-penjualan-pembayaran', '/app/penjualan/pembayaran', true],
+    ['menu-penjualan-deposit', '/app/penjualan/deposit', true],
     ['06-pos-terminal', '/app/pos/terminal', true],
     ['07-pos-shift', '/app/pos/shift', true],
     ['08-laporan-per-nota', '/app/laporan/penjualan/per-nota', true],
@@ -136,5 +144,5 @@ export const ALL_MENU_ROUTES = [
     ['menu-laporan-promo-produk', '/app/laporan/promo/produk', true],
     ['menu-laporan-promo-customer', '/app/laporan/promo/customer', true],
     ['menu-laporan-inventory-retur', '/app/laporan/inventory/retur-pattern', true],
-    ['menu-laporan-inventory-deadstock', '/app/laporan/inventory/dead-stock', true],
+    ['menu-laporan-inventory-deadstock', '/app/laporan/inventory/dead-stock', true]
 ];

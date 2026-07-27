@@ -10,12 +10,13 @@ use App\Traits\HasInventoryStock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use App\Actions\Concerns\RequiresAuthenticatedUser;
+use App\Actions\StockOpname\Concerns\ResolvesOpnamePresentUnits;
 
 class CreateStockOpnameAction
 {
     use RequiresAuthenticatedUser;
-
     use HasInventoryStock;
+    use ResolvesOpnamePresentUnits;
 
     /**
      * Execute the action.
@@ -25,9 +26,20 @@ class CreateStockOpnameAction
         $this->ensureAuthenticated();
 
         return DB::transaction(function () use ($data) {
-            // Check for existing draft opname for this warehouse
+            if (! SettingService::isElektronikEnabled()) {
+                foreach ($data['details'] as $i => $detail) {
+                    if (! empty($detail['serial_unit_ids_present'])) {
+                        throw ValidationException::withMessages([
+                            "details.{$i}.serial_unit_ids_present" => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+                        ]);
+                    }
+                }
+            }
+
+            // Lock draft-per-WH di dalam TX (cegah race double-draft).
             $existingDraft = DocStockOpname::where('warehouse_id', $data['warehouse_id'])
                 ->where('status', 'draft')
+                ->lockForUpdate()
                 ->first();
 
             if ($existingDraft) {
@@ -63,13 +75,13 @@ class CreateStockOpnameAction
                 ->pluck('id');
 
             // Create details
-            foreach ($data['details'] as $detail) {
+            foreach ($data['details'] as $i => $detail) {
                 // Get current stock for this warehouse (qty_system)
                 $qtySystem = $this->getCurrentStock($detail['product_id'], $data['warehouse_id']);
 
                 $presentIds = null;
                 if ($serialProductIds->contains($detail['product_id'])) {
-                    $presentIds = $detail['serial_unit_ids_present'] ?? [];
+                    $presentIds = $this->resolvePresentUlids($detail, $i, (int) $detail['product_id'], (int) $data['warehouse_id']);
                     $qtyPhysical = count($presentIds);
                 } else {
                     $qtyPhysical = (int) $detail['qty_physical'];

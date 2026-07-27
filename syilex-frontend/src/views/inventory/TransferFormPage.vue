@@ -5,12 +5,15 @@ import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useSettingsStore } from '@/stores/settings';
 import SerialUnitPicker from '@/components/common/SerialUnitPicker.vue';
 
 const notify = useNotification();
 const confirm = useConfirm();
 const router = useRouter();
 const route = useRoute();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const {
     formatQty,
     formatCurrency,
@@ -64,6 +67,13 @@ const form = ref({
     details: []
 });
 
+const canAddLines = computed(
+    () =>
+        !!form.value.warehouse_from_id &&
+        !!form.value.warehouse_to_id &&
+        form.value.warehouse_from_id !== form.value.warehouse_to_id
+);
+
 // Product search
 const productSuggestions = ref([]);
 const loadingProducts = ref(false);
@@ -80,7 +90,11 @@ function syncExpandedSerial() {
     for (const d of form.value.details) {
         if (d.is_serial && d._uid) map[d._uid] = true;
     }
-    expandedRows.value = map;
+    const prev = Object.keys(expandedRows.value || {})
+        .sort()
+        .join('|');
+    const next = Object.keys(map).sort().join('|');
+    if (prev !== next) expandedRows.value = map;
 }
 watch(() => form.value.details.map((d) => `${d._uid}:${d.is_serial ? 1 : 0}`).join('|'), syncExpandedSerial);
 
@@ -151,8 +165,8 @@ async function loadTransfer() {
                     product: d.product,
                     qty: d.qty,
                     stok: 0, // Will be refreshed
-                    is_serial: !!d.product?.is_serial,
-                    serial_unit_ids: d.serial_unit_ids || (d.product?.is_serial ? [] : null)
+                    is_serial: serialEnabled.value && !!d.product?.is_serial,
+                    serial_unit_ids: d.serial_unit_ids || (serialEnabled.value && d.product?.is_serial ? [] : null)
                 }))
             };
 
@@ -265,15 +279,15 @@ function onProductSelect(event, index) {
             product: product,
             stok: product.stok ?? 0,
             qty: currentDetail.qty || 1,
-            is_serial: !!product.is_serial,
-            serial_unit_ids: product.is_serial ? [] : null
+            is_serial: serialEnabled.value && !!product.is_serial,
+            serial_unit_ids: serialEnabled.value && product.is_serial ? [] : null
         };
     }
 }
 
 function addDetail() {
-    if (!form.value.warehouse_from_id) {
-        notify.selectFirst('gudang asal');
+    if (!canAddLines.value) {
+        notify.selectFirst('gudang asal & tujuan');
         return;
     }
 
@@ -430,6 +444,10 @@ function getProductLabel(product) {
 
         <!-- Form -->
         <form v-else @submit.prevent="save">
+            <Message severity="info" :closable="false" class="mb-4">
+                Transfer bersifat <b>instant</b>: approve langsung mengurangi stok gudang asal dan menambah stok tujuan (tanpa status in-transit / receive). Pastikan barang sudah siap dipindah fisik.
+            </Message>
+
             <!-- Header Fields -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <!-- Warehouse From -->
@@ -503,8 +521,9 @@ function getProductLabel(product) {
                     <div class="flex flex-col">
                         <label for="masuk_hpp" class="font-medium cursor-pointer">Masukkan biaya ke HPP</label>
                         <small class="text-surface-500">
-                            Dicentang → biaya dibagi adil ke tiap produk (proporsional nilai) dan menambah HPP: produk <b>serial</b> hanya unit yang dipindah; produk <b>non-serial</b> menaikkan HPP rata-rata global produk. Tidak dicentang → biaya
-                            hanya dicatat sebagai informasi (HPP tidak berubah).
+                            Dicentang → biaya dialokasikan proporsional nilai ke tiap baris. Produk <b>serial</b>: hanya unit yang dipindah naik
+                            <code>cost_per_unit</code>. Produk <b>non-serial (Opsi B)</b>: biaya dibagi ke <b>seluruh qty global produk di semua gudang</b>
+                            (bukan hanya qty yang dipindah) — unit di gudang lain ikut menanggung landed cost. Tidak dicentang → biaya hanya info (HPP tidak berubah).
                         </small>
                     </div>
                 </div>
@@ -517,7 +536,14 @@ function getProductLabel(product) {
             <div class="border border-surface-200 rounded-lg p-4">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-medium m-0">Detail Produk</h3>
-                    <Button label="Tambah" icon="pi pi-plus" size="small" @click="addDetail" />
+                    <Button
+                        label="Tambah"
+                        icon="pi pi-plus"
+                        size="small"
+                        @click="addDetail"
+                        :disabled="!canAddLines"
+                        v-tooltip.top="canAddLines ? null : 'Pilih gudang asal & tujuan dulu'"
+                    />
                 </div>
 
                 <small v-if="errors.details" class="text-red-500 block mb-4">{{ errors.details }}</small>
@@ -539,7 +565,13 @@ function getProductLabel(product) {
 
                     <Column header="Produk" style="min-width: 300px">
                         <template #body="{ data, index }">
+                            <div v-if="serialEnabled && data.is_serial && data.product_id" class="flex flex-col">
+                                <span class="font-medium">{{ data.product?.kode_produk }}</span>
+                                <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
+                                <span class="text-xs text-primary">Serial</span>
+                            </div>
                             <AutoComplete
+                                v-else
                                 v-model="data.product"
                                 :suggestions="productSuggestions"
                                 @complete="searchProducts"
@@ -575,7 +607,7 @@ function getProductLabel(product) {
 
                     <Column header="Qty Transfer" style="width: 140px">
                         <template #body="{ data, index }">
-                            <div v-if="data.is_serial">
+                            <div v-if="serialEnabled && data.is_serial">
                                 <Tag :value="`${data.serial_unit_ids?.length || 0} unit`" severity="info" />
                                 <div class="text-xs text-surface-500 mt-1">dari pilih unit ↓</div>
                             </div>
@@ -602,12 +634,17 @@ function getProductLabel(product) {
 
                     <!-- Pemilih unit serial: tampil tepat di bawah baris produknya -->
                     <template #expansion="{ data }">
-                        <div v-if="data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
+                        <div v-if="serialEnabled && data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="pi pi-qrcode text-primary"></i>
                                 <span class="font-medium text-sm"> Pilih Unit Serial — {{ data.product?.kode_produk }} {{ data.product?.nama_produk }} </span>
                             </div>
-                            <SerialUnitPicker :productId="data.product?.ulid" :warehouseId="form.warehouse_from_id" v-model="data.serial_unit_ids" />
+                            <SerialUnitPicker
+                                :key="data._uid"
+                                :productId="data.product?.ulid"
+                                :warehouseId="form.warehouse_from_id"
+                                v-model="data.serial_unit_ids"
+                            />
                         </div>
                         <div v-else class="px-4 py-2 text-xs text-surface-400">Produk non-serial — tanpa pemilihan unit.</div>
                     </template>

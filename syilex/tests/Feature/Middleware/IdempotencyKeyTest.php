@@ -62,6 +62,13 @@ class IdempotencyKeyTest extends TestCase
                 'executed_at' => microtime(true),
             ], 500);
         })->middleware(IdempotencyKey::class);
+
+        Route::post('/test-idempotent-required', function () {
+            return response()->json([
+                'success' => true,
+                'executed_at' => microtime(true),
+            ], 200);
+        })->middleware(IdempotencyKey::class.':required');
     }
     #[Test]
     public function request_without_idempotency_key_passes_through_normally(): void
@@ -77,6 +84,14 @@ class IdempotencyKeyTest extends TestCase
             $response1->json('executed_at'),
             $response2->json('executed_at')
         );
+    }
+    #[Test]
+    public function required_mode_rejects_missing_idempotency_key(): void
+    {
+        $response = $this->postJson('/test-idempotent-required');
+
+        $response->assertStatus(400);
+        $response->assertJson(['success' => false]);
     }
     #[Test]
     public function duplicate_request_with_same_key_returns_cached_response(): void

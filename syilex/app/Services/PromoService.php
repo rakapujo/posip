@@ -27,9 +27,9 @@ class PromoService
      * Eager load 'details' untuk cegah N+1 saat matching per item.
      * Sort by created_at desc untuk tiebreaker.
      *
-     * @param int|null $terminalId Current terminal ID (null = walk-in scenario)
-     * @param int|null $customerTypeId Current customer type ID (null = walk-in)
-     * @param Carbon|null $now Optional override for testing
+     * @param  int|null  $terminalId  Current terminal ID (null = walk-in scenario)
+     * @param  int|null  $customerTypeId  Current customer type ID (null = walk-in)
+     * @param  Carbon|null  $now  Optional override for testing
      * @return Collection<DocPromo>
      */
     public static function getActivePromos(
@@ -37,14 +37,16 @@ class PromoService
         ?int $customerTypeId,
         ?Carbon $now = null,
         ?int $customerCategoryId = null,
+        ?string $channel = null,
     ): Collection {
         // Respect global setting
         $settings = SettingService::getPromoSettings();
-        if (!$settings['enabled']) {
+        if (! $settings['enabled']) {
             return collect();
         }
 
         return DocPromo::effective($now)
+            ->when($channel, fn ($query) => $query->whereIn('channel', [$channel, 'keduanya']))
             ->where(function ($q) use ($terminalId) {
                 $q->whereNull('terminal_id');
                 if ($terminalId) {
@@ -76,20 +78,15 @@ class PromoService
      * 2. Per promo: simulate total diskon rupiah
      * 3. Ambil yang total terbesar (tiebreaker: promo terbaru)
      *
-     * @param int $productId
-     * @param int|null $grupId
-     * @param int|null $kategoriId
-     * @param float $qty
-     * @param float $harga
-     * @param Collection $activePromos Pre-loaded promos
-     * @param string $discountMode 'recursive' or 'sum'
+     * @param  Collection  $activePromos  Pre-loaded promos
+     * @param  string  $discountMode  'recursive' or 'sum'
      * @return array|null [
-     *   'promo_id', 'nama_promo', 'total_diskon',
-     *   'diskon_1_tipe', 'diskon_1_nilai',
-     *   'diskon_2_tipe', 'diskon_2_nilai',
-     *   'diskon_3_tipe', 'diskon_3_nilai',
-     *   'diskon_4_tipe', 'diskon_4_nilai',
-     * ] atau null jika tidak ada yang match
+     *                    'promo_id', 'nama_promo', 'total_diskon',
+     *                    'diskon_1_tipe', 'diskon_1_nilai',
+     *                    'diskon_2_tipe', 'diskon_2_nilai',
+     *                    'diskon_3_tipe', 'diskon_3_nilai',
+     *                    'diskon_4_tipe', 'diskon_4_nilai',
+     *                    ] atau null jika tidak ada yang match
      */
     public static function findBestPromo(
         int $productId,
@@ -130,9 +127,9 @@ class PromoService
      * 3. Apply recursive/sum mode untuk hitung total_diskon final
      *
      * @return array|null [
-     *   'promo_id', 'nama_promo', 'total_diskon',
-     *   'diskon_1_tipe', 'diskon_1_nilai', ..., 'diskon_4_nilai',
-     * ] atau null jika tidak ada detail yang match
+     *                    'promo_id', 'nama_promo', 'total_diskon',
+     *                    'diskon_1_tipe', 'diskon_1_nilai', ..., 'diskon_4_nilai',
+     *                    ] atau null jika tidak ada detail yang match
      */
     public static function simulatePromo(
         DocPromo $promo,
@@ -149,8 +146,7 @@ class PromoService
         }
 
         // Filter detail rows yang qualify (target match + qty cukup)
-        $matchingDetails = $promo->details->filter(fn ($d) =>
-            $d->qualifies($productId, $grupId, $kategoriId, $qty)
+        $matchingDetails = $promo->details->filter(fn ($d) => $d->qualifies($productId, $grupId, $kategoriId, $qty)
         );
 
         if ($matchingDetails->isEmpty()) {

@@ -13,7 +13,7 @@ class DocumentCalculation
     public static function discountLevel(string $tipe, float $nilai, float $base): float
     {
         return match ($tipe) {
-            'percent' => round($base * $nilai / 100, 2),
+            'percent' => round($base * min($nilai, 100) / 100, 2),
             'nominal' => min($nilai, $base),
             default => 0,
         };

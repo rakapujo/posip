@@ -261,6 +261,14 @@ class UploadService
     }
 
     /**
+     * Normalize a full storage URL or relative path to a relative storage path.
+     */
+    public function toStoragePath(string $pathOrUrl): string
+    {
+        return $this->extractPathFromUrl($pathOrUrl);
+    }
+
+    /**
      * Extract relative path from full URL
      *
      * @param string $path
@@ -272,12 +280,12 @@ class UploadService
         if (filter_var($path, FILTER_VALIDATE_URL)) {
             $parsed = parse_url($path);
             $path = $parsed['path'] ?? $path;
-
-            // Remove /storage/ prefix if present
-            $path = preg_replace('#^/storage/#', '', $path);
         }
 
-        return $path;
+        // Remove /storage/ prefix if present (full URL or relative path from Storage::url)
+        $path = preg_replace('#^/storage/#', '', $path);
+
+        return ltrim($path, '/');
     }
 
     /**

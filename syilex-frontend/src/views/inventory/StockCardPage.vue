@@ -5,11 +5,16 @@ import { useRoute, useRouter } from 'vue-router';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import MoneySummaryPanel from '@/components/common/MoneySummaryPanel.vue';
 
 const notify = useNotification();
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const { formatQty, formatCurrency, formatDateTime, getPrimeDateFormat, toDateString, todayString } = useFormatters();
 
 // Permissions
@@ -45,6 +50,15 @@ const selectedTransactionType = ref(null);
 const startDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 const endDate = ref(new Date());
 
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedWarehouse.value) n++;
+    if (selectedTransactionType.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
+
 // Pagination & Sort
 const lazyParams = ref({
     first: 0,
@@ -54,49 +68,45 @@ const lazyParams = ref({
 });
 
 onMounted(async () => {
-    // Check if product_id is passed via route query
-    if (route.query.product_id) {
-        await loadProductById(route.query.product_id);
-    }
+    // Warehouse before product so deep-link watch uses both filters
     if (route.query.warehouse_id) {
         selectedWarehouse.value = parseInt(route.query.warehouse_id);
     }
-
-    // Initial load
-    await loadStockCards();
-    await loadSummary();
+    if (route.query.product_id) {
+        await loadProductById(route.query.product_id);
+        // watch(selectedProduct) loads cards + summary
+    } else {
+        await loadStockCards();
+        await loadSummary();
+    }
 });
 
 // Watch for product change
 watch(selectedProduct, async (newProduct) => {
     lazyParams.value.first = 0;
 
-    // Only process if it's a valid product object with ulid
     if (newProduct && typeof newProduct === 'object' && newProduct.ulid) {
-        // If product selected but missing unit_4, fetch full details
         if (!newProduct.unit_4) {
             try {
                 const response = await produksApi.get(newProduct.ulid);
                 if (response.data.success && response.data.data.produk) {
-                    const produk = response.data.data.produk;
                     selectedProduct.value = {
                         ...newProduct,
-                        unit_4: produk.unit_4 || 'PCS'
+                        unit_4: response.data.data.produk.unit_4 || 'PCS'
                     };
                 }
             } catch (error) {
                 console.error('Failed to load product details:', error);
                 notify.apiError(error, 'Gagal load product details');
             }
+            return; // unit_4 patch re-triggers watch → single load
         }
         loadStockCards();
         loadSummary();
     } else if (!newProduct) {
-        // Product cleared - reload to show empty state
         loadStockCards();
         loadSummary();
     }
-    // If newProduct is a string (user typing), ignore - don't make API calls
 });
 
 async function loadProductById(productId) {
@@ -124,6 +134,22 @@ async function loadProductById(productId) {
 
 // Get product base unit for display (unit_4 = base unit, stok disimpan dalam unit ini)
 const productUnit = computed(() => selectedProduct.value?.unit_4 || 'PCS');
+
+const summaryItems = computed(() => {
+    const u = productUnit.value;
+    const typeFiltered = !!selectedTransactionType.value;
+    return [
+        { label: 'Saldo Awal (semua tipe)', value: `${formatQty(summary.value.opening_balance)} ${u}`, tone: 'info' },
+        { label: typeFiltered ? 'Masuk (filter tipe)' : 'Total Masuk', value: `${formatQty(summary.value.total_in)} ${u}`, tone: 'success' },
+        { label: typeFiltered ? 'Keluar (filter tipe)' : 'Total Keluar', value: `${formatQty(summary.value.total_out)} ${u}`, tone: 'danger' },
+        { label: 'Saldo Akhir (semua tipe)', value: `${formatQty(summary.value.ending_balance)} ${u}`, tone: 'primary' }
+    ];
+});
+
+const TYPES_NO_QTY = ['HPP_RESET', 'HPP_CORRECTION'];
+function isNoQtyType(type) {
+    return TYPES_NO_QTY.includes(type);
+}
 
 function onProductSearch(event) {
     const query = event.query?.trim();
@@ -337,6 +363,7 @@ function goBack() {
 
 // Buka dokumen sumber (baris intake serial → dokumen Pembelian Serial)
 function openSourceDoc(src) {
+    if (!serialEnabled.value) return;
     if (src?.type === 'serial-intake' && src.ulid) {
         router.push({ name: 'inventory-serial-intake', query: { detail: src.ulid } });
     }
@@ -345,22 +372,32 @@ function openSourceDoc(src) {
 
 <template>
     <div class="card">
-        <!-- Toolbar -->
         <Toolbar class="mb-6">
             <template #start>
-                <div class="flex items-center gap-3">
-                    <Button icon="pi pi-arrow-left" text rounded @click="goBack" v-tooltip.top="'Kembali ke Stok'" aria-label="Kembali ke Stok" />
-                    <span class="text-xl font-semibold">Kartu Stok</span>
-                </div>
+                <Button label="Kembali" icon="pi pi-arrow-left" severity="secondary" outlined @click="goBack" />
             </template>
             <template #end>
-                <Button label="Export Excel" icon="pi pi-file-excel" severity="success" outlined @click="exportExcel" :disabled="!selectedProduct" :loading="exportingExcel" />
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedTransactionType" :options="transactionTypes" optionLabel="label" optionValue="value" placeholder="Tipe Transaksi" filter showClear @change="onFilterChange" />
+                    <div class="list-filter-control">
+                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
+                    </div>
+                    <div class="list-filter-control">
+                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
+                    </div>
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="onResetAll" />
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
         <!-- Product Selection -->
         <div class="mb-6">
-            <label class="block text-surface-700 dark:text-surface-200 font-medium mb-2"> Pilih Produk <span class="text-red-500">*</span> </label>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <h2 class="text-xl font-semibold m-0">Kartu Stok</h2>
+                <Button icon="pi pi-file-excel" severity="success" outlined @click="exportExcel" :disabled="!selectedProduct" :loading="exportingExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
+            </div>
+            <label class="block text-surface-700 dark:text-surface-200 font-medium mb-2">Pilih Produk <span class="text-red-500">*</span></label>
             <AutoComplete
                 v-model="selectedProduct"
                 :suggestions="productOptions"
@@ -369,6 +406,7 @@ function openSourceDoc(src) {
                 :loading="loadingProducts"
                 class="w-full"
                 inputClass="w-full"
+                forceSelection
                 @complete="onProductSearch"
                 dropdown
             >
@@ -376,7 +414,8 @@ function openSourceDoc(src) {
                     <div class="flex flex-col">
                         <div class="flex items-center gap-2">
                             <span class="font-medium">{{ option.kode_produk }} - {{ option.nama_produk }}</span>
-                            <Tag :value="option.is_serial ? 'SERIAL' : 'RETAIL'" :severity="option.is_serial ? 'help' : 'secondary'" class="text-xs" />
+                            <Tag v-if="serialEnabled" :value="option.is_serial ? 'SERIAL' : 'RETAIL'" :severity="option.is_serial ? 'help' : 'secondary'" class="text-xs" />
+                            <Tag v-else value="RETAIL" severity="secondary" class="text-xs" />
                         </div>
                         <span class="text-sm text-surface-500">{{ option.barcode }} {{ option.brand?.nama_brand ? `| ${option.brand.nama_brand}` : '' }}</span>
                     </div>
@@ -384,7 +423,7 @@ function openSourceDoc(src) {
                 <template #chip="{ value }">
                     <span class="inline-flex items-center gap-2"
                         >{{ value.kode_produk }} - {{ value.nama_produk }}
-                        <Tag v-if="value.is_serial" value="SERIAL" severity="help" class="text-xs" v-tooltip.top="'HPP rata-rata tertimbang — modal riil per-unit di modul serial'" />
+                        <Tag v-if="serialEnabled && value.is_serial" value="SERIAL" severity="help" class="text-xs" v-tooltip.top="'HPP rata-rata tertimbang — modal riil per-unit di modul serial'" />
                     </span>
                 </template>
             </AutoComplete>
@@ -408,46 +447,7 @@ function openSourceDoc(src) {
             </div>
         </div>
 
-        <!-- Summary Cards -->
-        <div v-if="selectedProduct" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-                <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Saldo Awal</div>
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                    {{ formatQty(summary.opening_balance) }} <span class="text-base font-normal">{{ productUnit }}</span>
-                </div>
-            </div>
-            <div class="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
-                <div class="text-green-600 dark:text-green-400 text-sm mb-1">Total Masuk</div>
-                <div class="text-2xl font-bold text-green-600 dark:text-green-400">
-                    {{ formatQty(summary.total_in) }} <span class="text-base font-normal">{{ productUnit }}</span>
-                </div>
-            </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
-                <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Keluar</div>
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">
-                    {{ formatQty(summary.total_out) }} <span class="text-base font-normal">{{ productUnit }}</span>
-                </div>
-            </div>
-            <div class="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4">
-                <div class="text-purple-600 dark:text-purple-400 text-sm mb-1">Saldo Akhir</div>
-                <div class="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                    {{ formatQty(summary.ending_balance) }} <span class="text-base font-normal">{{ productUnit }}</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Filters -->
-        <div v-if="selectedProduct" class="flex flex-wrap gap-2 mb-4">
-            <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" class="w-44" filter showClear @change="onFilterChange" />
-            <Select v-model="selectedTransactionType" :options="transactionTypes" optionLabel="label" optionValue="value" placeholder="Tipe Transaksi" class="w-40" filter showClear @change="onFilterChange" />
-            <div class="w-40">
-                <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
-            </div>
-            <div class="w-40">
-                <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
-            </div>
-            <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="onResetAll" />
-        </div>
+        <MoneySummaryPanel v-if="selectedProduct" title="Ringkasan Kartu Stok" :items="summaryItems" :cols="4" />
 
         <!-- DataTable -->
         <DataTable
@@ -528,7 +528,7 @@ function openSourceDoc(src) {
             <!-- No. Dokumen -->
             <Column field="transaction_no" header="No. Dokumen" style="min-width: 150px">
                 <template #body="{ data }">
-                    <a v-if="data.source_doc?.type === 'serial-intake'" href="#" class="font-mono text-primary hover:underline" @click.prevent="openSourceDoc(data.source_doc)" v-tooltip.top="'Buka dokumen pembelian serial'">
+                    <a v-if="serialEnabled && data.source_doc?.type === 'serial-intake'" href="#" class="font-mono text-primary hover:underline" @click.prevent="openSourceDoc(data.source_doc)" v-tooltip.top="'Buka dokumen pembelian serial'">
                         {{ data.transaction_no || '-' }}
                     </a>
                     <span v-else class="font-mono">{{ data.transaction_no || '-' }}</span>
@@ -551,10 +551,11 @@ function openSourceDoc(src) {
                 </template>
             </Column>
 
-            <!-- Saldo -->
-            <Column field="qty_balance" header="Saldo" style="min-width: 100px" class="text-right">
+            <!-- Saldo (per-WH running; HPP-only rows have no meaningful saldo) -->
+            <Column field="qty_balance" :header="selectedWarehouse ? 'Saldo' : 'Saldo gudang baris'" style="min-width: 100px" class="text-right">
                 <template #body="{ data }">
-                    <span class="font-semibold" :class="{ 'text-red-600': data.qty_balance < 0 }"> {{ formatQty(data.qty_balance) }} {{ productUnit }} </span>
+                    <span v-if="isNoQtyType(data.transaction_type)" class="text-surface-400">—</span>
+                    <span v-else class="font-semibold" :class="{ 'text-red-600': data.qty_balance < 0 }"> {{ formatQty(data.qty_balance) }} {{ productUnit }} </span>
                 </template>
             </Column>
 

@@ -96,7 +96,7 @@ class SupplierHutangExport implements FromQuery, WithHeadings, WithMapping, With
         $headings = ['No', 'No. Dokumen', 'Sumber', 'Tanggal', 'Supplier', 'Kode Supplier'];
 
         if ($this->canViewNominal) {
-            $headings = array_merge($headings, ['Nominal Awal', 'Terbayar', 'Sisa Hutang']);
+            $headings = array_merge($headings, ['Nominal Awal', 'Terbayar', 'Retur', 'Sisa Hutang']);
         }
 
         $headings = array_merge($headings, ['Jatuh Tempo', 'Status']);
@@ -128,6 +128,7 @@ class SupplierHutangExport implements FromQuery, WithHeadings, WithMapping, With
             $mapped = array_merge($mapped, [
                 $row->nominal_awal,
                 $row->nominal_terbayar,
+                $row->nominal_retur,
                 $row->sisa_hutang,
             ]);
         }

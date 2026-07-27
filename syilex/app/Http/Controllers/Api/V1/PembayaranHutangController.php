@@ -12,6 +12,7 @@ use App\Models\SupplierHutang;
 use App\Services\PurchaseMasterRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PembayaranHutangController extends BaseApiController
@@ -141,8 +142,17 @@ class PembayaranHutangController extends BaseApiController
         $perPage = $this->getPerPage($request, 15);
         $items = $query->paginate($perPage);
 
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
+        $transformed = collect($items->items())->map(function ($item) use ($canViewNominal) {
+            if (! $canViewNominal) {
+                $item->makeHidden(['total_bayar_cash', 'total_bayar_deposit', 'total_pembayaran']);
+            }
+
+            return $item;
+        });
+
         return $this->success([
-            'items' => $items->items(),
+            'items' => $transformed,
             'pagination' => [
                 'current_page' => $items->currentPage(),
                 'last_page' => $items->lastPage(),
@@ -176,7 +186,8 @@ class PembayaranHutangController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), 'Validasi gagal');
         } catch (\Exception $e) {
-            return $this->error('Gagal membuat pembayaran hutang: ' . $e->getMessage(), 500);
+            Log::error('Gagal membuat pembayaran hutang', ['exception' => $e]);
+            return $this->error('Gagal membuat pembayaran hutang.', 500);
         }
     }
 
@@ -222,6 +233,22 @@ class PembayaranHutangController extends BaseApiController
             }
         }
 
+        if (! auth()->user()->can('hutang.view_nominal')) {
+            $pembayaran->makeHidden(['total_bayar_cash', 'total_bayar_deposit', 'total_pembayaran']);
+            foreach ($pembayaran->details as $detail) {
+                $detail->makeHidden(['nominal_dibayar']);
+                if ($detail->hutang) {
+                    $detail->hutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang']);
+                }
+            }
+            foreach ($pembayaran->depositUsages as $usage) {
+                $usage->makeHidden(['nominal_digunakan']);
+                if ($usage->deposit) {
+                    $usage->deposit->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
+                }
+            }
+        }
+
         return $this->success([
             'pembayaran' => $pembayaran,
         ]);
@@ -261,7 +288,8 @@ class PembayaranHutangController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), 'Validasi gagal');
         } catch (\Exception $e) {
-            return $this->error('Gagal memperbarui pembayaran hutang: ' . $e->getMessage(), 500);
+            Log::error('Gagal memperbarui pembayaran hutang', ['exception' => $e]);
+            return $this->error('Gagal memperbarui pembayaran hutang.', 500);
         }
     }
 
@@ -317,7 +345,8 @@ class PembayaranHutangController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), 'Validasi gagal');
         } catch (\Exception $e) {
-            return $this->error('Gagal menyelesaikan pembayaran hutang: ' . $e->getMessage(), 500);
+            Log::error('Gagal menyelesaikan pembayaran hutang', ['exception' => $e]);
+            return $this->error('Gagal menyelesaikan pembayaran hutang.', 500);
         }
     }
 
@@ -326,7 +355,7 @@ class PembayaranHutangController extends BaseApiController
      */
     public function getOutstandingHutangs(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pembayaran-hutang.create')) {
+        if (! auth()->user()->canAny(['pembayaran-hutang.create', 'pembayaran-hutang.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -334,18 +363,29 @@ class PembayaranHutangController extends BaseApiController
             'supplier_id' => 'required|exists:master_supplier,id',
         ]);
 
-        $hutangs = SupplierHutang::with(['purchaseOrder:id,ulid,nomor_dokumen'])
+        $hutangs = SupplierHutang::with([
+            'purchaseOrder:id,ulid,nomor_dokumen',
+            'serialIntake:id,ulid,nomor_dokumen',
+        ])
             ->where('supplier_id', $request->supplier_id)
             ->outstanding()
             ->orderBy('tanggal_jatuh_tempo', 'asc')
             ->orderBy('tanggal', 'asc')
             ->get();
 
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
+
         // Make IDs visible
-        $hutangs->each(function ($hutang) {
+        $hutangs->each(function ($hutang) use ($canViewNominal) {
             $hutang->makeVisible('id');
             if ($hutang->purchaseOrder) {
                 $hutang->purchaseOrder->makeVisible('id');
+            }
+            if ($hutang->serialIntake) {
+                $hutang->serialIntake->makeVisible('id');
+            }
+            if (! $canViewNominal) {
+                $hutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'nominal_retur', 'sisa_hutang']);
             }
         });
 
@@ -359,7 +399,7 @@ class PembayaranHutangController extends BaseApiController
      */
     public function getAvailableDeposits(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pembayaran-hutang.create')) {
+        if (! auth()->user()->canAny(['pembayaran-hutang.create', 'pembayaran-hutang.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -373,11 +413,16 @@ class PembayaranHutangController extends BaseApiController
             ->orderBy('tanggal', 'asc')
             ->get();
 
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
+
         // Make IDs visible
-        $deposits->each(function ($deposit) {
+        $deposits->each(function ($deposit) use ($canViewNominal) {
             $deposit->makeVisible('id');
             if ($deposit->purchaseReturn) {
                 $deposit->purchaseReturn->makeVisible('id');
+            }
+            if (! $canViewNominal) {
+                $deposit->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
             }
         });
 

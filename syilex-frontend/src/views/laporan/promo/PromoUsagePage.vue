@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { reportsApi } from '@/api';
+import { reportsApi, salesProductReportApi, tipeCustomersApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
@@ -19,6 +19,23 @@ const startDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 
 const endDate = ref(new Date());
 const includeUnused = ref(false);
 const selectedSort = ref('diskon_desc');
+const selectedTerminal = ref(null);
+const selectedCustomerType = ref(null);
+const selectedChannel = ref(null);
+const selectedSource = ref(null);
+const terminals = ref([]);
+const tipeCustomers = ref([]);
+
+const channelOptions = [
+    { label: 'POS', value: 'pos' },
+    { label: 'Penjualan (BO)', value: 'penjualan' },
+    { label: 'Keduanya', value: 'keduanya' }
+];
+
+const sourceOptions = [
+    { label: 'POS', value: 'pos' },
+    { label: 'Manual (BO)', value: 'manual' }
+];
 
 const summary = ref({});
 const items = ref([]);
@@ -40,7 +57,8 @@ function detailFilterParams() {
     return {
         date_from: toDateString(startDate.value),
         date_to: toDateString(endDate.value),
-        limit: 10
+        limit: 10,
+        ...extraFilterParams()
     };
 }
 
@@ -55,10 +73,30 @@ const sortOptions = [
     { label: 'Revenue Terbesar', value: 'revenue_desc' }
 ];
 
+function extraFilterParams() {
+    const params = {};
+    if (selectedTerminal.value) params.terminal_id = selectedTerminal.value;
+    if (selectedCustomerType.value) params.customer_type_id = selectedCustomerType.value;
+    if (selectedChannel.value) params.channel = selectedChannel.value;
+    if (selectedSource.value) params.source = selectedSource.value;
+    return params;
+}
+
+async function loadDropdowns() {
+    try {
+        const [terminalsRes, tipeRes] = await Promise.all([salesProductReportApi.getDropdowns(), tipeCustomersApi.getList()]);
+        if (terminalsRes.data.success) terminals.value = terminalsRes.data.data.terminals ?? [];
+        if (tipeRes.data.success) tipeCustomers.value = tipeRes.data.data.tipe_customers ?? [];
+    } catch (e) {
+        notify.apiError(e, 'Gagal load filter');
+    }
+}
+
 async function loadAll() {
     const params = {
         date_from: toDateString(startDate.value),
-        date_to: toDateString(endDate.value)
+        date_to: toDateString(endDate.value),
+        ...extraFilterParams()
     };
     await Promise.all([loadSummary(params), loadList({ ...params, sort: selectedSort.value, include_unused: includeUnused.value ? 1 : 0 })]);
 }
@@ -84,7 +122,10 @@ async function loadList(params) {
     }
 }
 
-onMounted(loadAll);
+onMounted(() => {
+    loadDropdowns();
+    loadAll();
+});
 
 async function exportExcel() {
     if (!canExport.value) return;
@@ -94,7 +135,8 @@ async function exportExcel() {
             date_from: toDateString(startDate.value),
             date_to: toDateString(endDate.value),
             sort: selectedSort.value,
-            include_unused: includeUnused.value ? 1 : 0
+            include_unused: includeUnused.value ? 1 : 0,
+            ...extraFilterParams()
         };
         const response = await reportsApi.promoUsage.exportExcel(params);
         downloadBlob(response.data, `laporan_promo_usage_${params.date_from}.xlsx`);
@@ -121,6 +163,10 @@ async function exportExcel() {
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="loadAll" />
                     </div>
                     <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" class="w-48" @change="loadAll" />
+                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="loadAll" />
+                    <Select v-model="selectedCustomerType" :options="tipeCustomers" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe Customer" class="w-40" filter showClear @change="loadAll" />
+                    <Select v-model="selectedChannel" :options="channelOptions" optionLabel="label" optionValue="value" placeholder="Channel" class="w-36" showClear @change="loadAll" />
+                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" class="w-36" showClear @change="loadAll" />
                     <div class="flex items-center gap-2 px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded">
                         <Checkbox v-model="includeUnused" :binary="true" inputId="includeUnused" @change="loadAll" />
                         <label for="includeUnused" class="text-sm cursor-pointer">Include unused</label>
@@ -131,22 +177,26 @@ async function exportExcel() {
         </Toolbar>
 
         <!-- Summary -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <div class="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div class="summary-stat-card bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4">
                 <div class="text-xs text-purple-600 mb-1">Promo Dipakai</div>
-                <div class="text-xl font-bold text-purple-700">{{ summary.promo_used || 0 }} / {{ summary.total_promos_approved || 0 }}</div>
+                <div class="summary-money-value text-purple-700">{{ summary.promo_used || 0 }} / {{ summary.total_promos_approved || 0 }}</div>
             </div>
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                 <div class="text-xs text-blue-600 mb-1">Transaksi</div>
-                <div class="text-xl font-bold text-blue-700">{{ summary.trx_count || 0 }}</div>
+                <div class="summary-money-value text-blue-700">{{ summary.trx_count || 0 }}</div>
             </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                 <div class="text-xs text-red-600 mb-1">Total Diskon</div>
-                <div class="text-xl font-bold text-red-700">{{ formatCurrency(summary.diskon_total || 0) }}</div>
+                <div class="summary-money-value text-red-700">{{ formatCurrency(summary.diskon_total || 0) }}</div>
             </div>
-            <div class="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
                 <div class="text-xs text-green-600 mb-1">Revenue (Net)</div>
-                <div class="text-xl font-bold text-green-700">{{ formatCurrency(summary.revenue_net || 0) }}</div>
+                <div class="summary-money-value text-green-700">{{ formatCurrency(summary.revenue_net || 0) }}</div>
+            </div>
+            <div class="summary-stat-card bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4" v-tooltip.top="'Diskon ÷ Revenue (Net) — makin rendah makin efisien'">
+                <div class="text-xs text-orange-600 mb-1">ROI (Diskon/Revenue)</div>
+                <div class="summary-money-value text-orange-700">{{ summary.roi_percent || 0 }}%</div>
             </div>
         </div>
 

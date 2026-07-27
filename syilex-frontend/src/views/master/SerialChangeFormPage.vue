@@ -59,7 +59,9 @@ function rowFromUnit(u, checked = false) {
         grade: u.grade || null,
         battery_condition: u.battery_condition || null,
         battery_health: u.battery_health != null ? Number(u.battery_health) : null,
+        battery_cycle_count: u.battery_cycle_count != null ? Number(u.battery_cycle_count) : null,
         account_status: u.account_status || null,
+        catatan: u.catatan || '',
         _checked: checked
     };
 }
@@ -106,21 +108,21 @@ async function loadChange() {
         }
         form.value = { product_id: d.product?.ulid ?? null, tanggal: d.tanggal ? parseDateTime(d.tanggal) : now(), notes: d.notes || '' };
 
-        // Preset nilai baru dari detail (key by serial_unit ulid) — backend kirim serialUnit relasi? tidak.
-        // Detail tak punya ulid unit; cocokkan via serial_number lama (before.serial_number) tak reliabel.
-        // Strategi: muat unit tersedia, lalu cocokkan detail ke unit by serial_number BARU bila masih ada,
-        // kalau tidak, biarkan unchecked. Simpel: muat unit, preset by serial_number lama (before).
         await loadUnits(form.value.product_id);
         (d.details || []).forEach((det) => {
-            const beforeSn = det.before?.serial_number;
-            const row = rows.value.find((r) => r.serial_number === beforeSn);
+            const unitUlid = det.serial_unit?.ulid ?? det.serialUnit?.ulid;
+            const row = unitUlid
+                ? rows.value.find((r) => r.serial_unit_id === unitUlid)
+                : rows.value.find((r) => r.serial_number === det.before?.serial_number);
             if (row) {
                 row.serial_number = det.serial_number;
                 row.harga_jual = det.harga_jual != null ? Number(det.harga_jual) : null;
                 row.grade = det.grade || null;
                 row.battery_condition = det.battery_condition || null;
                 row.battery_health = det.battery_health != null ? Number(det.battery_health) : null;
+                row.battery_cycle_count = det.battery_cycle_count != null ? Number(det.battery_cycle_count) : null;
                 row.account_status = det.account_status || null;
+                row.catatan = det.catatan || '';
                 row._checked = true;
             }
         });
@@ -152,12 +154,15 @@ function validate() {
         if (!r._checked) return;
         const sn = normSn(r.serial_number);
         if (!sn) errors.value[`r.${i}.sn`] = 'SN wajib';
-        else if (seen.includes(sn)) errors.value[`r.${i}.sn`] = 'SN duplikat';
+        else if (rows.value.some((o, j) => j !== i && normSn(o.serial_number) === sn)) {
+            errors.value[`r.${i}.sn`] = 'SN duplikat';
+        }
         seen.push(sn);
         if (r.harga_jual == null || Number(r.harga_jual) < 0) errors.value[`r.${i}.jual`] = 'Harga wajib';
         if (!r.grade) errors.value[`r.${i}.grade`] = 'wajib';
         if (!r.battery_condition) errors.value[`r.${i}.batcond`] = 'wajib';
         if (r.battery_health == null || r.battery_health === '') errors.value[`r.${i}.health`] = 'wajib';
+        if (r.battery_cycle_count == null || r.battery_cycle_count === '') errors.value[`r.${i}.cycle`] = 'wajib';
         if (!r.account_status) errors.value[`r.${i}.akun`] = 'wajib';
     });
     return Object.keys(errors.value).length === 0;
@@ -179,7 +184,9 @@ async function save() {
                 grade: r.grade,
                 battery_condition: r.battery_condition,
                 battery_health: r.battery_health != null && r.battery_health !== '' ? Number(r.battery_health) : null,
-                account_status: r.account_status
+                battery_cycle_count: r.battery_cycle_count != null && r.battery_cycle_count !== '' ? Number(r.battery_cycle_count) : null,
+                account_status: r.account_status,
+                catatan: r.catatan || null
             }));
         const payload = { product_id: form.value.product_id, tanggal: toDateTimeString(form.value.tanggal), notes: form.value.notes || null, units };
         const res = isEdit.value ? await serialChangesApi.update(route.params.ulid, payload) : await serialChangesApi.create(payload);
@@ -316,10 +323,30 @@ function cancel() {
                     />
                 </template>
             </Column>
+            <Column header="Cycle *" style="min-width: 110px">
+                <template #body="{ data, index }">
+                    <InputNumber
+                        v-model="data.battery_cycle_count"
+                        :disabled="!data._checked"
+                        :min="0"
+                        :useGrouping="false"
+                        fluid
+                        :locale="getLocale"
+                        :minFractionDigits="0"
+                        :maxFractionDigits="0"
+                        :class="{ 'p-invalid': errors[`r.${index}.cycle`] }"
+                    />
+                </template>
+            </Column>
             <Column header="Status Akun *" style="min-width: 140px">
                 <template #body="{ data, index }"
                     ><Select v-model="data.account_status" :disabled="!data._checked" :options="accountStatusOptions" optionLabel="label" optionValue="value" class="w-full" :class="{ 'p-invalid': errors[`r.${index}.akun`] }"
                 /></template>
+            </Column>
+            <Column header="Catatan" style="min-width: 160px">
+                <template #body="{ data }">
+                    <InputText v-model="data.catatan" :disabled="!data._checked" class="w-full" maxlength="255" />
+                </template>
             </Column>
         </DataTable>
 

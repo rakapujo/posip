@@ -41,6 +41,7 @@ const form = ref({
     deskripsi: '',
     customer_type_id: null,
     customer_category_id: null,
+    channel: 'keduanya',
     terminal_id: null,
     tanggal_mulai: null,
     tanggal_selesai: null,
@@ -49,8 +50,27 @@ const form = ref({
     details: []
 });
 
+const channelOptions = [
+    { label: 'POS', value: 'pos' },
+    { label: 'Penjualan BO', value: 'penjualan' },
+    { label: 'Keduanya', value: 'keduanya' }
+];
+
+watch(
+    () => form.value.channel,
+    (ch) => {
+        if (ch === 'penjualan') form.value.terminal_id = null;
+    }
+);
+
 // ─── Happy Hour toggle (Batasi jam aktif setiap hari) ───
 const restrictHour = ref(false);
+
+const canAddLines = computed(() => {
+    if (!form.value.nama_promo?.trim() || !form.value.tanggal_mulai) return false;
+    if (restrictHour.value && (!form.value.jam_mulai || !form.value.jam_selesai)) return false;
+    return true;
+});
 
 // Convert 'HH:mm' (or 'HH:mm:ss') string ↔ Date object (for PrimeVue DatePicker timeOnly)
 function parseTimeString(hhmm) {
@@ -175,7 +195,8 @@ async function loadPromo() {
             deskripsi: p.deskripsi ?? '',
             customer_type_id: p.customer_type?.id ?? null,
             customer_category_id: p.customer_category?.id ?? null,
-            terminal_id: p.terminal?.id ?? null,
+            channel: p.channel || 'keduanya',
+            terminal_id: p.channel === 'penjualan' ? null : (p.terminal?.id ?? null),
             tanggal_mulai: p.tanggal_mulai ? new Date(p.tanggal_mulai) : null,
             tanggal_selesai: p.tanggal_selesai ? new Date(p.tanggal_selesai) : null,
             jam_mulai: p.jam_mulai ? p.jam_mulai.substring(0, 5) : '',
@@ -213,12 +234,13 @@ function resetForm() {
         deskripsi: '',
         customer_type_id: null,
         customer_category_id: null,
+        channel: 'keduanya',
         terminal_id: null,
         tanggal_mulai: null,
         tanggal_selesai: null,
         jam_mulai: '',
         jam_selesai: '',
-        details: [newDetailRow()]
+        details: []
     };
     restrictHour.value = false;
     originalStatus.value = 'draft';
@@ -229,8 +251,6 @@ onMounted(async () => {
     await loadOptions();
     if (isEdit.value) {
         await loadPromo();
-    } else {
-        form.value.details.push(newDetailRow());
     }
 });
 
@@ -294,6 +314,10 @@ function onTargetTypeChange(detail) {
 
 // ─── Detail rows ───
 function addDetail() {
+    if (!canAddLines.value) {
+        notify.selectFirst('nama promo & tanggal mulai');
+        return;
+    }
     form.value.details.push(newDetailRow());
 }
 function removeDetail(idx) {
@@ -345,7 +369,8 @@ function buildPayload() {
         deskripsi: form.value.deskripsi || null,
         customer_type_id: form.value.customer_type_id || null,
         customer_category_id: form.value.customer_category_id || null,
-        terminal_id: form.value.terminal_id || null,
+        channel: form.value.channel || 'keduanya',
+        terminal_id: form.value.channel === 'penjualan' ? null : form.value.terminal_id || null,
         tanggal_mulai: form.value.tanggal_mulai ? toDateString(form.value.tanggal_mulai) : null,
         tanggal_selesai: form.value.tanggal_selesai ? toDateString(form.value.tanggal_selesai) : null,
         jam_mulai: restrictHour.value ? form.value.jam_mulai || null : null,
@@ -429,11 +454,11 @@ function validateForm() {
                 errs[`details.${idx}.diskon_${i}_nilai`] = ['Persen maksimal 100'];
             }
         }
-        // Duplicate detection: sama target_type + target_id
-        const key = `${d.target_type}:${d.target_id ?? ''}`;
+        // Duplicate detection: sama target + min_qty
+        const key = `${d.target_type}:${d.target_id ?? ''}:${d.min_qty ?? 1}`;
         if (targetKeys.has(key)) {
             const prevIdx = targetKeys.get(key);
-            errs[`details.${idx}.target_id`] = [`Target sama dengan baris ${prevIdx + 1}`];
+            errs[`details.${idx}.target_id`] = [`Target + min qty sama dengan baris ${prevIdx + 1}`];
         } else {
             targetKeys.set(key, idx);
         }
@@ -617,10 +642,16 @@ const isDraftOrNew = computed(() => !isEdit.value || originalStatus.value === 'd
                     <Select v-model="form.customer_category_id" :options="kategoriCustomerOptions" optionLabel="label" optionValue="value" placeholder="Semua kategori customer" class="w-full" filter showClear :disabled="!isDraftOrNew" />
                 </div>
 
-                <!-- Terminal (opsional) -->
+                <!-- Channel -->
                 <div class="flex flex-col gap-2">
-                    <label class="font-medium">Terminal <span class="text-surface-400 text-xs">(kosong = semua terminal)</span></label>
-                    <Select v-model="form.terminal_id" :options="terminalOptions" optionLabel="label" optionValue="value" placeholder="Semua terminal" class="w-full" filter showClear :disabled="!isDraftOrNew" />
+                    <label class="font-medium">Channel</label>
+                    <Select v-model="form.channel" :options="channelOptions" optionLabel="label" optionValue="value" class="w-full" :disabled="!isDraftOrNew" />
+                </div>
+
+                <!-- Terminal (opsional, POS only) -->
+                <div class="flex flex-col gap-2">
+                    <label class="font-medium">Terminal <span class="text-surface-400 text-xs">(kosong = semua; hanya channel POS)</span></label>
+                    <Select v-model="form.terminal_id" :options="terminalOptions" optionLabel="label" optionValue="value" placeholder="Semua terminal" class="w-full" filter showClear :disabled="!isDraftOrNew || form.channel === 'penjualan'" />
                 </div>
             </div>
 
@@ -628,7 +659,17 @@ const isDraftOrNew = computed(() => !isEdit.value || originalStatus.value === 'd
             <div class="mb-6">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="text-base font-semibold m-0">Baris Diskon</h3>
-                    <Button v-if="isDraftOrNew" label="Tambah Baris" icon="pi pi-plus" severity="secondary" outlined size="small" @click="addDetail" />
+                    <Button
+                        v-if="isDraftOrNew"
+                        label="Tambah Baris"
+                        icon="pi pi-plus"
+                        severity="secondary"
+                        outlined
+                        size="small"
+                        @click="addDetail"
+                        :disabled="!canAddLines"
+                        v-tooltip.top="canAddLines ? null : 'Isi nama promo & tanggal mulai dulu'"
+                    />
                 </div>
 
                 <Message v-if="errors['details']" severity="error" class="mb-3">{{ errors['details'][0] }}</Message>

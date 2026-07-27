@@ -18,6 +18,9 @@ class User extends Authenticatable
     // SoftDeletes untuk audit trail — user deactivate tidak broke FK historical data.
     use HasFactory, Notifiable, HasApiTokens, HasRoles, HasUlid, HasCreatedUpdatedBy, SoftDeletes, HasAuditLog;
 
+    /** @var list<string> Never store these in activity_log.properties */
+    protected array $auditLogExcept = ['password', 'pin', 'remember_token'];
+
     /**
      * The attributes that are mass assignable.
      *

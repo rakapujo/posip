@@ -5,6 +5,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import { useNotification } from '@/composables/useNotification';
 import SerialUnitPicker from '@/components/common/SerialUnitPicker.vue';
 
@@ -13,6 +14,8 @@ const confirm = useConfirm();
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const { formatQty, formatCurrency, shouldUppercase, getPrimeDateFormatShort, toDateTimeString, now, parseDateTime, isAfterNow, getLocale, getQtyMinFractionDigits, getQtyMaxFractionDigits } = useFormatters();
 
 // Permissions
@@ -38,6 +41,8 @@ const form = ref({
     details: []
 });
 
+const canAddLines = computed(() => !!form.value.warehouse_id);
+
 // Product search (for partial mode)
 const productSuggestions = ref([]);
 const loadingProducts = ref(false);
@@ -53,7 +58,7 @@ const refreshingStock = ref(false);
 // Mode options
 const modeOptions = [
     { label: 'Partial - Pilih produk tertentu', value: 'partial' },
-    { label: 'Full - Semua produk di warehouse', value: 'full' }
+    { label: 'Full - Semua produk ber-record stok di gudang', value: 'full' }
 ];
 
 // Validation
@@ -68,12 +73,22 @@ function syncExpandedSerial() {
     for (const d of form.value.details) {
         if (d.is_serial && d._uid) map[d._uid] = true;
     }
-    expandedRows.value = map;
+    const prev = Object.keys(expandedRows.value || {})
+        .sort()
+        .join('|');
+    const next = Object.keys(map).sort().join('|');
+    if (prev !== next) expandedRows.value = map;
 }
 watch(() => form.value.details.map((d) => `${d._uid}:${d.is_serial ? 1 : 0}`).join('|'), syncExpandedSerial);
 
 // Checklist SN hadir berubah → qty fisik = jumlah hadir; selisih mengikuti
 function onSerialPresentChange(detail, ulids) {
+    const prev = detail.serial_unit_ids_present || [];
+    const same =
+        ulids.length === prev.length &&
+        [...ulids].map(String).sort().join('|') === [...prev].map(String).sort().join('|');
+    if (same && Number(detail.qty_physical) === ulids.length) return;
+
     detail.serial_unit_ids_present = ulids;
     detail.qty_physical = ulids.length;
     detail.qty_difference = ulids.length - (detail.qty_system ?? 0);
@@ -134,8 +149,8 @@ async function loadOpname() {
                     _uid: nextUid(),
                     product_id: d.product_id,
                     product: d.product,
-                    is_serial: !!d.product?.is_serial,
-                    serial_unit_ids_present: d.serial_unit_ids_present || (d.product?.is_serial ? [] : null),
+                    is_serial: serialEnabled.value && !!d.product?.is_serial,
+                    serial_unit_ids_present: d.serial_unit_ids_present || (serialEnabled.value && d.product?.is_serial ? [] : null),
                     qty_system: d.qty_system,
                     qty_physical: d.qty_physical,
                     qty_difference: d.qty_difference,
@@ -302,7 +317,7 @@ function onProductSelect(event, index) {
             ...form.value.details[index],
             product_id: product.id,
             product: product,
-            is_serial: !!product.is_serial,
+            is_serial: serialEnabled.value && !!product.is_serial,
             serial_unit_ids_present: null, // null = auto (picker centang semua); [] = sengaja kosong
             qty_system: qtySystem,
             qty_physical: qtySystem, // Default to system qty (serial: disetel picker defaultAll)
@@ -313,7 +328,7 @@ function onProductSelect(event, index) {
 }
 
 function addDetail() {
-    if (!form.value.warehouse_id) {
+    if (!canAddLines.value) {
         notify.selectFirst('warehouse');
         return;
     }
@@ -343,7 +358,7 @@ const scanProdukFeedback = ref(null); // { ok, msg }
 async function onScanProduk() {
     const code = (scanProduk.value || '').trim();
     if (!code) return;
-    if (!form.value.warehouse_id) {
+    if (!canAddLines.value) {
         notify.selectFirst('warehouse');
         return;
     }
@@ -394,7 +409,7 @@ function updateDifference(index) {
 
 // Load all products for full mode
 async function loadAllProducts() {
-    if (!form.value.warehouse_id) {
+    if (!canAddLines.value) {
         notify.selectFirst('warehouse');
         return;
     }
@@ -429,7 +444,7 @@ async function loadProductBatch() {
                     _uid: nextUid(),
                     product_id: product.id,
                     product: product,
-                    is_serial: !!product.is_serial,
+                    is_serial: serialEnabled.value && !!product.is_serial,
                     serial_unit_ids_present: null, // null = auto (picker centang semua); [] = sengaja kosong
                     qty_system: product.stok,
                     qty_physical: product.stok, // Default to system qty
@@ -504,6 +519,16 @@ function validate() {
 async function save() {
     if (!validate()) {
         notify.formInvalid();
+        return;
+    }
+
+    // Serial: jangan simpan sebelum picker hydrate (null → [] = mass hilang saat approve).
+    if (serialEnabled.value && form.value.details.some((d) => d.is_serial && d.serial_unit_ids_present === null)) {
+        notify.error('Checklist serial belum siap. Buka baris produk serial lalu tunggu unit termuat.');
+        return;
+    }
+    if (form.value.mode === 'full' && !allProductsLoaded.value) {
+        notify.error('Mode full: muat semua produk dulu sebelum simpan.');
         return;
     }
 
@@ -668,6 +693,11 @@ const summary = computed(() => {
 
         <!-- Form -->
         <form v-else @submit.prevent="save">
+            <Message severity="warn" :closable="false" class="mb-4">
+                <span class="text-sm"
+                    >Stok tidak di-freeze selama draft. Saat approve, qty sistem di-refresh lalu stok dipaksa ke qty fisik (set-at-approve). Tutup kasir/mutasi gudang ini sebelum approve bila memungkinkan.</span
+                >
+            </Message>
             <!-- Header Fields -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <!-- Warehouse -->
@@ -716,7 +746,7 @@ const summary = computed(() => {
                         <!-- Partial mode: scan barcode produk → hitung fisik (+1 per scan) -->
                         <IconField v-if="form.mode === 'partial'" iconPosition="left">
                             <InputIcon class="pi pi-qrcode" />
-                            <InputText v-model="scanProduk" @keyup.enter="onScanProduk" placeholder="Scan barcode produk lalu Enter…" :disabled="!form.warehouse_id" style="width: 230px" />
+                            <InputText v-model="scanProduk" @keyup.enter="onScanProduk" placeholder="Scan barcode produk lalu Enter…" :disabled="!canAddLines" style="width: 230px" />
                         </IconField>
                         <!-- Refresh stock button -->
                         <Button
@@ -731,9 +761,26 @@ const summary = computed(() => {
                             v-tooltip.top="'Refresh stok sistem tanpa menghapus input Anda'"
                         />
                         <!-- Partial mode: add button -->
-                        <Button v-if="form.mode === 'partial'" label="Tambah" icon="pi pi-plus" size="small" @click="addDetail" />
+                        <Button
+                            v-if="form.mode === 'partial'"
+                            label="Tambah"
+                            icon="pi pi-plus"
+                            size="small"
+                            @click="addDetail"
+                            :disabled="!canAddLines"
+                            v-tooltip.top="canAddLines ? null : 'Pilih gudang dulu'"
+                        />
                         <!-- Full mode: load all button -->
-                        <Button v-if="form.mode === 'full'" label="Load Semua Produk" icon="pi pi-download" size="small" :loading="loadingAllProducts" @click="loadAllProducts" :disabled="!form.warehouse_id" />
+                        <Button
+                            v-if="form.mode === 'full'"
+                            label="Load Semua Produk"
+                            icon="pi pi-download"
+                            size="small"
+                            :loading="loadingAllProducts"
+                            @click="loadAllProducts"
+                            :disabled="!canAddLines"
+                            v-tooltip.top="canAddLines ? null : 'Pilih gudang dulu'"
+                        />
                     </div>
                 </div>
                 <small v-if="scanProdukFeedback" :class="scanProdukFeedback.ok ? 'text-green-600' : 'text-red-500'" class="block mb-2 text-xs">{{ scanProdukFeedback.msg }}</small>
@@ -773,9 +820,14 @@ const summary = computed(() => {
 
                     <Column header="Produk" style="min-width: 250px">
                         <template #body="{ data, index }">
-                            <!-- Partial mode: autocomplete -->
+                            <!-- Serial / full mode: tampil teks saja — AutoComplete di expansion remount = load loop -->
+                            <div v-if="serialEnabled && data.is_serial && data.product_id" class="flex flex-col">
+                                <span class="font-medium">{{ data.product?.kode_produk }}</span>
+                                <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
+                                <span class="text-xs text-primary">Serial</span>
+                            </div>
                             <AutoComplete
-                                v-if="form.mode === 'partial'"
+                                v-else-if="form.mode === 'partial'"
                                 v-model="data.product"
                                 :suggestions="productSuggestions"
                                 @complete="searchProducts"
@@ -795,7 +847,6 @@ const summary = computed(() => {
                                     </div>
                                 </template>
                             </AutoComplete>
-                            <!-- Full mode: display only -->
                             <div v-else>
                                 <span class="font-medium">{{ data.product?.kode_produk }}</span>
                                 <br />
@@ -821,7 +872,7 @@ const summary = computed(() => {
 
                     <Column header="Stok Fisik" style="width: 130px">
                         <template #body="{ data, index }">
-                            <div v-if="data.is_serial">
+                            <div v-if="serialEnabled && data.is_serial">
                                 <Tag :value="`${data.serial_unit_ids_present?.length || 0} hadir`" severity="info" />
                                 <div class="text-xs text-surface-500 mt-1">centang SN ↓</div>
                             </div>
@@ -876,12 +927,19 @@ const summary = computed(() => {
 
                     <!-- Checklist SN hadir untuk produk serial (default semua tercentang) -->
                     <template #expansion="{ data }">
-                        <div v-if="data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
+                        <div v-if="serialEnabled && data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="pi pi-qrcode text-primary"></i>
                                 <span class="font-medium text-sm"> Centang SN yang HADIR (fisik ditemukan) — {{ data.product?.kode_produk }} {{ data.product?.nama_produk }} </span>
                             </div>
-                            <SerialUnitPicker :productId="data.product?.ulid" :warehouseId="form.warehouse_id" :defaultAll="true" :modelValue="data.serial_unit_ids_present" @update:modelValue="(v) => onSerialPresentChange(data, v)" />
+                            <SerialUnitPicker
+                                :key="data._uid"
+                                :productId="data.product?.ulid"
+                                :warehouseId="form.warehouse_id"
+                                :defaultAll="true"
+                                :modelValue="data.serial_unit_ids_present"
+                                @update:modelValue="(v) => onSerialPresentChange(data, v)"
+                            />
                         </div>
                         <div v-else class="px-4 py-2 text-xs text-surface-400">Produk non-serial — isi qty fisik di kolom.</div>
                     </template>
@@ -904,7 +962,17 @@ const summary = computed(() => {
             <!-- Form Actions -->
             <div class="flex justify-end gap-2 mt-6">
                 <Button label="Batal" severity="secondary" outlined @click="cancel" />
-                <Button label="Simpan" icon="pi pi-save" type="submit" :loading="saving" :disabled="form.details.length === 0" />
+                <Button
+                    label="Simpan"
+                    icon="pi pi-save"
+                    type="submit"
+                    :loading="saving"
+                    :disabled="
+                        form.details.length === 0 ||
+                        (form.mode === 'full' && !allProductsLoaded) ||
+                        (serialEnabled && form.details.some((d) => d.is_serial && d.serial_unit_ids_present === null))
+                    "
+                />
             </div>
         </form>
     </div>

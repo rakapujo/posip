@@ -101,7 +101,14 @@ export const posTerminalsApi = {
      * @param {string} [data.closing_notes] - Catatan tutup shift
      * @returns {Promise}
      */
-    endShift: (ulid, data = {}) => client.post(`/pos-terminals/${ulid}/end-shift`, data)
+    endShift: (ulid, data = {}) => client.post(`/pos-terminals/${ulid}/end-shift`, data),
+
+    /**
+     * Send test email using terminal mail config
+     * @param {string} ulid
+     * @param {{ to_email: string }} data
+     */
+    mailTest: (ulid, data) => client.post(`/pos-terminals/${ulid}/mail-test`, data)
 };
 
 export default posTerminalsApi;

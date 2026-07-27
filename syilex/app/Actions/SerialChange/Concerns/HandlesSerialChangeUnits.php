@@ -79,6 +79,7 @@ trait HandlesSerialChangeUnits
                 'grade' => $u['grade'] ?? null,
                 'battery_condition' => $u['battery_condition'] ?? null,
                 'battery_health' => isset($u['battery_health']) && $u['battery_health'] !== '' ? (float) $u['battery_health'] : null,
+                'battery_cycle_count' => isset($u['battery_cycle_count']) && $u['battery_cycle_count'] !== '' ? (int) $u['battery_cycle_count'] : null,
                 'account_status' => $u['account_status'] ?? null,
                 'catatan' => $u['catatan'] ?? null,
                 'before' => [
@@ -87,6 +88,7 @@ trait HandlesSerialChangeUnits
                     'grade' => $su->grade,
                     'battery_condition' => $su->battery_condition,
                     'battery_health' => $su->battery_health,
+                    'battery_cycle_count' => $su->battery_cycle_count,
                     'account_status' => $su->account_status,
                     'catatan' => $su->catatan,
                 ],

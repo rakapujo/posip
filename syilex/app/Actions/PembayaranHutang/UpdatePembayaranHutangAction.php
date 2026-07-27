@@ -31,6 +31,13 @@ class UpdatePembayaranHutangAction
         }
 
         return DB::transaction(function () use ($pembayaran, $data) {
+            $details = collect($data['details'] ?? []);
+            $usages = collect($data['deposit_usages'] ?? []);
+            if ($details->pluck('hutang_id')->duplicates()->isNotEmpty()
+                || $usages->pluck('deposit_id')->duplicates()->isNotEmpty()) {
+                throw ValidationException::withMessages(['details' => ['Alokasi hutang/deposit tidak boleh duplikat.']]);
+            }
+
             // Calculate totals
             $totalBayarCash = 0;
             $totalBayarDeposit = 0;
@@ -53,28 +60,39 @@ class UpdatePembayaranHutangAction
                 }
             }
 
-            // Validate deposit usage
-            if (!empty($data['deposit_usages'])) {
-                $calculatedDepositTotal = 0;
+            // Validate deposit usage — always match when deposit allocated (incl. empty usages).
+            $calculatedDepositTotal = 0.0;
+            if (! empty($data['deposit_usages'])) {
                 foreach ($data['deposit_usages'] as $usage) {
                     $deposit = SupplierDeposit::find($usage['deposit_id']);
-                    if (!$deposit || $deposit->supplier_id != $pembayaran->supplier_id) {
+                    if (! $deposit || $deposit->supplier_id != $pembayaran->supplier_id) {
                         throw ValidationException::withMessages([
                             'deposit_usages' => ['Deposit tidak valid atau bukan milik supplier yang dipilih.'],
                         ]);
                     }
                     $calculatedDepositTotal += (float) $usage['nominal_digunakan'];
                 }
-
-                // Validate deposit usage matches detail deposit amounts
-                if (abs($calculatedDepositTotal - $totalBayarDeposit) > 0.01) {
-                    throw ValidationException::withMessages([
-                        'deposit_usages' => ['Total deposit yang digunakan tidak sesuai dengan alokasi pembayaran.'],
-                    ]);
-                }
+            }
+            if (abs($calculatedDepositTotal - $totalBayarDeposit) > 0.01) {
+                throw ValidationException::withMessages([
+                    'deposit_usages' => ['Total deposit yang digunakan tidak sesuai dengan alokasi pembayaran.'],
+                ]);
             }
 
             $totalPembayaran = $totalBayarCash + $totalBayarDeposit;
+
+            if (! empty($data['details'])) {
+                $byHutang = collect($data['details'])->groupBy('hutang_id')
+                    ->map(fn ($rows) => (float) collect($rows)->sum('nominal_dibayar'));
+                foreach ($byHutang as $hutangId => $amount) {
+                    $hutang = SupplierHutang::find($hutangId);
+                    if ($hutang && $amount > (float) $hutang->sisa_hutang + 0.01) {
+                        throw ValidationException::withMessages([
+                            'details' => ['Total alokasi melebihi sisa hutang.'],
+                        ]);
+                    }
+                }
+            }
 
             // Format notes
             $notes = isset($data['notes'])

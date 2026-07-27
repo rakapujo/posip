@@ -2,6 +2,7 @@
 
 namespace App\Actions\Adjustment;
 
+use App\Actions\Serial\Concerns\ResolvesSelectedUnits;
 use App\Models\DocAdjustment;
 use App\Models\DocAdjustmentDetail;
 use App\Models\MasterProduk;
@@ -14,8 +15,8 @@ use App\Actions\Concerns\RequiresAuthenticatedUser;
 class UpdateAdjustmentAction
 {
     use RequiresAuthenticatedUser;
-
     use HasInventoryStock;
+    use ResolvesSelectedUnits;
 
     /**
      * Execute the action.
@@ -32,6 +33,16 @@ class UpdateAdjustmentAction
         }
 
         return DB::transaction(function () use ($adjustment, $data) {
+            if (! SettingService::isElektronikEnabled()) {
+                foreach ($data['details'] as $i => $detail) {
+                    if (! empty($detail['serial_unit_ids'])) {
+                        throw ValidationException::withMessages([
+                            "details.{$i}.serial_unit_ids" => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+                        ]);
+                    }
+                }
+            }
+
             // Format keterangan
             $keterangan = isset($data['keterangan'])
                 ? SettingService::formatName($data['keterangan'])
@@ -53,7 +64,7 @@ class UpdateAdjustmentAction
                 ->pluck('id');
 
             // Re-create details with fresh stock data
-            foreach ($data['details'] as $detail) {
+            foreach ($data['details'] as $i => $detail) {
                 $serialUnitIds = null;
                 $serialUnitStatuses = null;
                 $qty = $detail['qty'];
@@ -64,12 +75,22 @@ class UpdateAdjustmentAction
                             'details' => ['Produk serial tidak bisa ditambah via Adjustment. Gunakan Pembelian Serial.'],
                         ]);
                     }
-                    $serialUnitIds = $detail['serial_unit_ids'] ?? [];
-                    if (empty($serialUnitIds)) {
+                    $serialUnitIds = array_values(array_unique(array_filter(
+                        $detail['serial_unit_ids'] ?? [],
+                        fn ($u) => $u !== null && $u !== ''
+                    )));
+                    if ($serialUnitIds === []) {
                         throw ValidationException::withMessages([
                             'details' => ['Produk serial wajib memilih unit (nomor seri) yang dikeluarkan.'],
                         ]);
                     }
+                    $this->resolveSelectedUnits(
+                        $serialUnitIds,
+                        (int) $detail['product_id'],
+                        (int) $data['warehouse_id'],
+                        null,
+                        "details.{$i}.serial_unit_ids"
+                    );
                     $qty = count($serialUnitIds);
                     $serialUnitStatuses = $this->buildSerialUnitStatuses($serialUnitIds, $detail['serial_unit_statuses'] ?? []);
                 }

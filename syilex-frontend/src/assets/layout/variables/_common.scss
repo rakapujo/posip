@@ -17,4 +17,8 @@
     --focus-ring-color: var(--p-focus-ring-color);
     --focus-ring-offset: var(--p-focus-ring-offset);
     --focus-ring-shadow: var(--p-focus-ring-shadow);
+    /* Page density — mobile overrides in _responsive.scss */
+    --page-pad-x: 2rem;
+    --page-pad-top: 6rem;
+    --card-pad: 2rem;
 }

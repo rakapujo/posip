@@ -19,7 +19,7 @@ class ApplyScheduledPriceChangesCommand extends Command
      */
     protected $signature = 'price-change:apply
                             {--force : Force run even if scheduler is disabled}
-                            {--limit=50 : Maximum documents to process}';
+                            {--limit= : Maximum documents to process (default: scheduler.price_change_max_batch)}';
 
     /**
      * The console command description.
@@ -39,7 +39,11 @@ class ApplyScheduledPriceChangesCommand extends Command
             return Command::SUCCESS;
         }
 
-        $limit = (int) $this->option('limit');
+        $limitOpt = $this->option('limit');
+        $limit = ($limitOpt !== null && $limitOpt !== '')
+            ? (int) $limitOpt
+            : SettingService::getSchedulerMaxBatch('price_change');
+        $limit = max(1, min(500, $limit));
 
         $this->info('Checking for scheduled price changes...');
 
@@ -59,6 +63,7 @@ class ApplyScheduledPriceChangesCommand extends Command
         $action = new ApplyPriceChangeAction();
         $processedCount = 0;
         $failedCount = 0;
+        $skippedCount = 0;
         $documentNumbers = [];
 
         $progressBar = $this->output->createProgressBar($pendingDocuments->count());
@@ -66,9 +71,17 @@ class ApplyScheduledPriceChangesCommand extends Command
 
         foreach ($pendingDocuments as $document) {
             try {
-                if ($document->created_by) {
-                    Auth::loginUsingId($document->created_by);
+                if (! $document->created_by || ! Auth::loginUsingId($document->created_by)) {
+                    $skippedCount++;
+                    $this->line(" <comment>Skipped:</comment> {$document->nomor_dokumen} - created_by invalid");
+                    Log::warning('Skipped price change apply: invalid created_by', [
+                        'document_id' => $document->id,
+                        'nomor_dokumen' => $document->nomor_dokumen,
+                        'created_by' => $document->created_by,
+                    ]);
+                    continue;
                 }
+
                 $action->execute($document, $document->created_by, 'cron');
                 $processedCount++;
                 $documentNumbers[] = $document->nomor_dokumen;
@@ -82,6 +95,8 @@ class ApplyScheduledPriceChangesCommand extends Command
                     'nomor_dokumen' => $document->nomor_dokumen,
                     'error' => $e->getMessage(),
                 ]);
+            } finally {
+                Auth::logout();
             }
 
             $progressBar->advance();
@@ -109,6 +124,9 @@ class ApplyScheduledPriceChangesCommand extends Command
         // Summary
         $this->info("Summary:");
         $this->line("  - Processed: <info>{$processedCount}</info>");
+        if ($skippedCount > 0) {
+            $this->line("  - Skipped: <comment>{$skippedCount}</comment>");
+        }
         if ($failedCount > 0) {
             $this->line("  - Failed: <error>{$failedCount}</error>");
         }

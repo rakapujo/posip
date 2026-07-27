@@ -64,8 +64,8 @@ class PurchaseReportSerialTest extends TestCase
             'supplier_id' => $this->supplier->ulid,
             'diskon_1_tipe' => 'percent', 'diskon_1_nilai' => 10,
             'units' => [
-                ['serial_number' => 'SN-A', 'harga_modal' => 10000000, 'harga_jual' => 12000000, 'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'account_status' => 'unlocked'],
-                ['serial_number' => 'SN-B', 'harga_modal' => 20000000, 'harga_jual' => 23000000, 'grade' => 'B', 'battery_condition' => 'Original', 'battery_health' => 85, 'account_status' => 'unlocked'],
+                ['serial_number' => 'SN-A', 'harga_modal' => 10000000, 'harga_jual' => 12000000, 'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'battery_cycle_count' => 100, 'account_status' => 'unlocked'],
+                ['serial_number' => 'SN-B', 'harga_modal' => 20000000, 'harga_jual' => 23000000, 'grade' => 'B', 'battery_condition' => 'Original', 'battery_health' => 85, 'battery_cycle_count' => 150, 'account_status' => 'unlocked'],
             ],
         ];
         $res = $this->postJson('/api/v1/serial-intakes', $payload);

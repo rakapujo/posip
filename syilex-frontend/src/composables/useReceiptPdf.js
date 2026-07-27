@@ -1,6 +1,7 @@
 import { useFormatters } from './useFormatters';
 import { useSettingsStore } from '@/stores/settings';
 import { useNotification } from '@/composables/useNotification';
+import { createFittedThermalPdf } from '@/composables/print/fittedThermalPdf';
 
 /**
  * Composable for building receipt PDF documents (80mm thermal)
@@ -154,6 +155,9 @@ export function useReceiptPdf(options = {}) {
             } else if (u.battery_condition) {
                 parts.push(`Bat ${u.battery_condition}`);
             }
+            if (u.battery_cycle_count !== null && u.battery_cycle_count !== undefined && u.battery_cycle_count !== '') {
+                parts.push(`Cyc ${u.battery_cycle_count}`);
+            }
             if (u.account_status) parts.push(u.account_status);
             return parts.join(' · ');
         };
@@ -205,9 +209,16 @@ export function useReceiptPdf(options = {}) {
 
         // ─── Summary ───
         leftRight('Subtotal', formatCurrency(data.subtotal), 7);
-        // Label fallback chain: _disc_label_N (live from cart.discountLabels) →
-        // diskon_nota_N_label (persisted on doc_sales at checkout) → generic.
-        const discLabel = (n) => data[`_disc_label_${n}`] || data[`diskon_nota_${n}_label`] || `Disc Nota ${n}`;
+        // Label: live/_disc_label → persisted label → Disc 1/2/Manual + (tipe/nilai) like preview
+        const discFallback = (n) => (n === 3 ? 'Disc Manual' : `Disc ${n}`);
+        const discLabel = (n) => {
+            const base = data[`_disc_label_${n}`] || data[`diskon_nota_${n}_label`] || discFallback(n);
+            const tipe = data[`diskon_nota_${n}_tipe`];
+            const nilai = Number(data[`diskon_nota_${n}_nilai`] || 0);
+            if (!tipe || tipe === 'none' || !nilai) return base;
+            const v = tipe === 'percent' ? formatPercent(nilai) : formatCurrency(nilai);
+            return `${base} (${v})`;
+        };
         if (Number(data.diskon_nota_1_hasil) > 0) leftRight(discLabel(1), `-${formatCurrency(data.diskon_nota_1_hasil)}`, 7);
         if (Number(data.diskon_nota_2_hasil) > 0) leftRight(discLabel(2), `-${formatCurrency(data.diskon_nota_2_hasil)}`, 7);
         if (Number(data.diskon_nota_3_hasil) > 0) leftRight(discLabel(3), `-${formatCurrency(data.diskon_nota_3_hasil)}`, 7);
@@ -301,8 +312,6 @@ export function useReceiptPdf(options = {}) {
 
             doc.setFontSize(7);
             leftRight('Total Semua Retur', formatCurrency(totalRetur), 7);
-            doc.setFontSize(6);
-            leftRight('  Refund Tunai', formatCurrency(totalRetur), 6);
 
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(8);
@@ -352,12 +361,6 @@ export function useReceiptPdf(options = {}) {
         return y;
     };
 
-    const finalizeReceiptPdf = (doc, contentBottomY) => {
-        if (doc.getNumberOfPages() === 1) {
-            doc.internal.pageSize.height = Math.max(contentBottomY + 10, 40);
-        }
-    };
-
     /**
      * Download receipt as PDF file
      *
@@ -366,13 +369,14 @@ export function useReceiptPdf(options = {}) {
      */
     const downloadReceiptPdf = async (data, pdfOptions = {}) => {
         if (!data) return;
-        const { jsPDF } = await import('jspdf');
-        // Page height 500mm accommodates long receipts (many items + retur history + multi-line footer).
-        // jsPDF auto-crops unused bottom space; oversized page never hurts.
-        const doc = new jsPDF({ unit: 'mm', format: [80, 500] });
-        const finalY = buildReceiptPdf(data, doc, pdfOptions);
-        finalizeReceiptPdf(doc, finalY);
+        const doc = await createFittedThermalPdf((d) => buildReceiptPdf(data, d, pdfOptions));
         doc.save(`${data.nomor_dokumen}.pdf`);
+    };
+
+    const buildReceiptPdfBlob = async (data, pdfOptions = {}) => {
+        if (!data) return null;
+        const doc = await createFittedThermalPdf((d) => buildReceiptPdf(data, d, pdfOptions));
+        return doc.output('blob');
     };
 
     /**
@@ -383,34 +387,33 @@ export function useReceiptPdf(options = {}) {
      */
     const printReceiptPdf = async (data, pdfOptions = {}) => {
         if (!data) return;
-        const { jsPDF } = await import('jspdf');
-        // Page height 500mm accommodates long receipts (many items + retur history + multi-line footer).
-        // jsPDF auto-crops unused bottom space; oversized page never hurts.
-        const doc = new jsPDF({ unit: 'mm', format: [80, 500] });
-        const finalY = buildReceiptPdf(data, doc, pdfOptions);
-        finalizeReceiptPdf(doc, finalY);
+        const doc = await createFittedThermalPdf((d) => buildReceiptPdf(data, d, pdfOptions));
         const pdfBlob = doc.output('blob');
         const url = URL.createObjectURL(pdfBlob);
-        const printWindow = window.open(url);
+        const printWindow = window.open(url, '_blank');
         if (!printWindow) {
             URL.revokeObjectURL(url);
             notify?.warn('Popup diblokir browser. Izinkan popup untuk print, atau gunakan Download PDF.');
             return;
         }
-        printWindow.addEventListener(
-            'load',
-            () => {
+        const doPrint = () => {
+            try {
+                printWindow.focus();
                 printWindow.print();
-                setTimeout(() => URL.revokeObjectURL(url), 60_000);
-            },
-            { once: true }
-        );
+            } catch {
+                /* user can print manually */
+            }
+        };
+        printWindow.addEventListener('load', () => setTimeout(doPrint, 800), { once: true });
+        setTimeout(doPrint, 1500);
+        setTimeout(() => URL.revokeObjectURL(url), 120_000);
     };
 
     return {
         formatDiscLine,
         buildReceiptPdf,
         buildReturPolicyText,
+        buildReceiptPdfBlob,
         downloadReceiptPdf,
         printReceiptPdf
     };

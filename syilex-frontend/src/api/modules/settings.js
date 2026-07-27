@@ -60,6 +60,9 @@ export const settingsApi = {
      */
     getPublic: () => client.get('/settings/public'),
 
+    /** Business settings for authenticated users (tax/stock/promo/…) */
+    getRuntime: () => client.get('/settings/runtime'),
+
     /**
      * Check if price input mode is locked (products exist)
      * @returns {Promise} - { locked: boolean, product_count: number, message: string }

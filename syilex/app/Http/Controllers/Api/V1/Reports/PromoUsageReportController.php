@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Reports;
 
 use App\Http\Controllers\Api\BaseApiController;
 use App\Models\DocPromo;
+use App\Services\ReportHelperService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +19,7 @@ use Illuminate\Support\Facades\DB;
  *  - Jumlah transaksi pakai (distinct sales_id)
  *  - Qty item terjual via promo (SUM qty_base)
  *  - Total diskon (SUM diskon_total dari item yang promo_id = X)
- *  - Revenue item setelah diskon (SUM jumlah)
+ *  - Revenue item setelah diskon (SUM jumlah), netted dengan retur lock/approved (S1-style, mirip GrossProfit)
  *
  * Permission: laporan.promo.
  */
@@ -32,6 +33,8 @@ class PromoUsageReportController extends BaseApiController
         $filters = $this->parseFilters($request);
 
         $base = $this->baseQuery($from, $to, $filters);
+        // Nett = nota-allocated revenue. Return netting (lock/approved) subtracted below.
+        $nett = ReportHelperService::salesLineNettExpr('d', 's');
 
         $agg = (clone $base)
             ->select(
@@ -39,14 +42,21 @@ class PromoUsageReportController extends BaseApiController
                 DB::raw('COUNT(DISTINCT d.sales_id) as trx_count'),
                 DB::raw('COALESCE(SUM(d.qty_base), 0) as qty_total'),
                 DB::raw('COALESCE(SUM(d.diskon_total), 0) as diskon_total'),
-                DB::raw('COALESCE(SUM(d.jumlah), 0) as revenue_net')
+                DB::raw("COALESCE(SUM({$nett}), 0) as revenue_net")
             )
             ->first();
+
+        $ret = $this->returnNettingQuery($from, $to, $filters)->first();
 
         // Total promo yang approved + periode aktif (denominator)
         $totalPromos = DocPromo::query()
             ->where('status', 'approved')
             ->count();
+
+        $diskonTotal = (float) $agg->diskon_total - (float) $ret->diskon_returned;
+        $revenueNet = (float) $agg->revenue_net - (float) $ret->revenue_returned;
+        // B3.3: ROI = diskon (cost promo) / revenue_net — makin rendah makin efisien. div0-safe.
+        $roiPercent = $revenueNet > 0 ? round(($diskonTotal / $revenueNet) * 100, 2) : 0;
 
         return $this->success([
             'period' => ['from' => $from, 'to' => $to],
@@ -54,8 +64,9 @@ class PromoUsageReportController extends BaseApiController
             'total_promos_approved' => (int) $totalPromos,
             'trx_count' => (int) $agg->trx_count,
             'qty_total' => (float) $agg->qty_total,
-            'diskon_total' => (float) $agg->diskon_total,
-            'revenue_net' => (float) $agg->revenue_net,
+            'diskon_total' => $diskonTotal,
+            'revenue_net' => $revenueNet,
+            'roi_percent' => $roiPercent,
         ]);
     }
 
@@ -67,30 +78,38 @@ class PromoUsageReportController extends BaseApiController
         $filters = $this->parseFilters($request);
         $sort = $request->input('sort', 'diskon_desc');
 
+        $nett = ReportHelperService::salesLineNettExpr('d', 's');
+
         $used = $this->baseQuery($from, $to, $filters)
             ->select(
                 'd.promo_id',
                 DB::raw('COUNT(DISTINCT d.sales_id) as trx_count'),
                 DB::raw('COALESCE(SUM(d.qty_base), 0) as qty_total'),
                 DB::raw('COALESCE(SUM(d.diskon_total), 0) as diskon_total'),
-                DB::raw('COALESCE(SUM(d.jumlah), 0) as revenue_net')
+                DB::raw("COALESCE(SUM({$nett}), 0) as revenue_net")
             )
             ->groupBy('d.promo_id')
             ->get();
 
+        $retByPromo = $this->returnNettingQuery($from, $to, $filters, groupByPromo: true)
+            ->get()
+            ->keyBy('promo_id');
+
         $promoIds = $used->pluck('promo_id')->filter()->all();
         $promos = DocPromo::whereIn('id', $promoIds)
-            ->select('id', 'ulid', 'kode_promo', 'nama_promo', 'tanggal_mulai', 'tanggal_selesai', 'jam_mulai', 'jam_selesai', 'status')
+            ->select('id', 'ulid', 'kode_promo', 'nama_promo', 'channel', 'tanggal_mulai', 'tanggal_selesai', 'jam_mulai', 'jam_selesai', 'status')
             ->get()
             ->keyBy('id');
 
-        $rows = $used->map(function ($u) use ($promos) {
+        $rows = $used->map(function ($u) use ($promos, $retByPromo) {
             $promo = $promos->get($u->promo_id);
+            $ret = $retByPromo->get($u->promo_id);
             return [
                 'promo_id' => $u->promo_id,
                 'promo_ulid' => $promo?->ulid,
                 'kode_promo' => $promo?->kode_promo,
                 'nama_promo' => $promo?->nama_promo,
+                'channel' => $promo?->channel,
                 'periode' => [
                     'tanggal_mulai' => $promo?->tanggal_mulai,
                     'tanggal_selesai' => $promo?->tanggal_selesai,
@@ -100,8 +119,8 @@ class PromoUsageReportController extends BaseApiController
                 'status' => $promo?->status,
                 'trx_count' => (int) $u->trx_count,
                 'qty_total' => (float) $u->qty_total,
-                'diskon_total' => (float) $u->diskon_total,
-                'revenue_net' => (float) $u->revenue_net,
+                'diskon_total' => (float) $u->diskon_total - (float) ($ret->diskon_returned ?? 0),
+                'revenue_net' => (float) $u->revenue_net - (float) ($ret->revenue_returned ?? 0),
             ];
         });
 
@@ -114,9 +133,16 @@ class PromoUsageReportController extends BaseApiController
 
         // Tambah promo yang approved tapi tidak dipakai di periode (zero usage)
         if ($request->boolean('include_unused')) {
-            $unusedPromos = DocPromo::where('status', 'approved')
-                ->whereNotIn('id', $promoIds)
-                ->select('id', 'ulid', 'kode_promo', 'nama_promo', 'tanggal_mulai', 'tanggal_selesai', 'jam_mulai', 'jam_selesai', 'status')
+            $unusedQuery = DocPromo::where('status', 'approved')
+                ->whereNotIn('id', $promoIds);
+            if ($filters['channel']) {
+                $unusedQuery->where(function ($w) use ($filters) {
+                    $w->where('channel', $filters['channel'])
+                        ->orWhere('channel', 'keduanya');
+                });
+            }
+            $unusedPromos = $unusedQuery
+                ->select('id', 'ulid', 'kode_promo', 'nama_promo', 'channel', 'tanggal_mulai', 'tanggal_selesai', 'jam_mulai', 'jam_selesai', 'status')
                 ->get();
 
             $unusedRows = $unusedPromos->map(fn ($p) => [
@@ -124,6 +150,7 @@ class PromoUsageReportController extends BaseApiController
                 'promo_ulid' => $p->ulid,
                 'kode_promo' => $p->kode_promo,
                 'nama_promo' => $p->nama_promo,
+                'channel' => $p->channel,
                 'periode' => [
                     'tanggal_mulai' => $p->tanggal_mulai,
                     'tanggal_selesai' => $p->tanggal_selesai,
@@ -231,9 +258,14 @@ class PromoUsageReportController extends BaseApiController
 
     private function parseFilters(Request $request): array
     {
+        $channel = $request->input('channel');
+        $source = $request->input('source');
+
         return [
             'terminal_id' => $request->filled('terminal_id') ? (int) $request->terminal_id : null,
             'customer_type_id' => $request->filled('customer_type_id') ? (int) $request->customer_type_id : null,
+            'channel' => in_array($channel, ['pos', 'penjualan', 'keduanya'], true) ? $channel : null,
+            'source' => in_array($source, ['pos', 'manual'], true) ? $source : null,
         ];
     }
 
@@ -248,10 +280,67 @@ class PromoUsageReportController extends BaseApiController
         if ($filters['terminal_id']) {
             $q->where('s.terminal_id', $filters['terminal_id']);
         }
+        if ($filters['source']) {
+            $q->where('s.source', $filters['source']);
+        }
+        if ($filters['channel']) {
+            $q->join('doc_promo as pr', 'pr.id', '=', 'd.promo_id')
+                ->where(function ($w) use ($filters) {
+                    $w->where('pr.channel', $filters['channel'])
+                        ->orWhere('pr.channel', 'keduanya');
+                });
+        }
         if ($filters['customer_type_id']) {
             $q->join('master_customer as c', 'c.id', '=', 's.customer_id')
               ->where('c.tipe_customer_id', $filters['customer_type_id']);
         }
+        return $q;
+    }
+
+    /**
+     * Retur (lock/approved) joined back to the original promo line via sales_detail_id,
+     * netted against revenue AND diskon — same S1 approach as GrossProfitReportResolver.
+     */
+    private function returnNettingQuery(string $from, string $to, array $filters, bool $groupByPromo = false)
+    {
+        $retNett = ReportHelperService::returnLineDiskonProrataExpr('rd', 'sd');
+        $retRev = ReportHelperService::returnLineRevenueExpr('rd');
+
+        $q = DB::table('doc_sales_return_detail as rd')
+            ->join('doc_sales_returns as r', 'r.id', '=', 'rd.return_id')
+            ->join('doc_sales_detail as sd', 'sd.id', '=', 'rd.sales_detail_id')
+            ->whereIn('r.status', ['lock', 'approved'])
+            ->whereNotNull('sd.promo_id')
+            ->whereBetween('r.tanggal', [$from.' 00:00:00', $to.' 23:59:59']);
+
+        if ($filters['terminal_id']) {
+            $q->where('r.terminal_id', $filters['terminal_id']);
+        }
+        if ($filters['source']) {
+            $q->join('doc_sales as s', 's.id', '=', 'r.sales_id')
+                ->where('s.source', $filters['source']);
+        }
+        if ($filters['channel']) {
+            $q->join('doc_promo as pr', 'pr.id', '=', 'sd.promo_id')
+                ->where(function ($w) use ($filters) {
+                    $w->where('pr.channel', $filters['channel'])
+                        ->orWhere('pr.channel', 'keduanya');
+                });
+        }
+        if ($filters['customer_type_id']) {
+            $q->join('master_customer as c', 'c.id', '=', 'r.customer_id')
+              ->where('c.tipe_customer_id', $filters['customer_type_id']);
+        }
+
+        $q->select(
+            DB::raw("COALESCE(SUM({$retNett}), 0) as diskon_returned"),
+            DB::raw("COALESCE(SUM({$retRev}), 0) as revenue_returned")
+        );
+
+        if ($groupByPromo) {
+            $q->addSelect('sd.promo_id')->groupBy('sd.promo_id');
+        }
+
         return $q;
     }
 }

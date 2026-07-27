@@ -12,6 +12,12 @@ const { formatCurrency, formatDateTime, todayString, getPrimeDateFormatShort } =
 const { exporting, exportListPdf } = useExportPdf();
 const canExport = computed(() => authStore.can('laporan.export'));
 
+const reportMode = ref('bruto');
+const modeOptions = [
+    { label: 'Bruto', value: 'bruto' },
+    { label: 'Net', value: 'net' }
+];
+
 const selectedTerminal = ref(null);
 
 const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, lazyParams, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams } = useReportList({
@@ -20,9 +26,10 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
     exportFilenamePrefix: 'laporan_disc_nota',
     fetchDropdowns: salesFinancialReportApi.getDropdowns,
     listErrorLabel: 'laporan disc nota',
-    getExtraFilters: () => ({ terminal_id: selectedTerminal.value }),
+    getExtraFilters: () => ({ terminal_id: selectedTerminal.value, mode: reportMode.value }),
     onResetFilters: () => {
         selectedTerminal.value = null;
+        reportMode.value = 'bruto';
     },
     defaultSortField: 'tanggal'
 });
@@ -76,6 +83,7 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
+                    <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
                     <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="onFilterChange" />
                     <div class="w-40">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
@@ -88,23 +96,25 @@ async function exportPdf() {
             </template>
         </Toolbar>
 
+        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: baris, ringkasan, dan export sudah dikurangi retur</Message>
+
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Jumlah Nota</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.jumlah_nota }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.jumlah_nota }}</div>
             </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Total Subtotal</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_subtotal) }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_subtotal) }}</div>
             </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                 <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Diskon Nota</div>
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
+                <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
             </div>
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                 <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Total Setelah Diskon</div>
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_setelah_diskon) }}</div>
+                <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_setelah_diskon) }}</div>
             </div>
         </div>
 

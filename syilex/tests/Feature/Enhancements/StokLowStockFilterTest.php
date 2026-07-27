@@ -188,10 +188,28 @@ class StokLowStockFilterTest extends TestCase
         ]);
         StockCard::$skipObserver = false;
 
-        // Filter low_stock global (tanpa warehouse) → produk muncul karena ADA gudang
+        // Filter low-stock global (tanpa warehouse) → produk muncul karena ADA gudang
         // yang low (whereHas any stock < min). Ini perilaku endpoint saat ini.
         $codes = $this->lowStockCodes();
         $this->assertContains($prod->kode_produk, $codes);
+
+        // Filter low_stock + warehouse utama → TIDAK muncul (qty di gudang ini cukup)
+        $codesWhUtama = collect(
+            $this->actingAs($this->viewer)
+                ->getJson("/api/v1/inventory/stocks?low_stock=1&warehouse_id={$this->warehouseId}")
+                ->assertOk()
+                ->json('data.products')
+        )->pluck('kode_produk')->all();
+        $this->assertNotContains($prod->kode_produk, $codesWhUtama);
+
+        // Filter low_stock + gudang lain → muncul
+        $codesWhLain = collect(
+            $this->actingAs($this->viewer)
+                ->getJson("/api/v1/inventory/stocks?low_stock=1&warehouse_id={$whLain->id}")
+                ->assertOk()
+                ->json('data.products')
+        )->pluck('kode_produk')->all();
+        $this->assertContains($prod->kode_produk, $codesWhLain);
 
         $this->assertSame(0, Artisan::call('data:verify', ['--fail-on-mismatch' => true]));
     }

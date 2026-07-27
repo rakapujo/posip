@@ -1,0 +1,56 @@
+---
+description: POSIP business flows — HPP, stock_card, checkout, dokumen, serial
+alwaysApply: true
+---
+
+# POSIP business flows
+
+## Customer Walk-in vs Spesifik
+
+- `jenis=walk_in` = default terminal POS saja
+- Modul Penjualan BO (Sales, Retur, Piutang, Pembayaran, Deposit): **hanya** `spesifik` — FE `getList({ jenis: 'spesifik' })`, BE `CustomerRules::backofficeBlockMessage`
+
+## Checkout POS (anti-fraud)
+
+- FE kirim `items[]` + `diskon_5_*` + header **`Idempotency-Key` wajib** (`idempotency:required`)
+- BE rebuild `diskon_1..4` dari promo; rebuild `konversi`/`qty_base`/`harga_satuan` dari master (serial: `harga_jual`)
+- Bind `warehouse_id` = terminal WH; allow-list metode kosong = 422
+- Retur POS: `izinkan_retur`; Q5 SN retur OK saat elektronik OFF; bind `sales.terminal_id`
+- Email struk: config per Terminal (`mail_driver` none|smtp|resend) + `POST /pos/sales/{ulid}/email-receipt`
+- Audit: `docs/quality/audits/39-pos-terminal.md` · `40-pos-kasir.md`
+
+## HPP (non-serial)
+
+- Recalc weighted: approve PO / Pembelian Serial, `ADJUSTMENT_IN`, Repack hasil
+- **TIDAK** recalc di SALES / SALES_RETURN / PURCHASE_RETURN / TRANSFER / ADJUSTMENT_OUT
+- Formula: `MasterProduk::recalculateAvgCost` — guard `totalQty <= 0`
+
+## HPP serial (Metode A)
+
+- Setelah jual/void/retur: `avg_cost` = rata `cost_per_unit` unit `tersedia`
+
+## Stock invariant
+
+- Mutasi `inventory_stock` **WAJIB** pair `stock_card` dalam transaksi yang sama
+- Verifikasi: `php artisan data:verify`
+
+## Status dokumen (string)
+
+| Alur | Status tipikal |
+|------|----------------|
+| Sales POS | completed / voided |
+| Sales BO | draft → completed |
+| PO | draft / approved / cancelled |
+| Retur beli/jual BO | draft → lock → approved |
+| Price change | draft / scheduled / applied / cancelled |
+
+## Serial (ringkas)
+
+- Identitas unit = `kode_internal` (UNIQUE); SN boleh kembar — pilih via **ulid**
+- PBS: draft → approve; menu Pembelian → `/app/inventory/serial-intake`
+- Flag: `modules.elektronik_enabled` + middleware `feature.elektronik`
+- Detail: `docs/domain/serial.md`
+
+## Scheduler
+
+- Price change: Artisan `price-change:apply` via `routes/console.php` + cron `schedule:run` — **bukan** middleware API

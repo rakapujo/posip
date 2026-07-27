@@ -81,8 +81,10 @@ class GrupController extends BaseApiController
                     return $this->error('Kategori Produk tidak aktif', 422);
                 }
 
-                if ($grup->status === 'active' && $validated['status'] === 'inactive' && $grup->products()->exists()) {
-                    return $this->error('Tidak dapat menonaktifkan Grup Produk karena masih digunakan oleh produk', 422);
+                if ($grup->status === 'active' && $validated['status'] === 'inactive') {
+                    if ($message = \App\Services\GrupRules::deactivationBlockMessage($grup)) {
+                        return $this->error($message, 422);
+                    }
                 }
 
                 return null;
@@ -136,8 +138,10 @@ class GrupController extends BaseApiController
             'after_update' => fn (MasterGrup $grup) => $this->loadGrupRelations($grup),
             'after_toggle' => fn (MasterGrup $grup) => $this->loadGrupRelations($grup),
             'before_toggle' => function (MasterGrup $grup) {
-                if ($grup->status === 'active' && $grup->products()->exists()) {
-                    return $this->error('Tidak dapat menonaktifkan Grup Produk karena masih digunakan oleh produk', 422);
+                if ($grup->status === 'active') {
+                    if ($message = \App\Services\GrupRules::deactivationBlockMessage($grup)) {
+                        return $this->error($message, 422);
+                    }
                 }
 
                 return null;

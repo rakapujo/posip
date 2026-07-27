@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\BaseApiController;
 use App\Models\DocPromo;
-use App\Models\DocPromoDetail;
 use App\Models\MasterGrup;
 use App\Models\MasterKategori;
 use App\Models\MasterProduk;
@@ -23,7 +22,7 @@ class PromoController extends BaseApiController
      */
     public function index(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('promo.view')) {
+        if (! auth()->user()->can('promo.view')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat promo.');
         }
 
@@ -49,15 +48,20 @@ class PromoController extends BaseApiController
             $query->byDisplayStatus($request->status);
         }
 
-        // Filter by periode
-        if ($request->filled('date_from')) {
-            $query->where('tanggal_mulai', '>=', $request->date_from);
-        }
-        if ($request->filled('date_to')) {
+        // Filter by periode — overlap (bukan containment)
+        if ($request->filled('date_from') && $request->filled('date_to')) {
+            $query->where('tanggal_mulai', '<=', $request->date_to)
+                ->where(function ($q) use ($request) {
+                    $q->whereNull('tanggal_selesai')
+                        ->orWhere('tanggal_selesai', '>=', $request->date_from);
+                });
+        } elseif ($request->filled('date_from')) {
             $query->where(function ($q) use ($request) {
                 $q->whereNull('tanggal_selesai')
-                    ->orWhere('tanggal_selesai', '<=', $request->date_to);
+                    ->orWhere('tanggal_selesai', '>=', $request->date_from);
             });
+        } elseif ($request->filled('date_to')) {
+            $query->where('tanggal_mulai', '<=', $request->date_to);
         }
 
         // Sort
@@ -76,6 +80,7 @@ class PromoController extends BaseApiController
         // Attach computed display_status
         $promos->getCollection()->transform(function ($p) {
             $p->display_status = $p->getDisplayStatus();
+
             return $p;
         });
 
@@ -95,7 +100,7 @@ class PromoController extends BaseApiController
      */
     public function show(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.view')) {
+        if (! auth()->user()->can('promo.view')) {
             return $this->forbidden();
         }
 
@@ -109,13 +114,19 @@ class PromoController extends BaseApiController
             'details',
         ])->where('ulid', $ulid)->first();
 
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
+
+        // Nested masters hide `id` — expose for edit form scope binding
+        $promo->customerType?->makeVisible('id');
+        $promo->customerCategory?->makeVisible('id');
+        $promo->terminal?->makeVisible('id');
 
         // Resolve target names for each detail
         $promo->details->transform(function ($d) {
             $d->target_name = $this->resolveTargetName($d->target_type, $d->target_id);
+
             return $d;
         });
 
@@ -129,7 +140,7 @@ class PromoController extends BaseApiController
      */
     public function store(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('promo.create')) {
+        if (! auth()->user()->can('promo.create')) {
             return $this->forbidden('Anda tidak memiliki akses untuk membuat promo.');
         }
 
@@ -137,14 +148,16 @@ class PromoController extends BaseApiController
 
         return DB::transaction(function () use ($validated) {
             $nomorDokumen = SettingService::generateDocumentNumber('promo', 'doc_promo', 'kode_promo');
+            $channel = $validated['channel'] ?? 'keduanya';
 
             $promo = DocPromo::create([
                 'kode_promo' => $nomorDokumen,
                 'nama_promo' => SettingService::formatName($validated['nama_promo']),
                 'deskripsi' => $validated['deskripsi'] ?? null,
+                'channel' => $channel,
                 'customer_type_id' => $validated['customer_type_id'] ?? null,
                 'customer_category_id' => $validated['customer_category_id'] ?? null,
-                'terminal_id' => $validated['terminal_id'] ?? null,
+                'terminal_id' => $channel === 'penjualan' ? null : ($validated['terminal_id'] ?? null),
                 'tanggal_mulai' => $validated['tanggal_mulai'],
                 'tanggal_selesai' => $validated['tanggal_selesai'] ?? null,
                 'jam_mulai' => $validated['jam_mulai'] ?? null,
@@ -158,6 +171,7 @@ class PromoController extends BaseApiController
             }
 
             $promo->load(['details', 'customerType', 'customerCategory', 'terminal']);
+
             return $this->created(['promo' => $promo], 'Promo berhasil dibuat.');
         });
     }
@@ -168,28 +182,31 @@ class PromoController extends BaseApiController
      */
     public function update(Request $request, string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.update')) {
+        if (! auth()->user()->can('promo.update')) {
             return $this->forbidden();
         }
 
         $promo = DocPromo::where('ulid', $ulid)->first();
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
 
-        if (!$promo->isDraft()) {
+        if (! $promo->isDraft()) {
             return $this->error('Promo hanya bisa diedit saat status draft. Batalkan approval terlebih dahulu.', 422);
         }
 
         $validated = $this->validateRequest($request);
 
         return DB::transaction(function () use ($promo, $validated) {
+            $channel = $validated['channel'] ?? $promo->channel;
+
             $promo->update([
                 'nama_promo' => SettingService::formatName($validated['nama_promo']),
                 'deskripsi' => $validated['deskripsi'] ?? null,
+                'channel' => $channel,
                 'customer_type_id' => $validated['customer_type_id'] ?? null,
                 'customer_category_id' => $validated['customer_category_id'] ?? null,
-                'terminal_id' => $validated['terminal_id'] ?? null,
+                'terminal_id' => $channel === 'penjualan' ? null : ($validated['terminal_id'] ?? null),
                 'tanggal_mulai' => $validated['tanggal_mulai'],
                 'tanggal_selesai' => $validated['tanggal_selesai'] ?? null,
                 'jam_mulai' => $validated['jam_mulai'] ?? null,
@@ -204,6 +221,7 @@ class PromoController extends BaseApiController
             }
 
             $promo->load(['details', 'customerType', 'customerCategory', 'terminal']);
+
             return $this->success(['promo' => $promo], 'Promo berhasil diupdate.');
         });
     }
@@ -214,20 +232,21 @@ class PromoController extends BaseApiController
      */
     public function destroy(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.delete')) {
+        if (! auth()->user()->can('promo.delete')) {
             return $this->forbidden();
         }
 
         $promo = DocPromo::where('ulid', $ulid)->first();
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
 
-        if (!$promo->isDraft()) {
+        if (! $promo->isDraft()) {
             return $this->error('Promo hanya bisa dihapus saat status draft.', 422);
         }
 
         $promo->delete();
+
         return $this->success(null, 'Promo berhasil dihapus.');
     }
 
@@ -237,16 +256,16 @@ class PromoController extends BaseApiController
      */
     public function approve(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.approve')) {
+        if (! auth()->user()->can('promo.approve')) {
             return $this->forbidden();
         }
 
         $promo = DocPromo::with('details')->where('ulid', $ulid)->first();
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
 
-        if (!$promo->isDraft()) {
+        if (! $promo->isDraft()) {
             return $this->error('Hanya promo status draft yang bisa di-approve.', 422);
         }
 
@@ -261,10 +280,11 @@ class PromoController extends BaseApiController
                     return true;
                 }
             }
+
             return false;
         });
 
-        if (!$hasDiscount) {
+        if (! $hasDiscount) {
             return $this->error('Minimal 1 detail baris harus memiliki diskon (tidak semua none/0).', 422);
         }
 
@@ -275,6 +295,7 @@ class PromoController extends BaseApiController
         ]);
 
         $promo->load(['details', 'customerType', 'customerCategory', 'terminal']);
+
         return $this->success(['promo' => $promo], 'Promo berhasil di-approve.');
     }
 
@@ -284,16 +305,16 @@ class PromoController extends BaseApiController
      */
     public function cancel(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.approve')) {
+        if (! auth()->user()->can('promo.approve')) {
             return $this->forbidden();
         }
 
         $promo = DocPromo::where('ulid', $ulid)->first();
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
 
-        if (!$promo->isApproved()) {
+        if (! $promo->isApproved()) {
             return $this->error('Hanya promo status approved yang bisa dibatalkan.', 422);
         }
 
@@ -305,6 +326,7 @@ class PromoController extends BaseApiController
         ]);
 
         $promo->load(['details', 'customerType', 'customerCategory', 'terminal']);
+
         return $this->success(['promo' => $promo], 'Approval promo berhasil dibatalkan, kembali ke draft.');
     }
 
@@ -314,16 +336,16 @@ class PromoController extends BaseApiController
      */
     public function deactivate(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.toggle')) {
+        if (! auth()->user()->can('promo.toggle')) {
             return $this->forbidden();
         }
 
         $promo = DocPromo::where('ulid', $ulid)->first();
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
 
-        if (!$promo->isApproved()) {
+        if (! $promo->isApproved()) {
             return $this->error('Hanya promo status approved/active yang bisa dinonaktifkan.', 422);
         }
 
@@ -333,6 +355,7 @@ class PromoController extends BaseApiController
         ]);
 
         $promo->load(['details', 'customerType', 'customerCategory', 'terminal']);
+
         return $this->success(['promo' => $promo], 'Promo berhasil dinonaktifkan.');
     }
 
@@ -342,16 +365,16 @@ class PromoController extends BaseApiController
      */
     public function reactivate(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('promo.toggle')) {
+        if (! auth()->user()->can('promo.toggle')) {
             return $this->forbidden();
         }
 
         $promo = DocPromo::where('ulid', $ulid)->first();
-        if (!$promo) {
+        if (! $promo) {
             return $this->notFound('Promo tidak ditemukan.');
         }
 
-        if (!$promo->isInactive()) {
+        if (! $promo->isInactive()) {
             return $this->error('Hanya promo status inactive yang bisa diaktifkan kembali.', 422);
         }
 
@@ -361,6 +384,7 @@ class PromoController extends BaseApiController
         ]);
 
         $promo->load(['details', 'customerType', 'customerCategory', 'terminal']);
+
         return $this->success(['promo' => $promo], 'Promo berhasil diaktifkan kembali.');
     }
 
@@ -374,6 +398,7 @@ class PromoController extends BaseApiController
         return $request->validate([
             'nama_promo' => 'required|string|max:100',
             'deskripsi' => 'nullable|string',
+            'channel' => ['sometimes', Rule::in(['pos', 'penjualan', 'keduanya'])],
             'customer_type_id' => 'nullable|exists:master_tipe_customer,id',
             'customer_category_id' => 'nullable|exists:master_kategori_customer,id',
             'terminal_id' => 'nullable|exists:master_pos_terminal,id',
@@ -413,7 +438,7 @@ class PromoController extends BaseApiController
         }
 
         return match ($targetType) {
-            'produk' => MasterProduk::where('id', $targetId)->value('nama_produk'),
+            'produk' => MasterProduk::withTrashed()->where('id', $targetId)->value('nama_produk'),
             'grup' => MasterGrup::where('id', $targetId)->value('nama_grup'),
             'kategori' => MasterKategori::where('id', $targetId)->value('nama_kategori'),
             default => null,

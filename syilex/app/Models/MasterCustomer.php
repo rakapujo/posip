@@ -3,17 +3,17 @@
 namespace App\Models;
 
 use App\Casts\LocalDateTime;
-use App\Traits\HasUlid;
+use App\Traits\HasAuditLog;
 use App\Traits\HasCreatedUpdatedBy;
+use App\Traits\HasUlid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Traits\HasAuditLog;
 
 class MasterCustomer extends Model
 {
     // SoftDeletes untuk jaga integritas relasi ke Doc Sales historis.
-    use HasFactory, HasUlid, HasCreatedUpdatedBy, SoftDeletes, HasAuditLog;
+    use HasAuditLog, HasCreatedUpdatedBy, HasFactory, HasUlid, SoftDeletes;
 
     /**
      * The table associated with the model.
@@ -38,6 +38,7 @@ class MasterCustomer extends Model
         'npwp',
         'tipe_customer_id',
         'kategori_customer_id',
+        'tempo_default',
         'jenis',
         'status',
         'created_by',
@@ -65,6 +66,7 @@ class MasterCustomer extends Model
         return [
             'created_at' => LocalDateTime::class,
             'updated_at' => LocalDateTime::class,
+            'tempo_default' => 'integer',
         ];
     }
 
@@ -146,5 +148,15 @@ class MasterCustomer extends Model
     public function sales()
     {
         return $this->hasMany(\App\Models\DocSales::class, 'customer_id');
+    }
+
+    public function piutang()
+    {
+        return $this->hasMany(CustomerPiutang::class, 'customer_id');
+    }
+
+    public function deposits()
+    {
+        return $this->hasMany(CustomerDeposit::class, 'customer_id');
     }
 }

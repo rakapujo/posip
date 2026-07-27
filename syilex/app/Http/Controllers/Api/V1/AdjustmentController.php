@@ -82,6 +82,7 @@ class AdjustmentController extends BaseApiController
 
         $query = DocAdjustment::with([
                 'warehouse:id,ulid,kode_warehouse,nama_warehouse',
+                'opname:id,ulid,nomor_dokumen',
                 'createdBy:id,name',
                 'details:id,adjustment_id,notes'
             ])
@@ -181,6 +182,7 @@ class AdjustmentController extends BaseApiController
 
         $adjustment = DocAdjustment::with([
             'warehouse:id,ulid,kode_warehouse,nama_warehouse',
+            'opname:id,ulid,nomor_dokumen',
             'details.product:id,ulid,kode_produk,nama_produk,barcode,is_serial',
             'createdBy:id,name,email',
             'updatedBy:id,name,email',
@@ -319,7 +321,7 @@ class AdjustmentController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('adjustment.create')) {
+        if (!auth()->user()->canAny(['adjustment.create', 'adjustment.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -333,6 +335,7 @@ class AdjustmentController extends BaseApiController
 
         $query = MasterProduk::active()
             ->select('id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'is_serial');
+        SettingService::constrainNonSerialWhenDisabled($query);
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -344,19 +347,19 @@ class AdjustmentController extends BaseApiController
 
         $products = $query->limit(20)->get();
 
-        // Add stock info for each product and transform to array
-        $items = $products->map(function ($product) use ($warehouseId) {
-            $stock = InventoryStock::where('product_id', $product->id)
-                ->where('warehouse_id', $warehouseId)
-                ->first();
+        $stocks = InventoryStock::where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $products->pluck('id'))
+            ->get()
+            ->keyBy('product_id');
 
+        $items = $products->map(function ($product) use ($stocks) {
             return [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'stok' => $stock ? (int) $stock->qty : 0,
+                'stok' => (int) ($stocks[$product->id]->qty ?? 0),
                 'is_serial' => (bool) $product->is_serial,
             ];
         });
@@ -371,6 +374,10 @@ class AdjustmentController extends BaseApiController
      */
     public function getStockSetting(): JsonResponse
     {
+        if (!auth()->user()->can('adjustment.view')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'negative_stock_allowed' => SettingService::isNegativeStockAllowed(),
         ]);

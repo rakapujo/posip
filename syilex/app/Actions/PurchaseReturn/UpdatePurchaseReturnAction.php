@@ -3,16 +3,22 @@
 namespace App\Actions\PurchaseReturn;
 
 use App\Actions\PurchaseReturn\Concerns\PreparesSerialReturnDetails;
+use App\Actions\PurchaseReturn\Concerns\ValidatesPoHeaderMatch;
+use App\Actions\PurchaseReturn\Concerns\ValidatesSerialIntakeHeaderMatch;
 use App\Models\DocPurchaseReturn;
 use App\Models\DocPurchaseReturnDetail;
 use App\Services\PurchaseReturnCalculationService;
+use App\Services\SettingService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use App\Actions\Concerns\RequiresAuthenticatedUser;
 
 class UpdatePurchaseReturnAction
 {
     use RequiresAuthenticatedUser;
     use PreparesSerialReturnDetails;
+    use ValidatesPoHeaderMatch;
+    use ValidatesSerialIntakeHeaderMatch;
 
     /**
      * Update an existing purchase return with details.
@@ -21,13 +27,47 @@ class UpdatePurchaseReturnAction
     {
         $this->ensureAuthenticated();
 
-        if (!$retur->isDraft()) {
-            throw new \Exception('Hanya retur dengan status draft yang dapat diedit');
-        }
-
         return DB::transaction(function () use ($retur, $data) {
+            $retur = DocPurchaseReturn::whereKey($retur->id)->lockForUpdate()->firstOrFail();
+            if (! $retur->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Hanya retur dengan status draft yang dapat diedit.'],
+                ]);
+            }
+
+            $poId = ! empty($data['po_id']) ? (int) $data['po_id'] : null;
+            $serialIntakeId = ! empty($data['serial_intake_id']) ? (int) $data['serial_intake_id'] : null;
+            $supplierId = (int) $data['supplier_id'];
+            $warehouseId = (int) $data['warehouse_id'];
+
+            if (! $poId && ! $serialIntakeId && ! SettingService::isPurchaseReturnFreeAllowed()) {
+                throw ValidationException::withMessages([
+                    'po_id' => ['Mode retur bebas dinonaktifkan di pengaturan. Pilih dokumen referensi.'],
+                ]);
+            }
+
+            if (! SettingService::isElektronikEnabled()) {
+                if ($serialIntakeId) {
+                    throw ValidationException::withMessages([
+                        'serial_intake_id' => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+                    ]);
+                }
+                foreach ($data['details'] as $i => $detail) {
+                    if (! empty($detail['serial_unit_ids'])) {
+                        throw ValidationException::withMessages([
+                            "details.{$i}.serial_unit_ids" => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+                        ]);
+                    }
+                }
+            }
+
+            $this->assertXorPoAndSerialIntake($poId, $serialIntakeId);
+            $this->assertPoMatchesHeader($poId, $supplierId, $warehouseId);
+            $this->assertPoDetailOwnership($poId, $data['details']);
+            $this->assertSerialIntakeMatchesHeader($serialIntakeId, $supplierId, $warehouseId);
+
             // Produk serial: turunkan qty & harga (rata-rata modal) dari unit terpilih
-            $data['details'] = $this->prepareSerialReturnDetails($data['details']);
+            $data['details'] = $this->prepareSerialReturnDetails($data['details'], $serialIntakeId);
 
             // Calculate totals
             $calculated = PurchaseReturnCalculationService::calculateTotals($data);
@@ -37,7 +77,8 @@ class UpdatePurchaseReturnAction
                 'tanggal' => $data['tanggal'],
                 'supplier_id' => $data['supplier_id'],
                 'warehouse_id' => $data['warehouse_id'],
-                'po_id' => $data['po_id'] ?? null,
+                'po_id' => $poId,
+                'serial_intake_id' => $serialIntakeId,
                 'subtotal' => $calculated['subtotal'],
                 'diskon_1_tipe' => $calculated['diskon_1_tipe'],
                 'diskon_1_nilai' => $calculated['diskon_1_nilai'],
@@ -95,7 +136,7 @@ class UpdatePurchaseReturnAction
                 ]);
             }
 
-            return $retur->fresh(['details.product', 'supplier', 'warehouse']);
+            return $retur->fresh(['details.product', 'supplier', 'warehouse', 'serialIntake']);
         });
     }
 }

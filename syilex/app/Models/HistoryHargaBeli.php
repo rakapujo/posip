@@ -26,6 +26,7 @@ class HistoryHargaBeli extends Model
         'supplier_id',
         'po_id',
         'po_detail_id',
+        'serial_intake_id',
         'tanggal',
         'unit_used',
         'qty_in_unit',
@@ -93,6 +94,14 @@ class HistoryHargaBeli extends Model
     public function purchaseOrderDetail(): BelongsTo
     {
         return $this->belongsTo(DocPurchaseOrderDetail::class, 'po_detail_id');
+    }
+
+    /**
+     * Get the serial intake (sumber alternatif selain PO).
+     */
+    public function serialIntake(): BelongsTo
+    {
+        return $this->belongsTo(DocSerialIntake::class, 'serial_intake_id');
     }
 
     // ==================== SCOPES ====================

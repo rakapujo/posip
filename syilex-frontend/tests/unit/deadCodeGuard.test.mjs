@@ -9,11 +9,7 @@ import { TestRunner } from './testRunner.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const srcRoot = join(__dirname, '../../src');
 
-const DEAD_PATHS = [
-    'components/BlockViewer.vue',
-    'components/common/EmptyState.vue',
-    'types/index.js'
-];
+const DEAD_PATHS = ['components/BlockViewer.vue', 'components/common/EmptyState.vue', 'types/index.js'];
 
 const runner = new TestRunner('deadCodeGuard');
 

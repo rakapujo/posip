@@ -23,11 +23,9 @@ const settingsStore = useSettingsStore();
 const { toggleDarkMode, isDarkTheme } = useLayout();
 const confirm = useConfirm();
 const notify = useNotification();
-const { formatDiscLine, downloadReceiptPdf, printReceiptPdf, buildReturPolicyText } = useReceiptPdf();
+const { formatDiscLine, downloadReceiptPdf, printReceiptPdf, buildReturPolicyText, buildReceiptPdfBlob } = useReceiptPdf();
 const printAdapter = usePrintAdapter();
 const escpos = useReceiptEscPos();
-
-const canDirectThermal = () => printAdapter.supported.value || printAdapter.isAvailable.value;
 
 async function thermalPrint(bytes, opts = {}) {
     const legacyId = terminalData.value?.default_printer?.trim() || undefined;
@@ -120,7 +118,7 @@ const canDiscount = computed(() => {
     return true;
 });
 const canVoid = computed(() => authStore.can('pos.void'));
-const canRetur = computed(() => authStore.can('pos.retur'));
+const canRetur = computed(() => authStore.can('pos.retur') && !!terminalData.value?.izinkan_retur);
 const canAddCustomer = computed(() => authStore.can('customer.create'));
 
 // ==================== TERMINAL STATE ====================
@@ -190,6 +188,51 @@ const tabs = computed(() => {
     return t;
 });
 
+// ==================== MOBILE RESPONSIVE (Wave R2: Q2=C, Q3=B) ====================
+const mobilePane = ref('katalog'); // 'katalog' | 'cart' — <md only
+const lainnyaDrawer = ref(false);
+const headerMenuRef = ref();
+
+const mobilePaneOptions = computed(() => [
+    { label: 'Katalog', value: 'katalog' },
+    { label: cart.itemCount.value ? `Keranjang (${cart.itemCount.value})` : 'Keranjang', value: 'cart' }
+]);
+
+const headerMenuItems = computed(() => [
+    {
+        label: isDarkTheme.value ? 'Mode Terang' : 'Mode Gelap',
+        icon: isDarkTheme.value ? 'pi pi-sun' : 'pi pi-moon',
+        command: () => toggleDarkMode()
+    },
+    {
+        label: isFullscreen.value ? 'Keluar Fullscreen' : 'Fullscreen',
+        icon: isFullscreen.value ? 'pi pi-window-minimize' : 'pi pi-window-maximize',
+        command: () => toggleFullscreen()
+    },
+    {
+        label: 'Shortcut Keyboard',
+        icon: 'pi pi-question-circle',
+        command: () => {
+            shortcutHelpDialog.value = true;
+        }
+    },
+    { separator: true },
+    {
+        label: 'Selesai Shift',
+        icon: 'pi pi-sign-out',
+        command: () => openEndShift()
+    }
+]);
+
+function toggleHeaderMenu(event) {
+    headerMenuRef.value?.toggle(event);
+}
+
+function runLainnya(fn) {
+    lainnyaDrawer.value = false;
+    fn();
+}
+
 // ==================== LOAD TERMINAL ====================
 async function loadTerminal() {
     terminalLoading.value = true;
@@ -257,19 +300,19 @@ let promoInterval = null;
 const PROMO_POLL_MS = 5 * 60 * 1000;
 
 async function loadActivePromos(customerUlid = null) {
-    if (!settingsStore.promo.enabled) {
-        cart.setActivePromos([]);
-        return;
-    }
     try {
         const params = customerUlid ? { customer_ulid: customerUlid } : {};
         const res = await posApi.getActivePromos(params);
         if (res.data.success) {
             // Zombie detection: admin force-closed shift → shift_active === false
-            // Strict === false so undefined (old backend) doesn't trigger
+            // Runs even when promo.enabled=false (KS-X1)
             if (res.data.data.shift_active === false) {
                 stopPromoPolling();
                 shiftKilledDialog.value = true;
+                return;
+            }
+            if (!settingsStore.promo.enabled) {
+                cart.setActivePromos([]);
                 return;
             }
             cart.setActivePromos(res.data.data.promos ?? []);
@@ -281,7 +324,7 @@ async function loadActivePromos(customerUlid = null) {
 
 function startPromoPolling(customerUlid = null) {
     stopPromoPolling();
-    if (!settingsStore.promo.enabled) return;
+    // Always poll for shift liveness (zombie detection), even if promo OFF
     promoInterval = setInterval(() => loadActivePromos(customerUlid), PROMO_POLL_MS);
 }
 
@@ -389,6 +432,7 @@ const handleUnlockKeydown = (event) => {
 
 onMounted(() => {
     loadTerminal();
+    settingsStore.fetchRuntimeSettings();
 });
 
 // ==================== PRODUCT SEARCH ====================
@@ -522,7 +566,7 @@ const openSnPicker = async (product, preloaded = null) => {
 
 // SN yang sudah ada di keranjang untuk produk ini (agar tak bisa dipilih dobel)
 const snInCart = computed(() => {
-    const line = cart.items.value.find((i) => i.is_serial && i.product_id === snPickerProduct.value?.id);
+    const line = cart.items.value.find((i) => settingsStore.serialEnabled && i.is_serial && i.product_id === snPickerProduct.value?.id);
     return new Set(line?.serial_unit_ids || []);
 });
 
@@ -551,6 +595,7 @@ const pickSnUnit = (u) => {
         grade: u.grade,
         battery_condition: u.battery_condition,
         battery_health: u.battery_health,
+        battery_cycle_count: u.battery_cycle_count,
         account_status: u.account_status,
         catatan: u.catatan,
         // product.id diambil dari produk yang diklik (sudah visible) — bukan dari unit
@@ -566,6 +611,9 @@ const serialLineText = (u) => {
     if (u.grade) parts.push(`Grade ${u.grade}`);
     if (u.battery_health != null && u.battery_health !== '') {
         parts.push(`🔋${u.battery_health}%${u.battery_condition ? ' ' + u.battery_condition : ''}`);
+    }
+    if (u.battery_cycle_count != null && u.battery_cycle_count !== '') {
+        parts.push(`Cyc ${u.battery_cycle_count}`);
     }
     if (u.account_status) parts.push(u.account_status);
     if (u.catatan) parts.push(u.catatan);
@@ -630,7 +678,7 @@ const getProductUnitNames = (product) => {
 
 const onProductClick = (product) => {
     // Produk serial: buka pemilih unit (daftar SN tersedia + cari)
-    if (product.is_serial) {
+    if (settingsStore.serialEnabled && product.is_serial) {
         openSnPicker(product);
         return;
     }
@@ -899,7 +947,7 @@ const processPayment = async () => {
         receiptDialog.value = true;
 
         // Direct thermal print after checkout — ONLY auto_print_receipt
-        if (terminalData.value?.auto_print_receipt && canDirectThermal()) {
+        if (terminalData.value?.auto_print_receipt && printAdapter.isReadyToThermal()) {
             tryDirectPrint(sales.ulid);
         }
 
@@ -933,7 +981,7 @@ watch(lastSales, async (sales) => {
 });
 
 watch(receiptDialog, async (open) => {
-    if (open && canDirectThermal()) {
+    if (open && printAdapter.isReadyToThermal()) {
         try {
             await printAdapter.reconnect();
         } catch {
@@ -942,15 +990,15 @@ watch(receiptDialog, async (open) => {
     }
 });
 
-const printReceipt = () => {
+const printReceipt = async () => {
     if (!receiptData.value) return;
-    if (canDirectThermal()) {
-        tryDirectPrint(receiptData.value.ulid);
-    } else {
-        printReceiptPdf(receiptData.value, {
-            returPolicy: printOpts.value.returPolicy
-        });
+    if (printAdapter.isReadyToThermal()) {
+        const ok = await tryDirectPrint(receiptData.value.ulid);
+        if (ok) return;
     }
+    printReceiptPdf(receiptData.value, {
+        returPolicy: printOpts.value.returPolicy
+    });
 };
 
 // Show receipt dialog for a given sales ulid (view mode, not after checkout)
@@ -988,19 +1036,54 @@ const sendWhatsApp = () => {
     waDialog.value = false;
 };
 
+// ─── Email ───
+const emailDialog = ref(false);
+const emailTo = ref('');
+const emailMessage = ref('');
+const sendingEmail = ref(false);
+const emailEnabled = computed(() => terminalData.value?.mail_driver && terminalData.value.mail_driver !== 'none');
+
+const openEmailReceipt = () => {
+    if (!receiptData.value || !emailEnabled.value) return;
+    emailTo.value = receiptData.value.customer?.email || '';
+    emailMessage.value = '';
+    emailDialog.value = true;
+};
+
+const sendEmailReceipt = async () => {
+    if (!receiptData.value || !emailTo.value || sendingEmail.value) return;
+    sendingEmail.value = true;
+    try {
+        const pdf = await buildReceiptPdfBlob(receiptData.value, { returPolicy: printOpts.value.returPolicy });
+        const form = new FormData();
+        form.append('to_email', emailTo.value);
+        form.append('message', emailMessage.value);
+        form.append('pdf', pdf, `${receiptData.value.nomor_dokumen}.pdf`);
+        await posApi.emailReceipt(receiptData.value.ulid, form);
+        notify.success('Struk berhasil dikirim via email');
+        emailDialog.value = false;
+    } catch (error) {
+        notify.apiError(error);
+    } finally {
+        sendingEmail.value = false;
+    }
+};
+
 // ─── Direct Thermal Print (via Print Service) ───
 async function tryDirectPrint(salesUlid) {
     try {
         await printAdapter.reconnect();
         const res = await posApi.getSales(salesUlid);
         const salesData = res.data.data?.sales;
-        if (!salesData) return;
+        if (!salesData) return false;
 
         const openDrawer = terminalData.value?.auto_open_tray || false;
         const bytes = escpos.buildReceipt(salesData, { ...printOpts.value, openDrawer });
-        await thermalPrint(bytes);
+        const result = await thermalPrint(bytes);
+        return !!result.success;
     } catch {
         notify.warn('Gagal mencetak struk thermal — gunakan PDF');
+        return false;
     }
 }
 
@@ -1023,7 +1106,7 @@ const newTransaction = () => {
     receiptData.value = null;
     productSearch.value = '';
     nextTick(() => {
-        // Focus search
+        focusProductSearch();
     });
 };
 
@@ -1195,7 +1278,7 @@ const kasSaving = ref(false);
 const lastKasData = ref(null);
 
 const printLastKas = async () => {
-    if (!lastKasData.value || !canDirectThermal()) return;
+    if (!lastKasData.value || !printAdapter.isReadyToThermal()) return;
     const bytes = escpos.buildCashReceipt(lastKasData.value, printOpts.value);
     await thermalPrint(bytes);
 };
@@ -1294,6 +1377,7 @@ const getTipeLabel = (tipe) => {
         setor_awal: 'Setor Awal',
         kas_masuk: 'Kas Masuk',
         kas_keluar: 'Kas Keluar',
+        refund_retur: 'Refund Retur',
         penjualan: 'Penjualan'
     };
     return labels[tipe] || tipe;
@@ -1304,6 +1388,7 @@ const getTipeSeverity = (tipe) => {
         setor_awal: 'info',
         kas_masuk: 'success',
         kas_keluar: 'danger',
+        refund_retur: 'danger',
         penjualan: 'success'
     };
     return severities[tipe] || 'secondary';
@@ -1442,7 +1527,7 @@ const openTransaksiRetur = async (sales) => {
             harga_per_base: d.harga_per_base || 0,
             qty: 0,
             // Serial: unit yang masih terjual (kandidat retur) + SN yang dipilih kasir
-            is_serial: !!d.product?.is_serial,
+            is_serial: settingsStore.serialEnabled && !!d.product?.is_serial,
             returnable_units: d.returnable_units || [],
             serial_unit_ids: []
         }));
@@ -1533,18 +1618,13 @@ const processVoid = async () => {
     }
 };
 
-// ==================== VIEW SALES DETAIL ====================
-const salesDetailDialog = ref(false);
-const salesDetailData = ref(null);
-const loadingSalesDetail = ref(false);
-
 // ==================== END SHIFT ====================
 // Using useShiftReport composable
 const { shiftReportDialog, shiftReportData, loadingShiftReport, loadShiftReport: baseLoadShiftReport, printShiftReport: browserPrintShiftReport, downloadShiftReportPdf, closeShiftReport } = useShiftReport();
 
 // Override printShiftReport: use direct thermal print when available, fallback to browser
 const printShiftReport = async () => {
-    if (canDirectThermal() && shiftReportData.value) {
+    if (printAdapter.isReadyToThermal() && shiftReportData.value) {
         await printAdapter.reconnect();
         const bytes = escpos.buildShiftReport(shiftReportData.value, printOpts.value);
         const result = await thermalPrint(bytes);
@@ -1582,7 +1662,7 @@ const doLoadShiftReport = async () => {
 };
 
 // Reconcile state — bound ke input uang fisik di dalam ShiftReportDialog (editable mode).
-// Reset tiap kali buka dialog laporan shift (lihat showShiftReport fn).
+// Reset tiap kali buka dialog laporan shift (lihat openEndShift).
 const reconcileSaldoFisik = ref(null);
 const reconcileNotes = ref('');
 
@@ -1738,6 +1818,44 @@ const onKeydown = (e) => {
             activeTab.value = tabMap[e.key];
         }
     }
+    // ── Esc = close topmost dialog ──
+    if (e.key === 'Escape') {
+        if (shortcutHelpDialog.value) {
+            shortcutHelpDialog.value = false;
+            return;
+        }
+        if (emailDialog.value) {
+            emailDialog.value = false;
+            return;
+        }
+        if (waDialog.value) {
+            waDialog.value = false;
+            return;
+        }
+        if (lineDiscountDialog.value) {
+            lineDiscountDialog.value = false;
+            return;
+        }
+        if (biayaDialog.value) {
+            biayaDialog.value = false;
+            return;
+        }
+        if (discountDialog.value) {
+            discountDialog.value = false;
+            return;
+        }
+        if (paymentDialog.value && !paymentProcessing.value) {
+            paymentDialog.value = false;
+            nextTick(() => focusProductSearch());
+            return;
+        }
+        if (receiptDialog.value && !loadingReceipt.value) {
+            if (isAfterCheckout.value) newTransaction();
+            else receiptDialog.value = false;
+            nextTick(() => focusProductSearch());
+        }
+        return;
+    }
     // ── Ctrl+/ or ? = Open shortcut help ──
     if ((e.ctrlKey && e.key === '/') || (e.shiftKey && e.key === '?')) {
         e.preventDefault();
@@ -1796,33 +1914,48 @@ const clearAll = () => {
 
     <!-- Main POS Layout -->
     <div v-else class="flex flex-col h-screen bg-surface-50 dark:bg-surface-900">
-        <!-- Top Bar -->
-        <div class="flex items-center justify-between px-4 py-2 bg-surface-0 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 shrink-0">
-            <div class="flex items-center gap-3">
-                <Button icon="pi pi-arrow-left" text rounded size="small" @click="router.push({ name: 'dashboard' })" v-tooltip.bottom="'Kembali'" aria-label="Kembali ke dashboard" />
-                <img :src="settingsStore.storeLogo || '/logo.svg'" alt="Logo" class="h-8" />
-                <span class="font-bold text-lg text-primary">{{ settingsStore.storeName }}</span>
-                <Tag severity="info" :value="`Terminal: ${terminalData?.kode_terminal || '-'}`" />
-                <Tag severity="secondary" :value="`Gudang: ${terminalData?.warehouse?.nama_warehouse || '-'}`" />
-                <Tag severity="contrast" :value="liveClock" icon="pi pi-clock" />
-                <Tag
-                    :severity="printAdapter.supported.value ? 'success' : 'warn'"
-                    :value="printAdapter.printerLabel.value ? `Printer: ${printAdapter.printerLabel.value}` : printAdapter.supported.value ? 'Printer: Siap' : 'Printer: PDF'"
-                    icon="pi pi-print"
-                />
+        <!-- Top Bar — wrap chrome in plain divs: PrimeVue Tag/Button display beats Tailwind `hidden` -->
+        <div class="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 bg-surface-0 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 shrink-0">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
+                <Button icon="pi pi-arrow-left" text rounded size="small" class="!min-w-11 !min-h-11 lg:!min-w-0 lg:!min-h-0 shrink-0" @click="router.push({ name: 'dashboard' })" v-tooltip.bottom="'Kembali'" aria-label="Kembali ke dashboard" />
+                <img :src="settingsStore.storeLogo || '/logo.svg'" alt="Logo" class="h-7 sm:h-8 shrink-0" />
+                <div class="min-w-0 flex-1">
+                    <div class="font-bold text-base sm:text-lg text-primary truncate">{{ settingsStore.storeName }}</div>
+                    <div class="text-[11px] text-surface-500 truncate md:hidden">{{ terminalData?.kode_terminal || '-' }} · {{ liveClock }}</div>
+                </div>
+                <div class="hidden md:flex items-center gap-2 shrink-0">
+                    <Tag severity="info" :value="`Terminal: ${terminalData?.kode_terminal || '-'}`" />
+                    <Tag severity="contrast" :value="liveClock" icon="pi pi-clock" />
+                </div>
+                <div class="hidden lg:flex items-center gap-2 shrink-0">
+                    <Tag severity="secondary" :value="`Gudang: ${terminalData?.warehouse?.nama_warehouse || '-'}`" />
+                    <Tag
+                        :severity="printAdapter.supported.value ? 'success' : 'warn'"
+                        :value="printAdapter.printerLabel.value ? `Printer: ${printAdapter.printerLabel.value}` : printAdapter.supported.value ? 'Printer: Siap' : 'Printer: PDF'"
+                        icon="pi pi-print"
+                    />
+                </div>
             </div>
-            <div class="flex items-center gap-2">
-                <Tag severity="secondary" :value="`Kasir: ${authStore.user?.name || '-'}`" icon="pi pi-user" />
-                <Button :icon="isDarkTheme ? 'pi pi-moon' : 'pi pi-sun'" text rounded size="small" @click="toggleDarkMode" v-tooltip.bottom="'Mode Gelap/Terang'" aria-label="Mode Gelap/Terang" />
-                <Button :icon="isFullscreen ? 'pi pi-window-minimize' : 'pi pi-window-maximize'" text rounded size="small" @click="toggleFullscreen" v-tooltip.bottom="'Fullscreen'" aria-label="Fullscreen" />
-                <Button icon="pi pi-question-circle" text rounded size="small" v-tooltip.bottom="'Shortcut (F2)'" @click="shortcutHelpDialog = true" aria-label="Bantuan shortcut keyboard" />
-                <Button icon="pi pi-lock" severity="warn" size="small" outlined v-tooltip.bottom="'Kunci Layar'" @click="lockScreen" :loading="locking" aria-label="Kunci Layar" />
-                <Button label="Selesai Shift" icon="pi pi-sign-out" severity="danger" size="small" outlined @click="openEndShift" />
+            <div class="flex items-center gap-1 shrink-0">
+                <div class="hidden lg:block">
+                    <Tag severity="secondary" :value="`Kasir: ${authStore.user?.name || '-'}`" icon="pi pi-user" />
+                </div>
+                <div class="hidden md:flex items-center gap-1">
+                    <Button :icon="isDarkTheme ? 'pi pi-moon' : 'pi pi-sun'" text rounded size="small" @click="toggleDarkMode" v-tooltip.bottom="'Mode Gelap/Terang'" aria-label="Mode Gelap/Terang" />
+                    <Button :icon="isFullscreen ? 'pi pi-window-minimize' : 'pi pi-window-maximize'" text rounded size="small" @click="toggleFullscreen" v-tooltip.bottom="'Fullscreen'" aria-label="Fullscreen" />
+                    <Button icon="pi pi-question-circle" text rounded size="small" v-tooltip.bottom="'Shortcut (Ctrl+/)'" @click="shortcutHelpDialog = true" aria-label="Bantuan shortcut keyboard" />
+                    <Button label="Selesai Shift" icon="pi pi-sign-out" severity="danger" size="small" outlined @click="openEndShift" />
+                </div>
+                <Button icon="pi pi-lock" severity="warn" size="small" outlined class="!min-w-11 !min-h-11 lg:!min-w-0 lg:!min-h-0" v-tooltip.bottom="'Kunci Layar'" @click="lockScreen" :loading="locking" aria-label="Kunci Layar" />
+                <div class="md:hidden">
+                    <Button icon="pi pi-ellipsis-v" text rounded size="small" class="!min-w-11 !min-h-11" aria-label="Menu lainnya" aria-haspopup="true" aria-controls="pos_header_menu" @click="toggleHeaderMenu" />
+                    <Menu ref="headerMenuRef" id="pos_header_menu" :model="headerMenuItems" :popup="true" />
+                </div>
             </div>
         </div>
 
-        <!-- Tab Bar -->
-        <div class="flex items-center gap-1 px-4 py-2 bg-surface-0 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 shrink-0 overflow-x-auto">
+        <!-- Tab Bar — equal 25% hanya <md; desktop content-width -->
+        <div class="pos-main-tabs flex items-center gap-1 px-2 sm:px-4 py-2 bg-surface-0 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 shrink-0 md:overflow-x-auto">
             <Button
                 v-for="tab in tabs"
                 :key="tab.key"
@@ -1831,6 +1964,7 @@ const clearAll = () => {
                 :severity="activeTab === tab.key ? undefined : 'secondary'"
                 :outlined="activeTab !== tab.key"
                 size="small"
+                class="!min-h-11 md:!min-h-0 md:shrink-0 justify-center whitespace-nowrap !px-1"
                 @click="activeTab = tab.key"
             />
         </div>
@@ -1838,9 +1972,25 @@ const clearAll = () => {
         <!-- Content Area -->
         <div class="flex-1 overflow-hidden">
             <!-- ==================== TAB: KASIR ==================== -->
-            <div v-show="activeTab === 'kasir'" class="flex h-full">
+            <div v-show="activeTab === 'kasir'" class="flex flex-col h-full">
+                <!-- Q2=C: mobile one-pane toggle — full width 50:50 -->
+                <div class="md:hidden px-3 pt-2 shrink-0">
+                    <SelectButton
+                        v-model="mobilePane"
+                        :options="mobilePaneOptions"
+                        optionLabel="label"
+                        optionValue="value"
+                        :allowEmpty="false"
+                        class="w-full pos-pane-toggle"
+                    />
+                </div>
+
+                <div class="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
                 <!-- Left Panel: Products -->
-                <div class="w-1/2 border-r border-surface-200 dark:border-surface-700 flex flex-col p-4 overflow-hidden">
+                <div
+                    class="w-full md:w-1/2 border-b md:border-b-0 md:border-r border-surface-200 dark:border-surface-700 flex-col p-4 overflow-hidden min-h-0 md:h-full"
+                    :class="mobilePane === 'katalog' ? 'flex flex-1' : 'hidden md:flex md:flex-none'"
+                >
                     <!-- Search -->
                     <div class="mb-3 flex gap-2">
                         <IconField class="flex-1">
@@ -1858,8 +2008,8 @@ const clearAll = () => {
                         <Button icon="pi pi-refresh" severity="secondary" outlined @click="searchProducts(productSearch || '')" :loading="loadingProducts" aria-label="Refresh produk" />
                     </div>
 
-                    <!-- Product Grid -->
-                    <div class="flex-1 overflow-y-auto">
+                    <!-- Product Grid — spacer di dalam scroll (bukan pb panel luar) biar tidak zona mati di atas sticky -->
+                    <div class="flex-1 overflow-y-auto" :class="{ 'pb-24 md:pb-0': cart.hasItems.value }">
                         <div v-if="loadingProducts" class="flex items-center justify-center py-8">
                             <i class="pi pi-spin pi-spinner text-2xl"></i>
                         </div>
@@ -1869,17 +2019,22 @@ const clearAll = () => {
                             <div
                                 v-for="product in products"
                                 :key="product.id"
-                                class="border border-surface-200 dark:border-surface-700 rounded-lg p-3 cursor-pointer hover:bg-primary/5 transition-colors"
+                                role="button"
+                                tabindex="0"
+                                class="border border-surface-200 dark:border-surface-700 rounded-lg p-3 cursor-pointer hover:bg-primary/5 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary active:border-primary"
                                 :class="{ 'opacity-50': product.stok <= 0 && !negativeStockAllowed }"
+                                :aria-label="`Tambah ${product.nama_produk}`"
                                 @click="onProductClick(product)"
+                                @keydown.enter.prevent="onProductClick(product)"
+                                @keydown.space.prevent="onProductClick(product)"
                             >
                                 <div class="font-medium text-sm truncate" :title="product.nama_produk">{{ product.nama_produk }}</div>
                                 <div class="text-xs text-surface-500 mt-1">{{ product.kode_produk }}</div>
-                                <div class="flex items-center justify-between mt-2">
-                                    <span class="text-sm font-semibold text-primary">{{ formatCurrency(getBasePrice(product)) }}/{{ getBaseUnit(product) }}</span>
-                                    <Tag :severity="product.stok > 0 ? 'success' : 'danger'" :value="`Stok: ${formatQty(product.stok)} ${getBaseUnit(product)}`" class="text-xs" />
+                                <div class="flex items-center justify-between gap-1 mt-2">
+                                    <span class="text-sm font-semibold text-primary truncate">{{ formatCurrency(getBasePrice(product)) }}/{{ getBaseUnit(product) }}</span>
+                                    <span class="text-[10px] shrink-0 font-medium" :class="product.stok > 0 ? 'text-green-600' : 'text-red-500'">{{ formatQty(product.stok) }}</span>
                                 </div>
-                                <div v-if="getProductUnitNames(product).length > 1" class="text-xs text-surface-500 mt-1">
+                                <div v-if="getProductUnitNames(product).length > 1" class="text-[10px] text-surface-500 mt-1 truncate">
                                     {{ getProductUnitNames(product).join(' · ') }}
                                 </div>
                             </div>
@@ -1888,11 +2043,14 @@ const clearAll = () => {
                 </div>
 
                 <!-- Right Panel: Cart -->
-                <div class="w-1/2 flex flex-col p-4 overflow-hidden">
+                <div
+                    class="w-full md:w-1/2 flex-col p-4 overflow-hidden min-h-0 md:h-full"
+                    :class="mobilePane === 'cart' ? 'flex flex-1' : 'hidden md:flex md:flex-none'"
+                >
                     <!-- Cart Header -->
-                    <div class="flex items-center justify-between mb-3">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                         <span class="font-bold text-lg">KERANJANG</span>
-                        <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-2 w-full sm:w-auto">
                             <AutoComplete
                                 v-model="cart.customer.value"
                                 :suggestions="customerOptions"
@@ -1903,26 +2061,92 @@ const clearAll = () => {
                                 @item-select="onCustomerSelect"
                                 @clear="onCustomerClear"
                                 dropdown
-                                class="w-48"
+                                class="w-full sm:w-48"
                                 size="small"
                             />
-                            <Button v-if="canAddCustomer" icon="pi pi-user-plus" severity="secondary" outlined size="small" @click="customerDialog = true" v-tooltip.top="'Tambah customer baru'" aria-label="Tambah customer baru" />
+                            <Button v-if="canAddCustomer" icon="pi pi-user-plus" severity="secondary" outlined size="small" class="max-lg:!w-11 max-lg:!h-11 shrink-0" @click="customerDialog = true" v-tooltip.top="'Tambah customer baru'" aria-label="Tambah customer baru" />
                         </div>
 
                         <!-- Tambah customer baru dari POS (reuse, DRY) -->
                         <CustomerFormDialog v-model:visible="customerDialog" @saved="onNewCustomerSaved" />
                     </div>
 
-                    <!-- Cart Items -->
-                    <div class="flex-1 overflow-y-auto mb-3">
+                    <!-- Cart Items — scroll saja; summary tetap di bawah -->
+                    <div class="flex-1 overflow-y-auto min-h-0 mb-3">
                         <div v-if="!cart.hasItems.value" class="flex items-center justify-center h-full text-surface-400">
                             <div class="text-center">
                                 <i class="pi pi-shopping-cart text-4xl mb-2"></i>
                                 <p>Keranjang kosong</p>
                             </div>
                         </div>
-                        <div v-else class="space-y-0">
-                            <!-- Cart Header -->
+                        <template v-else>
+                            <!-- Mobile card layout (no horizontal scroll) -->
+                            <div class="md:hidden space-y-2">
+                                <div
+                                    v-for="(item, idx) in cart.items.value"
+                                    :key="item.id"
+                                    class="border border-surface-200 dark:border-surface-700 rounded-lg p-3 space-y-2"
+                                >
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-[11px] text-surface-500">#{{ idx + 1 }}</div>
+                                            <div class="font-medium text-sm leading-snug" :title="item.product.nama_produk">{{ item.product.nama_produk }}</div>
+                                            <div class="text-[11px] text-surface-500">{{ item.unit }}-{{ item.konversi }} · {{ formatCurrency(item.harga_satuan) }}</div>
+                                            <div v-if="item.promo_name" class="inline-flex items-center gap-1 mt-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded px-1.5 py-0.5">
+                                                <i class="pi pi-tag text-[9px]"></i>
+                                                <span class="text-[10px] font-medium truncate max-w-[180px]">{{ item.promo_name }}</span>
+                                            </div>
+                                        </div>
+                                        <Button icon="pi pi-trash" text rounded severity="danger" class="!min-w-11 !min-h-11 shrink-0" @click="cart.removeItem(item.id)" aria-label="Hapus item" />
+                                    </div>
+
+                                    <div v-if="settingsStore.serialEnabled && item.is_serial" class="flex flex-wrap gap-1">
+                                        <span
+                                            v-for="u in item.serial_units"
+                                            :key="u.ulid"
+                                            class="inline-flex items-center gap-1 bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded px-1.5 py-0.5 font-mono text-[10px]"
+                                        >
+                                            {{ u.kode_internal || u.serial_number }}
+                                            <i class="pi pi-times cursor-pointer text-red-500 text-[8px]" @click="cart.removeSerialUnit(item.id, u.ulid)"></i>
+                                        </span>
+                                    </div>
+
+                                    <div class="flex items-center justify-between gap-2">
+                                        <div v-if="settingsStore.serialEnabled && item.is_serial" class="text-sm font-semibold">Qty {{ item.qty }}</div>
+                                        <div v-else class="flex items-center gap-1">
+                                            <Button icon="pi pi-minus" text rounded class="!min-w-11 !min-h-11" @click="cart.updateQty(item.id, item.qty - 1)" aria-label="Kurangi qty" />
+                                            <InputNumber
+                                                v-select-on-focus
+                                                :modelValue="item.qty"
+                                                @update:modelValue="(val) => cart.updateQty(item.id, val)"
+                                                :min="1"
+                                                :max="cart.getMaxQty(item)"
+                                                :locale="getLocale"
+                                                :minFractionDigits="getQtyMinFractionDigits"
+                                                :maxFractionDigits="getQtyMaxFractionDigits"
+                                                inputClass="w-12 text-center !min-h-11"
+                                            />
+                                            <Button icon="pi pi-plus" text rounded class="!min-w-11 !min-h-11" @click="cart.updateQty(item.id, item.qty + 1)" :disabled="cart.getMaxQty(item) !== null && item.qty >= cart.getMaxQty(item)" aria-label="Tambah qty" />
+                                        </div>
+                                        <div class="text-right shrink-0">
+                                            <div v-if="item.diskon_nominal > 0" class="text-[11px] text-red-500">-{{ formatCurrency(item.diskon_nominal) }}</div>
+                                            <div class="font-bold text-primary">{{ formatCurrency(item.jumlah) }}</div>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="canDiscount" class="flex items-center gap-1 pt-1 border-t border-surface-100 dark:border-surface-700">
+                                        <Button icon="pi pi-tag" label="Disc" text size="small" class="!min-h-10" @click="openLineDiscount(item)" />
+                                        <Button v-if="hasAnyDiscount(item)" icon="pi pi-times" text severity="danger" size="small" class="!min-h-10" @click="cart.clearLineDiscountAll(item.id)" aria-label="Hapus diskon" />
+                                        <Button icon="pi pi-refresh" text size="small" class="!min-h-10" @click="cart.regenerateLineDiscount(item.id)" aria-label="Regen diskon" />
+                                    </div>
+                                    <div v-if="hasAnyDiscount(item)" class="text-[10px] text-surface-500">
+                                        {{ getDiscountBreakdown(item).join(' + ') }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Desktop / tablet table -->
+                            <div class="hidden md:block overflow-x-auto">
                             <table class="w-full text-[11px]">
                                 <colgroup>
                                     <col style="width: 16px" />
@@ -1956,8 +2180,7 @@ const clearAll = () => {
                                                     <i class="pi pi-tag text-[9px]"></i>
                                                     <span class="text-[9px] font-medium truncate max-w-[120px]">{{ item.promo_name }}</span>
                                                 </div>
-                                                <!-- Serial: chip SN unit yang dijual (klik × untuk lepas) -->
-                                                <div v-if="item.is_serial" class="flex flex-wrap gap-1 mt-0.5">
+                                                <div v-if="settingsStore.serialEnabled && item.is_serial" class="flex flex-wrap gap-1 mt-0.5">
                                                     <span
                                                         v-for="u in item.serial_units"
                                                         :key="u.ulid"
@@ -1967,15 +2190,16 @@ const clearAll = () => {
                                                         <span v-if="u.kode_internal && u.serial_number" class="opacity-70">· SN {{ u.serial_number }}</span>
                                                         <span v-if="u.grade" class="opacity-70">· {{ u.grade }}</span>
                                                         <span v-if="u.battery_health != null" class="opacity-70">· 🔋{{ u.battery_health }}%</span>
+                                                        <span v-if="u.battery_cycle_count != null" class="opacity-70">· Cyc {{ u.battery_cycle_count }}</span>
+                                                        <span v-if="u.catatan" class="opacity-70 truncate max-w-[80px]" :title="u.catatan">· {{ u.catatan }}</span>
                                                         <i class="pi pi-times cursor-pointer text-red-500 text-[8px]" @click="cart.removeSerialUnit(item.id, u.ulid)" v-tooltip.top="'Lepas SN'"></i>
                                                     </span>
                                                 </div>
                                             </td>
                                             <td class="py-1">
-                                                <!-- Serial: qty mengikuti jumlah SN (read-only) -->
-                                                <div v-if="item.is_serial" class="text-center text-xs font-semibold" v-tooltip.top="'Qty = jumlah SN. Scan/lepas SN untuk ubah.'">{{ item.qty }}</div>
+                                                <div v-if="settingsStore.serialEnabled && item.is_serial" class="text-center text-xs font-semibold" v-tooltip.top="'Qty = jumlah SN. Scan/lepas SN untuk ubah.'">{{ item.qty }}</div>
                                                 <div v-else class="flex items-center gap-0">
-                                                    <Button icon="pi pi-minus" text rounded size="small" class="!w-5 !h-5" @click="cart.updateQty(item.id, item.qty - 1)" />
+                                                    <Button icon="pi pi-minus" text rounded size="small" class="!w-5 !h-5 max-lg:!w-11 max-lg:!h-11" @click="cart.updateQty(item.id, item.qty - 1)" />
                                                     <InputNumber
                                                         v-select-on-focus
                                                         :modelValue="item.qty"
@@ -1986,9 +2210,9 @@ const clearAll = () => {
                                                         :minFractionDigits="getQtyMinFractionDigits"
                                                         :maxFractionDigits="getQtyMaxFractionDigits"
                                                         size="small"
-                                                        inputClass="w-7 text-center text-xs !py-0.5 !px-0"
+                                                        inputClass="w-7 text-center text-xs !py-0.5 !px-0 max-lg:w-10 max-lg:!min-h-11"
                                                     />
-                                                    <Button icon="pi pi-plus" text rounded size="small" class="!w-5 !h-5" @click="cart.updateQty(item.id, item.qty + 1)" :disabled="cart.getMaxQty(item) !== null && item.qty >= cart.getMaxQty(item)" />
+                                                    <Button icon="pi pi-plus" text rounded size="small" class="!w-5 !h-5 max-lg:!w-11 max-lg:!h-11" @click="cart.updateQty(item.id, item.qty + 1)" :disabled="cart.getMaxQty(item) !== null && item.qty >= cart.getMaxQty(item)" />
                                                 </div>
                                             </td>
                                             <td class="py-1 whitespace-nowrap">{{ formatCurrency(item.harga_satuan) }}</td>
@@ -2036,11 +2260,15 @@ const clearAll = () => {
                                     </template>
                                 </tbody>
                             </table>
-                        </div>
+                            </div>
+                        </template>
                     </div>
 
-                    <!-- Summary -->
-                    <div class="border-t border-surface-200 dark:border-surface-700 pt-3 space-y-1 text-sm">
+                    <!-- Summary — pinned bawah panel (bukan ikut scroll item) -->
+                    <div
+                        class="shrink-0 border-t border-surface-200 dark:border-surface-700 pt-3 space-y-1 text-sm"
+                        :class="{ 'pb-24 md:pb-0': cart.hasItems.value }"
+                    >
                         <div class="flex justify-between">
                             <span>Subtotal</span>
                             <span class="font-medium">{{ formatCurrency(cart.subtotal.value) }}</span>
@@ -2105,15 +2333,15 @@ const clearAll = () => {
                             <span>Pembulatan</span>
                             <span>{{ formatCurrency(cart.totals.value.pembulatan) }}</span>
                         </div>
-                        <!-- Grand Total -->
-                        <div class="flex justify-between font-bold text-lg border-t border-surface-300 dark:border-surface-600 pt-2 mt-2">
+                        <!-- Grand Total — desktop only; mobile pakai sticky bar -->
+                        <div class="hidden md:flex justify-between font-bold text-lg border-t border-surface-300 dark:border-surface-600 pt-2 mt-2">
                             <span>GRAND TOTAL</span>
                             <span class="text-primary">{{ formatCurrency(cart.totals.value?.grand_total ?? cart.subtotal.value) }}</span>
                         </div>
                     </div>
 
                     <!-- Action Buttons -->
-                    <div class="flex items-center gap-2 mt-3 shrink-0">
+                    <div class="hidden md:flex items-center gap-2 mt-3 shrink-0 overflow-x-auto">
                         <Button label="Hold (F9)" icon="pi pi-pause" severity="secondary" outlined size="small" @click="onHold" :disabled="!cart.hasItems.value" />
                         <Button v-if="canDiscount" label="Disc Nota (F2)" icon="pi pi-percentage" severity="secondary" outlined size="small" @click="openDiscountDialog" :disabled="!cart.hasItems.value" />
                         <Button
@@ -2129,15 +2357,73 @@ const clearAll = () => {
                         />
                         <Button label="Biaya (F4)" icon="pi pi-plus-circle" severity="secondary" outlined size="small" @click="openBiayaDialog" :disabled="!cart.hasItems.value" />
                         <Button label="Hapus Semua (Del)" icon="pi pi-trash" severity="danger" outlined size="small" @click="clearAll" :disabled="!cart.hasItems.value" />
-                        <Button label="BAYAR (F12)" icon="pi pi-money-bill" class="flex-1" @click="openPaymentDialog" :disabled="!cart.hasItems.value" />
+                        <Button label="BAYAR (F12)" icon="pi pi-money-bill" class="flex-1 !min-h-11" @click="openPaymentDialog" :disabled="!cart.hasItems.value" />
                     </div>
+                </div>
                 </div>
             </div>
 
+            <!-- Mobile sticky: Lainnya (Q3=B) + Hold + BAYAR — icon-only secondary to fit narrow -->
+            <div
+                v-if="activeTab === 'kasir' && cart.hasItems.value && !paymentDialog"
+                class="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-center gap-2 px-3 py-2.5 border-t border-surface-200 dark:border-surface-700 bg-surface-0 dark:bg-surface-800 shadow-[0_-4px_12px_rgba(0,0,0,0.08)]"
+            >
+                <div class="flex-1 min-w-0">
+                    <div class="text-[11px] text-surface-500">Grand Total</div>
+                    <div class="font-bold text-base text-primary truncate">{{ formatCurrency(cart.totals.value?.grand_total ?? cart.subtotal.value) }}</div>
+                </div>
+                <Button icon="pi pi-ellipsis-h" severity="secondary" outlined class="!min-w-11 !min-h-11 shrink-0" aria-label="Lainnya" @click="lainnyaDrawer = true" />
+                <Button icon="pi pi-pause" severity="secondary" outlined class="!min-w-11 !min-h-11 shrink-0" aria-label="Hold" @click="onHold" />
+                <Button label="BAYAR" icon="pi pi-money-bill" class="!min-h-11 !min-w-[6.5rem] shrink-0" @click="openPaymentDialog" />
+            </div>
+
+            <Drawer v-model:visible="lainnyaDrawer" position="bottom" header="Lainnya" class="md:!hidden" style="height: auto; max-height: 70vh">
+                <div class="flex flex-col gap-2 pb-2">
+                    <Button
+                        v-if="canDiscount"
+                        label="Disc Nota (F2)"
+                        icon="pi pi-percentage"
+                        severity="secondary"
+                        outlined
+                        class="!min-h-11 w-full justify-start"
+                        :disabled="!cart.hasItems.value"
+                        @click="runLainnya(openDiscountDialog)"
+                    />
+                    <Button
+                        v-if="canDiscount"
+                        label="Regenerate Disc Nota"
+                        icon="pi pi-refresh"
+                        severity="secondary"
+                        outlined
+                        class="!min-h-11 w-full justify-start"
+                        :disabled="!cart.hasItems.value"
+                        @click="runLainnya(() => cart.regenerateNotaDiscount())"
+                    />
+                    <Button
+                        label="Biaya (F4)"
+                        icon="pi pi-plus-circle"
+                        severity="secondary"
+                        outlined
+                        class="!min-h-11 w-full justify-start"
+                        :disabled="!cart.hasItems.value"
+                        @click="runLainnya(openBiayaDialog)"
+                    />
+                    <Button
+                        label="Hapus Semua (Del)"
+                        icon="pi pi-trash"
+                        severity="danger"
+                        outlined
+                        class="!min-h-11 w-full justify-start"
+                        :disabled="!cart.hasItems.value"
+                        @click="runLainnya(clearAll)"
+                    />
+                </div>
+            </Drawer>
+
             <!-- ==================== TAB: KAS ==================== -->
-            <div v-show="activeTab === 'kas'" class="flex h-full">
+            <div v-show="activeTab === 'kas'" class="flex flex-col lg:flex-row h-full overflow-y-auto lg:overflow-hidden">
                 <!-- Left: Form -->
-                <div class="w-1/2 border-r border-surface-200 dark:border-surface-700 flex flex-col p-4 overflow-hidden">
+                <div class="w-full lg:w-1/2 border-b lg:border-b-0 lg:border-r border-surface-200 dark:border-surface-700 flex flex-col p-4 shrink-0 lg:shrink lg:overflow-hidden lg:min-h-0">
                     <span class="font-bold text-lg mb-4">TRANSAKSI KAS</span>
 
                     <div class="space-y-4">
@@ -2186,10 +2472,10 @@ const clearAll = () => {
                 </div>
 
                 <!-- Right: History (Tunai + Non-Tunai) + Summary -->
-                <div class="w-1/2 flex flex-col p-4 overflow-hidden">
+                <div class="w-full lg:w-1/2 flex flex-col p-4 shrink-0 lg:shrink lg:overflow-hidden lg:min-h-0">
                     <span class="font-bold text-lg mb-2">RIWAYAT TRANSAKSI SHIFT INI</span>
 
-                    <div class="flex-1 overflow-y-auto mb-3 space-y-4">
+                    <div class="flex-1 overflow-x-auto overflow-y-auto mb-3 space-y-4">
                         <!-- TUNAI Section -->
                         <div>
                             <div class="flex items-center gap-2 mb-2">
@@ -2207,7 +2493,7 @@ const clearAll = () => {
                                 </Column>
                                 <Column header="Nominal" style="width: 110px; text-align: right">
                                     <template #body="{ data }">
-                                        <span :class="data.tipe === 'kas_keluar' ? 'text-red-500' : 'text-green-600'"> {{ data.tipe === 'kas_keluar' ? '-' : '+' }}{{ formatCurrency(data.nominal) }} </span>
+                                        <span :class="['kas_keluar', 'refund_retur'].includes(data.tipe) ? 'text-red-500' : 'text-green-600'"> {{ ['kas_keluar', 'refund_retur'].includes(data.tipe) ? '-' : '+' }}{{ formatCurrency(data.nominal) }} </span>
                                     </template>
                                 </Column>
                                 <Column header="Keterangan">
@@ -2279,15 +2565,18 @@ const clearAll = () => {
             </div>
 
             <!-- ==================== TAB: TRANSAKSI ==================== -->
-            <div v-show="activeTab === 'transaksi'" class="flex h-full">
-                <!-- Left Panel: List Transaksi -->
-                <div class="w-1/2 border-r border-surface-200 dark:border-surface-700 flex flex-col p-4 overflow-hidden">
+            <div v-show="activeTab === 'transaksi'" class="flex flex-col lg:flex-row h-full overflow-y-auto lg:overflow-hidden">
+                <!-- Left Panel: List Transaksi — hide on phone when detail/retur open -->
+                <div
+                    class="w-full lg:w-1/2 border-b lg:border-b-0 lg:border-r border-surface-200 dark:border-surface-700 flex-col p-4 min-h-0"
+                    :class="transaksiRightPanel !== 'none' ? 'hidden lg:flex lg:overflow-hidden' : 'flex flex-1 lg:flex-none lg:h-full lg:overflow-hidden'"
+                >
                     <!-- Header with filter buttons -->
-                    <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
                         <span class="font-bold text-lg">TRANSAKSI</span>
                         <div class="flex gap-1">
-                            <Button label="Shift Ini" size="small" :outlined="transaksiSessionType !== 'current'" @click="switchTransaksiSession('current')" />
-                            <Button label="Sebelumnya" size="small" :outlined="transaksiSessionType !== 'previous'" :disabled="terminalData?.durasi_retur === 0" @click="switchTransaksiSession('previous')" />
+                            <Button label="Shift Ini" size="small" class="!min-h-11 lg:!min-h-0" :outlined="transaksiSessionType !== 'current'" @click="switchTransaksiSession('current')" />
+                            <Button label="Sebelumnya" size="small" class="!min-h-11 lg:!min-h-0" :outlined="transaksiSessionType !== 'previous'" :disabled="terminalData?.durasi_retur === 0" @click="switchTransaksiSession('previous')" />
                         </div>
                     </div>
 
@@ -2363,10 +2652,13 @@ const clearAll = () => {
                     </div>
                 </div>
 
-                <!-- Right Panel: Detail or Retur Form -->
-                <div class="w-1/2 flex flex-col p-4 overflow-hidden">
-                    <!-- No selection -->
-                    <div v-if="transaksiRightPanel === 'none'" class="flex-1 flex items-center justify-center text-surface-400">
+                <!-- Right Panel: Detail or Retur Form — hide empty state on phone -->
+                <div
+                    class="w-full lg:w-1/2 flex-col p-4 min-h-0"
+                    :class="transaksiRightPanel === 'none' ? 'hidden lg:flex lg:overflow-hidden' : 'flex flex-1 lg:flex-none lg:h-full lg:overflow-hidden'"
+                >
+                    <!-- No selection (desktop only) -->
+                    <div v-if="transaksiRightPanel === 'none'" class="flex-1 hidden lg:flex items-center justify-center text-surface-400">
                         <div class="text-center">
                             <i class="pi pi-inbox text-4xl mb-2"></i>
                             <p>Pilih transaksi di sebelah kiri</p>
@@ -2487,12 +2779,12 @@ const clearAll = () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="flex gap-2">
-                            <Button icon="pi pi-print" label="Cetak Struk" outlined @click="showReceipt(returSalesDetail.ulid)" />
+                        <div class="flex flex-wrap gap-2">
+                            <Button icon="pi pi-print" label="Cetak Struk" outlined class="!min-h-11 lg:!min-h-0" @click="showReceipt(returSalesDetail.ulid)" />
                             <a :href="getReceiptUrl(returSalesDetail.ulid)" target="_blank">
-                                <Button icon="pi pi-link" label="Struk Online" outlined />
+                                <Button icon="pi pi-link" label="Struk Online" outlined class="!min-h-11 lg:!min-h-0" />
                             </a>
-                            <Button v-if="canRetur && returSalesDetail.status === 'completed' && selectedTransaksi?.retur_status !== 'full'" icon="pi pi-replay" label="Retur" severity="warn" @click="openTransaksiRetur(selectedTransaksi)" />
+                            <Button v-if="canRetur && returSalesDetail.status === 'completed' && selectedTransaksi?.retur_status !== 'full'" icon="pi pi-replay" label="Retur" severity="warn" class="!min-h-11 lg:!min-h-0" @click="openTransaksiRetur(selectedTransaksi)" />
                         </div>
                     </template>
 
@@ -2520,7 +2812,7 @@ const clearAll = () => {
                         </div>
 
                         <div class="flex-1 overflow-x-auto overflow-y-auto mb-3">
-                            <table class="w-full text-sm min-w-[700px]">
+                            <table class="w-full text-sm min-w-[640px] lg:min-w-[700px]">
                                 <thead>
                                     <tr class="border-b border-surface-200 dark:border-surface-700">
                                         <th class="text-left py-1">Produk</th>
@@ -2538,13 +2830,15 @@ const clearAll = () => {
                                             <div class="font-medium">{{ item.product?.nama_produk }}</div>
                                             <div class="text-xs text-surface-500">{{ item.product?.kode_produk }}</div>
                                             <!-- Serial: pilih SN yang dikembalikan -->
-                                            <div v-if="item.is_serial" class="mt-1 space-y-1">
+                                            <div v-if="settingsStore.serialEnabled && item.is_serial" class="mt-1 space-y-1">
                                                 <label v-for="u in item.returnable_units" :key="u.ulid" class="flex items-center gap-1.5 text-[11px] cursor-pointer">
                                                     <Checkbox :modelValue="item.serial_unit_ids.includes(u.ulid)" :binary="true" @update:modelValue="() => toggleReturUnit(item, u.ulid)" />
                                                     <span class="font-mono">{{ u.kode_internal || u.serial_number }}</span>
                                                     <span v-if="u.kode_internal && u.serial_number" class="text-surface-500 font-mono">· SN {{ u.serial_number }}</span>
                                                     <span v-if="u.grade" class="text-surface-500">· {{ u.grade }}</span>
                                                     <span v-if="u.battery_health != null" class="text-surface-500">· 🔋{{ u.battery_health }}%</span>
+                                                    <span v-if="u.battery_cycle_count != null" class="text-surface-500">· Cyc {{ u.battery_cycle_count }}</span>
+                                                    <span v-if="u.catatan" class="text-surface-500 truncate max-w-[100px]" :title="u.catatan">· {{ u.catatan }}</span>
                                                 </label>
                                                 <div v-if="!item.returnable_units.length" class="text-[11px] text-surface-400">Tidak ada unit yang bisa diretur.</div>
                                             </div>
@@ -2554,7 +2848,7 @@ const clearAll = () => {
                                         <td class="py-2 text-right whitespace-nowrap">{{ formatQty(item.total_returned_base) }} PCS</td>
                                         <td class="py-2 text-right whitespace-nowrap">{{ formatQty(getMaxReturQty(item)) }} PCS</td>
                                         <td class="py-2 text-center">
-                                            <div v-if="item.is_serial" class="font-semibold" v-tooltip.top="'Qty = jumlah SN dipilih'">{{ item.qty }}</div>
+                                            <div v-if="settingsStore.serialEnabled && item.is_serial" class="font-semibold" v-tooltip.top="'Qty = jumlah SN dipilih'">{{ item.qty }}</div>
                                             <InputNumber
                                                 v-else
                                                 v-select-on-focus
@@ -2614,15 +2908,15 @@ const clearAll = () => {
                             <p>Tidak ada transaksi ditahan</p>
                         </div>
                     </div>
-                    <div v-else class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div v-for="held in cart.getHeldTransactions()" :key="held._holdIndex" class="border border-surface-200 dark:border-surface-700 rounded-lg p-4">
                             <div class="font-bold mb-1">Hold #{{ held._holdIndex + 1 }}</div>
                             <div class="text-sm text-surface-500">Customer: {{ held.customer?.nama || 'Walk-in' }}</div>
                             <div class="text-sm text-surface-500">{{ held.item_count }} item — {{ formatCurrency(held.total) }}</div>
                             <div class="text-xs text-surface-400 mt-1">Ditahan: {{ formatDateTime(held.held_at) }}</div>
-                            <div class="flex gap-2 mt-3">
-                                <Button label="Lanjutkan" icon="pi pi-play" size="small" @click="onResume(held._holdIndex)" />
-                                <Button label="Hapus" icon="pi pi-trash" severity="danger" outlined size="small" @click="onDeleteHold(held._holdIndex)" />
+                            <div class="flex flex-wrap gap-2 mt-3">
+                                <Button label="Lanjutkan" icon="pi pi-play" size="small" class="!min-h-11 lg:!min-h-0" @click="onResume(held._holdIndex)" />
+                                <Button label="Hapus" icon="pi pi-trash" severity="danger" outlined size="small" class="!min-h-11 lg:!min-h-0" @click="onDeleteHold(held._holdIndex)" />
                             </div>
                         </div>
                     </div>
@@ -2699,7 +2993,7 @@ const clearAll = () => {
                 severity="warn"
                 @click="
                     sessionGuard.dismiss();
-                    showShiftReport();
+                    openEndShift();
                 "
             />
         </template>
@@ -2767,6 +3061,10 @@ const clearAll = () => {
                         🔋 {{ serialCard.unit.battery_health }}%<span v-if="serialCard.unit.battery_condition"> · {{ serialCard.unit.battery_condition }}</span>
                     </div>
                 </div>
+                <div v-if="serialCard.unit.battery_cycle_count != null">
+                    <span class="text-surface-500 text-xs">Cycle</span>
+                    <div class="font-medium">{{ serialCard.unit.battery_cycle_count }}</div>
+                </div>
                 <div v-if="serialCard.unit.account_status" class="col-span-2">
                     <span class="text-surface-500 text-xs">Status Akun</span>
                     <div class="font-medium">{{ serialCard.unit.account_status }}</div>
@@ -2810,6 +3108,8 @@ const clearAll = () => {
                             <span class="font-mono">SN {{ u.serial_number }}</span>
                             <span v-if="u.grade"> · Grade {{ u.grade }}</span>
                             <span v-if="u.battery_health != null"> · 🔋 {{ u.battery_health }}%</span>
+                            <span v-if="u.battery_cycle_count != null"> · Cyc {{ u.battery_cycle_count }}</span>
+                            <span v-if="u.catatan"> · {{ u.catatan }}</span>
                             <span v-if="u.account_status"> · {{ u.account_status }}</span>
                         </div>
                     </div>
@@ -2826,7 +3126,7 @@ const clearAll = () => {
     </Dialog>
 
     <!-- Payment Dialog -->
-    <Dialog v-model:visible="paymentDialog" modal :style="{ width: '700px' }" :closable="!paymentProcessing" :header="false" class="!p-0">
+    <Dialog v-model:visible="paymentDialog" modal :style="{ width: '700px' }" :breakpoints="{ '960px': '95vw' }" :closable="!paymentProcessing" :header="false" class="!p-0">
         <template #header>
             <span class="font-bold text-lg">PEMBAYARAN</span>
         </template>
@@ -2839,15 +3139,15 @@ const clearAll = () => {
             </div>
 
             <!-- 2-column layout -->
-            <div class="flex gap-4 flex-1 min-h-0 mx-1">
+            <div class="flex flex-col md:flex-row gap-4 flex-1 min-h-0 mx-1">
                 <!-- LEFT: Payment Method Cards -->
-                <div class="w-48 shrink-0 overflow-y-auto">
+                <div class="w-full md:w-48 shrink-0 overflow-y-auto">
                     <div class="text-xs font-medium text-surface-500 mb-2">Pilih Metode:</div>
                     <div class="grid grid-cols-2 gap-2">
                         <div
                             v-for="method in allowedPaymentMethods"
                             :key="method.id"
-                            class="flex flex-col items-center justify-center h-20 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md"
+                            class="flex flex-col items-center justify-center min-h-20 h-20 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md"
                             :class="paymentMethods.some((p) => p.metode_pembayaran_id === method.id) ? 'border-primary bg-primary/10' : 'border-surface-200 dark:border-surface-700 hover:border-primary/50'"
                             @click="togglePaymentLine(method)"
                         >
@@ -2963,13 +3263,13 @@ const clearAll = () => {
     </Dialog>
 
     <!-- Receipt Dialog (2 Column Layout) -->
-    <Dialog v-model:visible="receiptDialog" header="STRUK" modal :style="{ width: '700px' }" :closable="!loadingReceipt">
+    <Dialog v-model:visible="receiptDialog" header="STRUK" modal :style="{ width: '700px' }" :breakpoints="{ '960px': '95vw' }" :closable="!loadingReceipt">
         <div v-if="loadingReceipt" class="text-center py-8">
             <i class="pi pi-spin pi-spinner text-2xl"></i>
         </div>
-        <div v-else-if="receiptData" class="flex gap-4" style="min-height: 300px">
+        <div v-else-if="receiptData" class="flex flex-col md:flex-row gap-4" style="min-height: 300px">
             <!-- Left Column: Detail Struk (40%) - Scrollable -->
-            <div class="w-2/5 overflow-y-auto pr-2 border-r border-surface-200 dark:border-surface-700" style="max-height: calc(80vh - 150px)">
+            <div class="w-full md:w-2/5 overflow-y-auto pr-2 md:border-r border-surface-200 dark:border-surface-700" style="max-height: calc(80vh - 150px)">
                 <div class="font-mono text-sm print-area text-surface-900 dark:text-surface-100">
                     <!-- Store Header -->
                     <div class="text-center mb-2">
@@ -3132,7 +3432,7 @@ const clearAll = () => {
             </div>
 
             <!-- Right Column: Payment Info (60%) -->
-            <div class="w-3/5 flex flex-col">
+            <div class="w-full md:w-3/5 flex flex-col">
                 <!-- Payment Methods -->
                 <div class="mb-4">
                     <div class="text-sm font-semibold text-surface-600 dark:text-surface-400 mb-2">METODE PEMBAYARAN</div>
@@ -3164,6 +3464,7 @@ const clearAll = () => {
                 <div class="mt-4 pt-4 border-t border-surface-200 dark:border-surface-700">
                     <div class="flex gap-2 mb-3">
                         <Button icon="pi pi-whatsapp" severity="success" outlined class="flex-1" @click="openWhatsApp" label="WhatsApp" />
+                        <Button icon="pi pi-envelope" severity="info" outlined class="flex-1" @click="openEmailReceipt" :disabled="!emailEnabled" label="Email" />
                         <Button icon="pi pi-file-pdf" severity="warn" outlined class="flex-1" @click="downloadPdf" label="PDF" />
                     </div>
                     <Button label="Print" icon="pi pi-print" severity="secondary" class="w-full mb-2" @click="printReceipt" />
@@ -3172,6 +3473,24 @@ const clearAll = () => {
                 </div>
             </div>
         </div>
+    </Dialog>
+
+    <!-- Email Dialog -->
+    <Dialog v-model:visible="emailDialog" header="Kirim Struk via Email" modal :style="{ width: '380px' }">
+        <div class="space-y-3">
+            <div>
+                <label class="block text-sm font-medium mb-1">Email Tujuan</label>
+                <InputText v-model.trim="emailTo" type="email" placeholder="pelanggan@email.com" class="w-full" />
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Pesan tambahan (opsional)</label>
+                <Textarea v-model="emailMessage" rows="3" class="w-full" autoResize placeholder="Catatan untuk pelanggan…" />
+            </div>
+        </div>
+        <template #footer>
+            <Button label="Batal" severity="secondary" @click="emailDialog = false" :disabled="sendingEmail" />
+            <Button label="Kirim" icon="pi pi-send" @click="sendEmailReceipt" :loading="sendingEmail" :disabled="!emailTo" />
+        </template>
     </Dialog>
 
     <!-- WhatsApp Dialog -->
@@ -3347,245 +3666,8 @@ const clearAll = () => {
         </template>
     </Dialog>
 
-    <!-- Sales Detail Dialog -->
-    <Dialog v-model:visible="salesDetailDialog" header="Detail Transaksi" modal :style="{ width: '550px' }">
-        <div v-if="loadingSalesDetail" class="text-center py-8">
-            <i class="pi pi-spin pi-spinner text-2xl"></i>
-        </div>
-        <div v-else-if="salesDetailData" class="space-y-3 text-sm">
-            <!-- Header Info -->
-            <div class="grid grid-cols-2 gap-x-4 gap-y-1">
-                <div><span class="text-surface-500">No. Invoice:</span> {{ salesDetailData.nomor_dokumen }}</div>
-                <div><span class="text-surface-500">Status:</span> <Tag :severity="salesDetailData.status === 'completed' ? 'success' : 'danger'" :value="salesDetailData.status === 'completed' ? 'Selesai' : 'Void'" /></div>
-                <div><span class="text-surface-500">Tanggal:</span> {{ formatDateTime(salesDetailData.tanggal) }}</div>
-                <div><span class="text-surface-500">Customer:</span> {{ salesDetailData.customer?.nama || 'Walk-in' }}</div>
-                <div><span class="text-surface-500">Kasir:</span> {{ salesDetailData.created_by?.name || '-' }}</div>
-                <div>
-                    <span class="text-surface-500">Struk:</span>
-                    <a :href="getReceiptUrl(salesDetailData.ulid)" target="_blank" class="text-primary hover:underline ml-1">Buka</a>
-                </div>
-            </div>
-
-            <!-- Items Table -->
-            <table class="w-full border-collapse">
-                <thead>
-                    <tr class="border-b border-surface-200 dark:border-surface-700">
-                        <th class="text-left py-1">Produk</th>
-                        <th class="text-right py-1">Qty</th>
-                        <th class="text-right py-1">Harga</th>
-                        <th class="text-right py-1">Disc</th>
-                        <th class="text-right py-1">Jumlah</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr v-for="d in salesDetailData.details" :key="d.id" class="border-b border-surface-100 dark:border-surface-700">
-                        <td class="py-1">
-                            <div>{{ d.product?.nama_produk }}</div>
-                            <div v-if="d.serial_units?.length" class="text-[11px] text-surface-500 font-mono">
-                                <div v-for="(u, i) in d.serial_units" :key="i">{{ serialLineText(u) }}</div>
-                            </div>
-                            <div v-if="Number(d.diskon_total) > 0" class="text-xs text-surface-400">{{ formatDiscLine(d) }}</div>
-                        </td>
-                        <td class="py-1 text-right whitespace-nowrap">{{ formatQty(d.qty) }} {{ d.unit }}</td>
-                        <td class="py-1 text-right">{{ formatCurrency(d.harga_satuan) }}</td>
-                        <td class="py-1 text-right text-red-500">{{ Number(d.diskon_total) > 0 ? '-' + formatCurrency(d.diskon_total) : '-' }}</td>
-                        <td class="py-1 text-right">{{ formatCurrency(d.jumlah) }}</td>
-                    </tr>
-                </tbody>
-            </table>
-
-            <!-- Summary -->
-            <div class="border-t border-surface-200 dark:border-surface-700 pt-2 space-y-1">
-                <div class="flex justify-between">
-                    <span>Subtotal</span><span>{{ formatCurrency(salesDetailData.subtotal) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.diskon_nota_1_hasil) > 0" class="flex justify-between text-red-500">
-                    <span>{{ salesDetailData.diskon_nota_1_label || 'Disc 1' }} ({{ salesDetailData.diskon_nota_1_tipe === 'percent' ? formatPercent(salesDetailData.diskon_nota_1_nilai) : formatCurrency(salesDetailData.diskon_nota_1_nilai) }})</span>
-                    <span>-{{ formatCurrency(salesDetailData.diskon_nota_1_hasil) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.diskon_nota_2_hasil) > 0" class="flex justify-between text-red-500">
-                    <span>{{ salesDetailData.diskon_nota_2_label || 'Disc 2' }} ({{ salesDetailData.diskon_nota_2_tipe === 'percent' ? formatPercent(salesDetailData.diskon_nota_2_nilai) : formatCurrency(salesDetailData.diskon_nota_2_nilai) }})</span>
-                    <span>-{{ formatCurrency(salesDetailData.diskon_nota_2_hasil) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.diskon_nota_3_hasil) > 0" class="flex justify-between text-red-500">
-                    <span
-                        >{{ salesDetailData.diskon_nota_3_label || 'Disc Manual' }} ({{
-                            salesDetailData.diskon_nota_3_tipe === 'percent' ? formatPercent(salesDetailData.diskon_nota_3_nilai) : formatCurrency(salesDetailData.diskon_nota_3_nilai)
-                        }})</span
-                    >
-                    <span>-{{ formatCurrency(salesDetailData.diskon_nota_3_hasil) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.total_diskon) > 0" class="flex justify-between">
-                    <span>Total Setelah Diskon</span><span>{{ formatCurrency(salesDetailData.total_setelah_diskon) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.biaya_kirim_hasil) > 0" class="flex justify-between">
-                    <span>Biaya Kirim ({{ salesDetailData.biaya_kirim_tipe === 'percent' ? formatPercent(salesDetailData.biaya_kirim_nilai) : formatCurrency(salesDetailData.biaya_kirim_nilai) }})</span>
-                    <span>{{ formatCurrency(salesDetailData.biaya_kirim_hasil) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.biaya_lain_hasil) > 0" class="flex justify-between">
-                    <span>Biaya Lain ({{ salesDetailData.biaya_lain_tipe === 'percent' ? formatPercent(salesDetailData.biaya_lain_nilai) : formatCurrency(salesDetailData.biaya_lain_nilai) }})</span>
-                    <span>{{ formatCurrency(salesDetailData.biaya_lain_hasil) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.pajak_nominal) > 0" class="flex justify-between">
-                    <span>DPP</span><span>{{ formatCurrency(salesDetailData.dpp) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.pajak_nominal) > 0" class="flex justify-between">
-                    <span>{{ salesDetailData.pajak_nama }} {{ salesDetailData.pajak_persen }}%</span>
-                    <span>{{ formatCurrency(salesDetailData.pajak_nominal) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.pembulatan)" class="flex justify-between">
-                    <span>Pembulatan</span><span>{{ formatCurrency(salesDetailData.pembulatan) }}</span>
-                </div>
-                <div class="flex justify-between font-bold text-base border-t border-surface-200 dark:border-surface-700 pt-1 mt-1">
-                    <span>Grand Total</span><span>{{ formatCurrency(salesDetailData.grand_total) }}</span>
-                </div>
-            </div>
-
-            <!-- Payments -->
-            <div class="border-t border-surface-200 dark:border-surface-700 pt-2">
-                <div class="font-medium mb-1">Pembayaran:</div>
-                <div v-for="p in salesDetailData.payments" :key="p.id">
-                    <div class="flex justify-between">
-                        <span>{{ p.metode_pembayaran?.nama_pembayaran }}</span>
-                        <span>{{ formatCurrency(p.nominal) }}</span>
-                    </div>
-                    <div v-if="p.reference" class="text-xs text-surface-400 pl-2">Ref: {{ p.reference }}</div>
-                    <div v-if="Number(p.biaya_tambahan) > 0" class="text-xs text-surface-400 pl-2">Biaya: {{ formatCurrency(p.biaya_tambahan) }}</div>
-                </div>
-                <div class="flex justify-between font-medium mt-1">
-                    <span>Total Bayar</span><span>{{ formatCurrency(salesDetailData.total_bayar) }}</span>
-                </div>
-                <div v-if="Number(salesDetailData.kembalian) > 0" class="flex justify-between font-medium">
-                    <span>Kembali</span>
-                    <span>{{ formatCurrency(salesDetailData.kembalian) }}</span>
-                </div>
-            </div>
-
-            <!-- Notes -->
-            <div v-if="salesDetailData.notes" class="border-t border-surface-200 dark:border-surface-700 pt-2"><span class="text-surface-500">Catatan:</span> {{ salesDetailData.notes }}</div>
-
-            <!-- Void Info -->
-            <div v-if="salesDetailData.status === 'voided'" class="border-t border-surface-200 dark:border-surface-700 pt-2 bg-red-50 dark:bg-red-950/20 -mx-4 px-4 py-2 rounded">
-                <div class="font-medium text-red-600 mb-1">Informasi Void</div>
-                <div class="text-red-500">Void oleh: {{ salesDetailData.voided_by?.name || '-' }}</div>
-                <div class="text-red-500">Alasan: {{ salesDetailData.void_reason }}</div>
-                <div class="text-red-500">Waktu: {{ formatDateTime(salesDetailData.voided_at) }}</div>
-            </div>
-
-            <!-- Return History -->
-            <div v-if="salesDetailData.returns?.length > 0" class="border-t border-surface-200 dark:border-surface-700 pt-2">
-                <div class="font-medium mb-2 flex items-center gap-2">
-                    <i class="pi pi-replay text-orange-500"></i>
-                    Riwayat Retur ({{ salesDetailData.returns.length }})
-                </div>
-                <div v-for="ret in salesDetailData.returns" :key="ret.id" class="mb-3 p-2 bg-orange-50 dark:bg-orange-950/20 rounded">
-                    <div class="flex justify-between text-sm mb-1">
-                        <span class="font-medium">{{ ret.nomor_dokumen }}</span>
-                        <Tag severity="success" value="Tunai" size="small" />
-                    </div>
-                    <div class="text-xs text-surface-500 mb-1">{{ formatDateTime(ret.tanggal) }} oleh {{ ret.created_by?.name || '-' }}</div>
-                    <div class="text-xs space-y-0.5">
-                        <div v-for="d in ret.details" :key="d.id">
-                            <div class="flex justify-between">
-                                <span>{{ d.product?.nama_produk }} x {{ formatQty(d.qty) }}</span>
-                                <span class="text-orange-600">@ {{ formatCurrency(d.harga_satuan) }}</span>
-                            </div>
-                            <div v-if="d.serial_units?.length" class="pl-2 text-[10px] text-surface-500 font-mono">
-                                <div v-for="(u, i) in d.serial_units" :key="i">{{ serialLineText(u) }}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div v-if="Number(ret.pembulatan)" class="flex justify-between text-xs mt-1">
-                        <span>Pembulatan</span>
-                        <span class="text-orange-600">{{ formatCurrency(ret.pembulatan) }}</span>
-                    </div>
-                    <div class="flex justify-between text-sm font-medium mt-1 pt-1 border-t border-orange-200 dark:border-orange-800">
-                        <span>Total Retur</span>
-                        <span class="text-orange-600">{{ formatCurrency(ret.grand_total) }}</span>
-                    </div>
-                </div>
-
-                <!-- Ringkasan Retur -->
-                <div class="mt-3 p-3 bg-surface-100 dark:bg-surface-800 rounded-lg text-sm">
-                    <div class="font-semibold mb-2 text-surface-700 dark:text-surface-300">RINGKASAN</div>
-
-                    <div class="flex justify-between mb-1">
-                        <span class="text-surface-600 dark:text-surface-400">Total Pembayaran Asli</span>
-                        <span class="font-medium">{{ formatCurrency(salesDetailData.grand_total) }}</span>
-                    </div>
-
-                    <div v-if="Number(salesDetailData.biaya_kirim_hasil) > 0 || Number(salesDetailData.biaya_lain_hasil) > 0" class="mt-2 mb-2">
-                        <div class="text-xs text-surface-500 mb-1">Tidak Termasuk Retur:</div>
-                        <div v-if="Number(salesDetailData.biaya_kirim_hasil) > 0" class="flex justify-between text-xs pl-2">
-                            <span class="text-surface-500">Biaya Kirim</span>
-                            <span>{{ formatCurrency(salesDetailData.biaya_kirim_hasil) }}</span>
-                        </div>
-                        <div v-if="Number(salesDetailData.biaya_lain_hasil) > 0" class="flex justify-between text-xs pl-2">
-                            <span class="text-surface-500">Biaya Lain</span>
-                            <span>{{ formatCurrency(salesDetailData.biaya_lain_hasil) }}</span>
-                        </div>
-                    </div>
-
-                    <div class="flex justify-between mb-2">
-                        <span class="text-surface-600 dark:text-surface-400">Total Retur (Tunai)</span>
-                        <span class="font-medium text-orange-600">{{ formatCurrency(salesDetailData.returns.reduce((sum, r) => sum + Number(r.grand_total), 0)) }}</span>
-                    </div>
-
-                    <div class="flex justify-between font-bold pt-2 border-t border-surface-300 dark:border-surface-600">
-                        <span>NILAI BERSIH</span>
-                        <span class="text-primary">{{ formatCurrency(Number(salesDetailData.grand_total) - salesDetailData.returns.reduce((sum, r) => sum + Number(r.grand_total), 0)) }}</span>
-                    </div>
-                    <div class="text-xs text-surface-500">(Pembayaran - Retur)</div>
-                </div>
-            </div>
-        </div>
-
-        <template #footer>
-            <div class="flex justify-between w-full">
-                <div class="flex gap-1">
-                    <Button
-                        icon="pi pi-whatsapp"
-                        severity="success"
-                        outlined
-                        size="small"
-                        @click="
-                            receiptData = salesDetailData;
-                            openWhatsApp();
-                        "
-                        v-tooltip.top="'WhatsApp'"
-                        aria-label="Kirim via WhatsApp"
-                    />
-                    <Button
-                        icon="pi pi-file-pdf"
-                        severity="warn"
-                        outlined
-                        size="small"
-                        @click="
-                            receiptData = salesDetailData;
-                            downloadPdf();
-                        "
-                        v-tooltip.top="'PDF'"
-                        aria-label="Unduh PDF"
-                    />
-                </div>
-                <div class="flex gap-2">
-                    <Button
-                        label="Print Struk"
-                        icon="pi pi-print"
-                        severity="secondary"
-                        @click="
-                            receiptData = salesDetailData;
-                            printReceipt();
-                        "
-                    />
-                    <Button label="Tutup" @click="salesDetailDialog = false" />
-                </div>
-            </div>
-        </template>
-    </Dialog>
-
     <!-- Shortcut Help Dialog -->
-    <Dialog v-model:visible="shortcutHelpDialog" header="Shortcut Keyboard POS" modal :style="{ width: '440px' }">
+    <Dialog v-model:visible="shortcutHelpDialog" header="Shortcut Keyboard POS" modal :style="{ width: '440px' }" :breakpoints="{ '960px': '95vw' }">
         <table class="w-full text-sm">
             <thead>
                 <tr class="text-left text-surface-500 border-b border-surface-200 dark:border-surface-700">
@@ -3596,31 +3678,47 @@ const clearAll = () => {
             <tbody>
                 <tr class="border-b border-surface-100 dark:border-surface-800">
                     <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F1</kbd></td>
-                    <td>Fokus ke kotak cari produk / scan barcode</td>
+                    <td>Fokus cari produk / scan</td>
                 </tr>
                 <tr class="border-b border-surface-100 dark:border-surface-800">
                     <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F2</kbd></td>
-                    <td>Buka bantuan shortcut ini</td>
+                    <td>Disc Nota (manual)</td>
+                </tr>
+                <tr class="border-b border-surface-100 dark:border-surface-800">
+                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F4</kbd></td>
+                    <td>Biaya tambahan</td>
+                </tr>
+                <tr class="border-b border-surface-100 dark:border-surface-800">
+                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F8</kbd></td>
+                    <td>Transaksi baru (saat struk terbuka)</td>
                 </tr>
                 <tr class="border-b border-surface-100 dark:border-surface-800">
                     <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F9</kbd></td>
-                    <td>Hold transaksi (simpan keranjang sementara)</td>
+                    <td>Hold transaksi</td>
+                </tr>
+                <tr class="border-b border-surface-100 dark:border-surface-800">
+                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F11</kbd></td>
+                    <td>Fullscreen</td>
                 </tr>
                 <tr class="border-b border-surface-100 dark:border-surface-800">
                     <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">F12</kbd></td>
-                    <td>Buka dialog pembayaran</td>
+                    <td>Bayar</td>
                 </tr>
                 <tr class="border-b border-surface-100 dark:border-surface-800">
-                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">Enter</kbd></td>
-                    <td>Tambahkan produk yang difokus / konfirmasi dialog</td>
+                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">Delete</kbd></td>
+                    <td>Hapus semua item keranjang</td>
+                </tr>
+                <tr class="border-b border-surface-100 dark:border-surface-800">
+                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">Alt+1..4</kbd></td>
+                    <td>Tab Kasir / Kas / Transaksi / Held</td>
                 </tr>
                 <tr class="border-b border-surface-100 dark:border-surface-800">
                     <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">Esc</kbd></td>
-                    <td>Tutup dialog yang sedang terbuka</td>
+                    <td>Tutup dialog / transaksi baru setelah bayar</td>
                 </tr>
                 <tr>
-                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">Ctrl + /</kbd></td>
-                    <td>Buka bantuan shortcut ini (alternatif)</td>
+                    <td class="py-2"><kbd class="px-2 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-xs font-mono">Ctrl+/</kbd></td>
+                    <td>Buka bantuan shortcut</td>
                 </tr>
             </tbody>
         </table>
@@ -3685,6 +3783,25 @@ const clearAll = () => {
 </template>
 
 <style>
+/* Mobile Katalog|Keranjang — equal 50:50 full width */
+.pos-pane-toggle.p-selectbutton,
+.pos-pane-toggle {
+    display: flex !important;
+    width: 100%;
+}
+.pos-pane-toggle .p-togglebutton {
+    flex: 1 1 0;
+    justify-content: center;
+}
+
+/* Main tabs equal 25% — mobile only; desktop keep content-width */
+@media (max-width: 767px) {
+    .pos-main-tabs > .p-button {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+}
+
 @media print {
     /* Hide everything */
     body * {

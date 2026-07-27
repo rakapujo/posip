@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useConfirm } from 'primevue/useconfirm';
 import { useNotification } from '@/composables/useNotification';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const confirm = useConfirm();
@@ -14,6 +15,7 @@ const notify = useNotification();
 const canCreate = computed(() => authStore.can('role.create'));
 const canUpdate = computed(() => authStore.can('role.update'));
 const canDelete = computed(() => authStore.can('role.delete'));
+const actorIsSuperAdmin = computed(() => !!authStore.user?.roles?.includes('super-admin'));
 
 // Data
 const dt = ref();
@@ -39,6 +41,7 @@ const saving = ref(false);
 
 // Role form
 const role = ref({ name: '', permissions: [] });
+const originalRoleName = ref('');
 const isEdit = computed(() => !!role.value.id);
 
 // Permission matrix data (from API)
@@ -48,6 +51,8 @@ const loadingPermissions = ref(false);
 
 // Selected permissions (reactive Set workaround)
 const selectedPermissions = ref(new Set());
+
+const NAME_REGEX = /^[a-z0-9-]+$/;
 
 // Column labels for display
 const columnLabels = {
@@ -84,11 +89,30 @@ const columnLabels = {
     inventory: 'Lap. Inventory'
 };
 
-// Computed: selected count
 const selectedCount = computed(() => selectedPermissions.value.size);
 const totalCount = computed(() => allPermissionNames.value.length);
 
-// Load roles
+const isSuperAdmin = computed(() => isEdit.value && role.value.name === 'super-admin');
+
+/** Role has visible perms actor cannot grant → read-only (BE ceiling). Serial hidden from matrix when elektronik OFF. */
+const isSuperiorRole = computed(() => {
+    if (!isEdit.value || actorIsSuperAdmin.value || isSuperAdmin.value) return false;
+    const existing = role.value.permissions || [];
+    return existing.some((p) => allPermissionNames.value.includes(p) && !authStore.can(p));
+});
+
+const matrixReadOnly = computed(() => isSuperAdmin.value || isSuperiorRole.value);
+
+const canSaveRole = computed(() => !matrixReadOnly.value && allPermissionNames.value.length > 0);
+
+function canGrant(permName) {
+    return actorIsSuperAdmin.value || authStore.can(permName);
+}
+
+function grantableNames(names) {
+    return names.filter((p) => canGrant(p));
+}
+
 async function loadRoles() {
     loading.value = true;
     try {
@@ -112,24 +136,27 @@ async function loadRoles() {
     }
 }
 
-// Load permissions for matrix
+/** @returns {Promise<boolean>} */
 async function loadPermissions() {
-    if (permissionGroups.value.length > 0) return; // Already loaded
+    if (permissionGroups.value.length > 0) return true;
     loadingPermissions.value = true;
     try {
         const response = await rolesApi.getPermissions();
         if (response.data.success) {
             permissionGroups.value = response.data.data.groups;
             allPermissionNames.value = response.data.data.all_permissions;
+            return true;
         }
+        notify.loadDropdownError('permission');
+        return false;
     } catch (error) {
         notify.loadDropdownError('permission');
+        return false;
     } finally {
         loadingPermissions.value = false;
     }
 }
 
-// Pagination & Sort handlers
 function onPage(event) {
     lazyParams.value.first = event.first;
     lazyParams.value.rows = event.rows;
@@ -153,17 +180,25 @@ function clearSearch() {
     loadRoles();
 }
 
-// Dialog management
 async function openNew() {
     role.value = { name: '', permissions: [] };
+    originalRoleName.value = '';
     selectedPermissions.value = new Set();
     submitted.value = false;
-    await loadPermissions();
+    const ok = await loadPermissions();
+    if (!ok || allPermissionNames.value.length === 0) {
+        notify.warn('Gagal memuat matrix permission');
+        return;
+    }
     roleDialog.value = true;
 }
 
 async function editRole(data) {
-    await loadPermissions();
+    const ok = await loadPermissions();
+    if (!ok || allPermissionNames.value.length === 0) {
+        notify.warn('Gagal memuat matrix permission');
+        return;
+    }
     try {
         const response = await rolesApi.get(data.id);
         if (response.data.success) {
@@ -173,6 +208,7 @@ async function editRole(data) {
                 name: roleData.name,
                 permissions: roleData.permissions
             };
+            originalRoleName.value = roleData.name;
             selectedPermissions.value = new Set(roleData.permissions);
             submitted.value = false;
             roleDialog.value = true;
@@ -187,11 +223,19 @@ function hideDialog() {
     submitted.value = false;
 }
 
-// Save role
+function normalizeRoleName(name) {
+    return (name || '').trim().toLowerCase();
+}
+
 async function saveRole() {
     submitted.value = true;
 
-    if (!role.value.name?.trim()) return;
+    if (matrixReadOnly.value) return;
+
+    const name = normalizeRoleName(role.value.name);
+    role.value.name = name;
+
+    if (!name || !NAME_REGEX.test(name)) return;
     if (selectedPermissions.value.size === 0) {
         notify.warn('Pilih minimal 1 permission');
         return;
@@ -200,13 +244,17 @@ async function saveRole() {
     saving.value = true;
     try {
         const payload = {
-            name: role.value.name.trim(),
+            name,
             permissions: Array.from(selectedPermissions.value)
         };
 
         if (isEdit.value) {
             await rolesApi.update(role.value.id, payload);
             notify.saveSuccess('Role', true);
+            const mine = authStore.user?.roles || [];
+            if (mine.includes(originalRoleName.value) || mine.includes(name)) {
+                await authStore.fetchUser();
+            }
         } else {
             await rolesApi.create(payload);
             notify.saveSuccess('Role', false);
@@ -221,8 +269,9 @@ async function saveRole() {
     }
 }
 
-// Delete role
 function confirmDeleteRole(data) {
+    if (data.name === 'super-admin' || (data.users_count ?? 0) > 0) return;
+
     confirm.require({
         message: `Apakah Anda yakin ingin menghapus role "${data.name}"?`,
         header: 'Konfirmasi Hapus',
@@ -243,8 +292,12 @@ function confirmDeleteRole(data) {
     });
 }
 
-// Permission toggle helpers
+function chipDisabled(permName) {
+    return matrixReadOnly.value || !canGrant(permName);
+}
+
 function togglePermission(permName) {
+    if (chipDisabled(permName)) return;
     const next = new Set(selectedPermissions.value);
     if (next.has(permName)) {
         next.delete(permName);
@@ -255,7 +308,9 @@ function togglePermission(permName) {
 }
 
 function toggleModulePermissions(mod) {
-    const permNames = Object.values(mod.permissions);
+    if (matrixReadOnly.value) return;
+    const permNames = grantableNames(Object.values(mod.permissions));
+    if (permNames.length === 0) return;
     const allSelected = permNames.every((p) => selectedPermissions.value.has(p));
     const next = new Set(selectedPermissions.value);
     if (allSelected) {
@@ -267,7 +322,9 @@ function toggleModulePermissions(mod) {
 }
 
 function toggleGroupPermissions(group) {
-    const permNames = group.modules.flatMap((m) => Object.values(m.permissions));
+    if (matrixReadOnly.value) return;
+    const permNames = grantableNames(group.modules.flatMap((m) => Object.values(m.permissions)));
+    if (permNames.length === 0) return;
     const allSelected = permNames.every((p) => selectedPermissions.value.has(p));
     const next = new Set(selectedPermissions.value);
     if (allSelected) {
@@ -279,41 +336,54 @@ function toggleGroupPermissions(group) {
 }
 
 function selectAll() {
-    selectedPermissions.value = new Set(allPermissionNames.value);
+    if (matrixReadOnly.value) return;
+    const next = new Set(selectedPermissions.value);
+    grantableNames(allPermissionNames.value).forEach((p) => next.add(p));
+    selectedPermissions.value = next;
 }
 
 function clearAll() {
-    selectedPermissions.value = new Set();
+    if (matrixReadOnly.value) return;
+    const next = new Set(selectedPermissions.value);
+    grantableNames(allPermissionNames.value).forEach((p) => next.delete(p));
+    selectedPermissions.value = next;
 }
 
-// Check if group header checkbox is checked/indeterminate
 function isGroupAllSelected(group) {
-    const permNames = group.modules.flatMap((m) => Object.values(m.permissions));
+    const permNames = grantableNames(group.modules.flatMap((m) => Object.values(m.permissions)));
     return permNames.length > 0 && permNames.every((p) => selectedPermissions.value.has(p));
 }
 
 function isGroupIndeterminate(group) {
-    const permNames = group.modules.flatMap((m) => Object.values(m.permissions));
+    const permNames = grantableNames(group.modules.flatMap((m) => Object.values(m.permissions)));
+    if (permNames.length === 0) return false;
     const some = permNames.some((p) => selectedPermissions.value.has(p));
     const all = permNames.every((p) => selectedPermissions.value.has(p));
     return some && !all;
 }
 
-// Check if module row is all selected / indeterminate
 function isModuleAllSelected(mod) {
-    const permNames = Object.values(mod.permissions);
+    const permNames = grantableNames(Object.values(mod.permissions));
     return permNames.length > 0 && permNames.every((p) => selectedPermissions.value.has(p));
 }
 
 function isModuleIndeterminate(mod) {
-    const permNames = Object.values(mod.permissions);
+    const permNames = grantableNames(Object.values(mod.permissions));
+    if (permNames.length === 0) return false;
     const some = permNames.some((p) => selectedPermissions.value.has(p));
     const all = permNames.every((p) => selectedPermissions.value.has(p));
     return some && !all;
 }
 
-// Is super-admin role
-const isSuperAdmin = computed(() => isEdit.value && role.value.name === 'super-admin');
+function deleteDisabled(data) {
+    return data.name === 'super-admin' || (data.users_count ?? 0) > 0;
+}
+
+function deleteTooltip(data) {
+    if (data.name === 'super-admin') return 'Role super-admin tidak dapat dihapus';
+    if ((data.users_count ?? 0) > 0) return 'Role masih dipakai user';
+    return 'Hapus';
+}
 
 onMounted(() => {
     loadRoles();
@@ -369,9 +439,20 @@ onMounted(() => {
                 </Column>
                 <Column :exportable="false" header="Aksi" style="min-width: 180px" alignFrozen="right" frozen>
                     <template #body="slotProps">
-                        <Button v-if="canUpdate" icon="pi pi-pencil" outlined rounded class="mr-2" @click="editRole(slotProps.data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDelete" icon="pi pi-trash" outlined rounded severity="danger" @click="confirmDeleteRole(slotProps.data)" v-tooltip.top="'Hapus'" :disabled="slotProps.data.name === 'super-admin'" />
-                    </template>
+                    <RowActionButtons>
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editRole(slotProps.data)" v-tooltip.top="'Edit'" text />
+                        <Button
+                            v-if="canDelete"
+                            icon="pi pi-trash"
+                            rounded
+                            severity="danger"
+                            @click="confirmDeleteRole(slotProps.data)"
+                            v-tooltip.top="deleteTooltip(slotProps.data)"
+                            :disabled="deleteDisabled(slotProps.data)"
+                            text
+                        />
+                    </RowActionButtons>
+                </template>
                 </Column>
             </DataTable>
         </div>
@@ -382,20 +463,29 @@ onMounted(() => {
                 <!-- Nama Role -->
                 <div>
                     <label class="block font-medium mb-2"> Nama Role <span class="text-red-500">*</span> </label>
-                    <InputText v-model.trim="role.name" :invalid="submitted && !role.name" fluid placeholder="contoh: supervisor" autocomplete="off" style="text-transform: lowercase" :disabled="isSuperAdmin" />
+                    <InputText
+                        v-model.trim="role.name"
+                        :invalid="submitted && (!role.name || !NAME_REGEX.test(role.name))"
+                        fluid
+                        placeholder="contoh: supervisor"
+                        autocomplete="off"
+                        style="text-transform: lowercase"
+                        :disabled="isSuperAdmin || isSuperiorRole"
+                    />
                     <small v-if="submitted && !role.name" class="text-red-500">Nama role wajib diisi</small>
+                    <small v-else-if="submitted && role.name && !NAME_REGEX.test(role.name)" class="text-red-500">Huruf kecil, angka, dan tanda hubung (-) saja</small>
                     <small v-else class="text-surface-500">Huruf kecil, angka, dan tanda hubung (-) saja</small>
                 </div>
 
-                <!-- Super-admin notice -->
                 <Message v-if="isSuperAdmin" severity="info" :closable="false"> Role super-admin selalu memiliki semua permission. Perubahan permission akan di-override oleh sistem. </Message>
+                <Message v-else-if="isSuperiorRole" severity="warn" :closable="false"> Role ini memiliki permission di luar jangkauan Anda. Hanya super-admin yang dapat mengubahnya. </Message>
 
                 <!-- Bulk actions bar -->
                 <div class="flex items-center justify-between bg-surface-50 dark:bg-surface-800 rounded-lg px-4 py-3">
                     <span class="text-sm font-medium"> {{ selectedCount }} / {{ totalCount }} permission dipilih </span>
                     <div class="flex gap-2">
-                        <Button label="Pilih Semua" size="small" severity="secondary" outlined @click="selectAll" :disabled="isSuperAdmin" />
-                        <Button label="Hapus Semua" size="small" severity="secondary" outlined @click="clearAll" :disabled="isSuperAdmin" />
+                        <Button label="Pilih Semua" size="small" severity="secondary" outlined @click="selectAll" :disabled="matrixReadOnly" />
+                        <Button label="Hapus Semua" size="small" severity="secondary" outlined @click="clearAll" :disabled="matrixReadOnly" />
                     </div>
                 </div>
 
@@ -404,7 +494,7 @@ onMounted(() => {
                     <div v-for="group in permissionGroups" :key="group.label" class="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden">
                         <!-- Group Header -->
                         <div class="flex items-center gap-2 px-3 py-2.5 bg-surface-100 dark:bg-surface-800 cursor-pointer select-none hover:bg-surface-200 dark:hover:bg-surface-700" @click="toggleGroupPermissions(group)">
-                            <Checkbox :modelValue="isGroupAllSelected(group)" :binary="true" :indeterminate="isGroupIndeterminate(group)" @click.stop="toggleGroupPermissions(group)" :disabled="isSuperAdmin" />
+                            <Checkbox :modelValue="isGroupAllSelected(group)" :binary="true" :indeterminate="isGroupIndeterminate(group)" @click.stop="toggleGroupPermissions(group)" :disabled="matrixReadOnly" />
                             <i class="pi pi-folder text-primary text-sm"></i>
                             <span class="font-semibold text-primary">{{ group.label }}</span>
                         </div>
@@ -412,24 +502,23 @@ onMounted(() => {
                         <!-- Modules inside group -->
                         <div class="divide-y divide-surface-200 dark:divide-surface-700">
                             <div v-for="mod in group.modules" :key="mod.prefix" class="px-3 py-2.5 hover:bg-surface-50 dark:hover:bg-surface-800/50">
-                                <!-- Module Name (toggle all) -->
                                 <div class="flex items-center gap-2 mb-2 cursor-pointer select-none" @click="toggleModulePermissions(mod)">
-                                    <Checkbox :modelValue="isModuleAllSelected(mod)" :binary="true" :indeterminate="isModuleIndeterminate(mod)" @click.stop="toggleModulePermissions(mod)" :disabled="isSuperAdmin" />
+                                    <Checkbox :modelValue="isModuleAllSelected(mod)" :binary="true" :indeterminate="isModuleIndeterminate(mod)" @click.stop="toggleModulePermissions(mod)" :disabled="matrixReadOnly" />
                                     <span class="font-medium text-sm">{{ mod.label }}</span>
                                 </div>
 
-                                <!-- Permission chips — inline labeled checkboxes, wrap naturally -->
                                 <div class="flex flex-wrap gap-2 pl-7">
                                     <template v-for="(permName, action) in mod.permissions" :key="action">
                                         <label
-                                            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm cursor-pointer select-none transition-colors whitespace-nowrap"
-                                            :class="
+                                            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm select-none transition-colors whitespace-nowrap"
+                                            :class="[
                                                 selectedPermissions.has(permName)
                                                     ? 'bg-primary/10 text-primary border border-primary/30 font-medium'
-                                                    : 'bg-surface-50 dark:bg-surface-700 text-surface-600 dark:text-surface-300 border border-surface-200 dark:border-surface-600'
-                                            "
+                                                    : 'bg-surface-50 dark:bg-surface-700 text-surface-600 dark:text-surface-300 border border-surface-200 dark:border-surface-600',
+                                                chipDisabled(permName) ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                                            ]"
                                         >
-                                            <Checkbox :modelValue="selectedPermissions.has(permName)" :binary="true" @update:modelValue="togglePermission(permName)" :disabled="isSuperAdmin" />
+                                            <Checkbox :modelValue="selectedPermissions.has(permName)" :binary="true" @update:modelValue="togglePermission(permName)" :disabled="chipDisabled(permName)" />
                                             {{ columnLabels[action] || action }}
                                         </label>
                                     </template>
@@ -439,18 +528,16 @@ onMounted(() => {
                     </div>
                 </div>
 
-                <!-- Loading state for permissions -->
                 <div v-else-if="loadingPermissions" class="flex items-center justify-center py-8">
                     <ProgressSpinner style="width: 40px; height: 40px" />
                 </div>
 
-                <!-- Validation message -->
                 <small v-if="submitted && selectedPermissions.size === 0" class="text-red-500"> Pilih minimal 1 permission </small>
             </div>
 
             <template #footer>
                 <Button label="Batal" icon="pi pi-times" text @click="hideDialog" :disabled="saving" />
-                <Button label="Simpan" icon="pi pi-check" @click="saveRole" :loading="saving" />
+                <Button label="Simpan" icon="pi pi-check" @click="saveRole" :loading="saving" :disabled="!canSaveRole" />
             </template>
         </Dialog>
     </div>

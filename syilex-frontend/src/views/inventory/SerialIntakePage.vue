@@ -11,6 +11,8 @@ import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 import SerialLabelPrintDialog from '@/components/common/SerialLabelPrintDialog.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const route = useRoute();
@@ -27,6 +29,16 @@ const canViewHarga = computed(() => authStore.can('serial-intake.view_harga'));
 // Suppliers & Warehouses untuk filter
 const suppliers = ref([]);
 const warehouses = ref([]);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (additionalFilters.supplier_id) n++;
+    if (additionalFilters.warehouse_id) n++;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 const {
     items,
@@ -86,7 +98,9 @@ const unitColumns = computed(() => {
         { field: 'grade', header: 'Grade', align: 'center', width: '70px' },
         { field: 'battery_condition', header: 'Baterai' },
         { field: 'battery_health', header: 'Health', align: 'right', width: '90px' },
-        { field: 'account_status', header: 'Akun', align: 'center', width: '110px' }
+        { field: 'battery_cycle_count', header: 'Cycle', align: 'right', width: '80px' },
+        { field: 'account_status', header: 'Akun', align: 'center', width: '110px' },
+        { field: 'catatan', header: 'Catatan' }
     ];
     // Modal (harga beli) = sensitif → hanya bila berizin view_harga
     if (canViewHarga.value) {
@@ -146,7 +160,9 @@ async function exportDocPdf(item) {
         { label: 'Supplier', value: d.supplier?.nama_supplier || '-' },
         { label: 'Status', value: getStatusLabel(d.status) },
         { label: 'Total Unit', value: formatNumber(d.total_unit || 0) },
-        { label: 'Jatuh Tempo', value: d.tanggal_jatuh_tempo ? formatDateTime(d.tanggal_jatuh_tempo) : '-' }
+        { label: 'Tempo (hari)', value: String(d.tempo_hari ?? 0) },
+        { label: 'Jatuh Tempo', value: d.tanggal_jatuh_tempo ? formatDateTime(d.tanggal_jatuh_tempo) : '-' },
+        { label: 'Cash / Lunas', value: d.cash_payment ? (d.cash_metode === 'transfer' ? 'Transfer' : 'Cash') : 'Tidak' }
     ];
 
     // PDF (read-only): harga & ringkasan finansial hanya untuk yang berizin lihat harga
@@ -169,7 +185,9 @@ async function exportDocPdf(item) {
         { header: 'Grade', width: 14, align: 'center', accessor: (r) => r.grade || '-' },
         { header: 'Baterai', width: 22, accessor: (r) => r.battery_condition || '-' },
         { header: 'Health', width: 16, align: 'right', accessor: (r) => (r.battery_health != null ? formatPercent(r.battery_health) : '-') },
-        { header: 'Akun', width: 18, align: 'center', accessor: (r) => r.account_status || '-' }
+        { header: 'Cycle', width: 12, align: 'right', accessor: (r) => (r.battery_cycle_count != null ? formatNumber(r.battery_cycle_count) : '-') },
+        { header: 'Akun', width: 18, align: 'center', accessor: (r) => r.account_status || '-' },
+        { header: 'Catatan', width: 28, accessor: (r) => r.catatan || '-' }
     ];
     // Modal (harga beli) = sensitif → hanya bila berizin view_harga
     if (canViewHarga.value) {
@@ -206,18 +224,18 @@ onMounted(async () => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="additionalFilters.supplier_id" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilter" />
-                    <Select v-model="additionalFilters.warehouse_id" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" class="w-40" filter showClear @change="onFilter" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilter" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="additionalFilters.supplier_id" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" filter showClear @change="onFilter" />
+                    <Select v-model="additionalFilters.warehouse_id" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" filter showClear @change="onFilter" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -298,13 +316,13 @@ onMounted(async () => {
 
             <Column header="Aksi" style="min-width: 220px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'" />
-                        <Button v-if="canEdit && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canEdit && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -331,7 +349,10 @@ onMounted(async () => {
                         <DetailItem label="Gudang" :value="detailData.warehouse?.nama_warehouse" />
                         <DetailItem label="Supplier" :value="detailData.supplier?.nama_supplier || '-'" />
                         <DetailItem label="Total Unit" :value="formatNumber(detailData.total_unit ?? 0)" />
+                        <DetailItem label="Tempo (hari)" :value="String(detailData.tempo_hari ?? 0)" />
                         <DetailItem v-if="detailData.tanggal_jatuh_tempo" label="Jatuh Tempo" :value="formatDateTime(detailData.tanggal_jatuh_tempo)" />
+                        <DetailItem label="Cash / Lunas" :value="detailData.cash_payment ? (detailData.cash_metode === 'transfer' ? 'Transfer' : 'Cash') : 'Tidak'" />
+                        <DetailItem v-if="detailData.cash_payment && detailData.cash_no_referensi" label="No. Ref. Cash" :value="detailData.cash_no_referensi" />
                     </div>
 
                     <div class="mt-4">
@@ -340,10 +361,12 @@ onMounted(async () => {
                             <template #grade="{ item }">{{ item.grade || '—' }}</template>
                             <template #battery_condition="{ item }">{{ item.battery_condition || '—' }}</template>
                             <template #battery_health="{ item }">{{ item.battery_health != null ? formatPercent(item.battery_health) : '—' }}</template>
+                            <template #battery_cycle_count="{ item }">{{ item.battery_cycle_count != null ? formatNumber(item.battery_cycle_count) : '—' }}</template>
                             <template #account_status="{ item }">
                                 <Tag v-if="item.account_status" :value="item.account_status" :severity="item.account_status === 'unlocked' ? 'success' : 'danger'" />
                                 <span v-else>—</span>
                             </template>
+                            <template #catatan="{ item }">{{ item.catatan || '—' }}</template>
                             <template #harga_modal="{ item }">{{ formatCurrency(item.harga_modal) }}</template>
                             <template #harga_jual="{ item }">{{ item.harga_jual != null ? formatCurrency(item.harga_jual) : '—' }}</template>
                         </DetailTable>
@@ -397,27 +420,23 @@ onMounted(async () => {
 
             <template #footer-extra>
                 <Button v-if="detailData.ulid" label="Print Label" icon="pi pi-print" severity="contrast" @click="printLabelVisible = true" />
-                <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportDocPdf(detailData)" />
-                <Button
-                    v-if="canEdit && canEditItem(detailData)"
+                <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" :loading="exporting" @click="exportDocPdf(detailData)"  outlined />
+                <Button v-if="canEdit && canEditItem(detailData)"
                     label="Edit"
                     icon="pi pi-pencil"
                     severity="warning"
                     @click="
                         editItem(detailData);
                         closeDetail();
-                    "
-                />
-                <Button
-                    v-if="canDeletePerm && canDelete(detailData)"
+                    " />
+                <Button v-if="canDeletePerm && canDelete(detailData)"
                     label="Hapus"
                     icon="pi pi-trash"
                     severity="danger"
                     @click="
                         confirmDelete(detailData);
                         closeDetail();
-                    "
-                />
+                    " />
                 <Button v-if="canApprove && canApproveItem(detailData)" label="Approve" icon="pi pi-check" severity="success" :loading="processingApprove" @click="confirmApprove(detailData)" />
             </template>
         </DetailDialog>

@@ -36,10 +36,11 @@ class PerDokumenReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
         $canViewHarga = auth()->user()->can('po.view_harga');
         $source = ReportHelperService::resolveSource($request);
+        $mode = ReportHelperService::resolveMode($request);
 
         // Base select (sumber: po/serial — pembelian serial ikut via PurchaseReportSource)
         $select = [
@@ -55,8 +56,16 @@ class PerDokumenReportController extends BaseApiController
             'dpo.details_count',
         ];
 
+        $applyNet = $mode === 'net' && $source !== 'serial';
+
         if ($canViewHarga) {
-            $select = array_merge($select, [
+            $select = array_merge($select, $applyNet ? [
+                DB::raw('GREATEST(dpo.subtotal - COALESCE(pret.ret_money, 0), 0) as subtotal'),
+                DB::raw('GREATEST(dpo.total_diskon_header - COALESCE(pret.ret_disc, 0), 0) as total_diskon_header'),
+                'dpo.total_setelah_diskon',
+                'dpo.total_biaya_tambahan',
+                DB::raw('GREATEST(dpo.grand_total - COALESCE(pret.ret_money, 0), 0) as grand_total'),
+            ] : [
                 'dpo.subtotal',
                 'dpo.total_diskon_header',
                 'dpo.total_setelah_diskon',
@@ -68,8 +77,18 @@ class PerDokumenReportController extends BaseApiController
         $query = DB::query()
             ->fromSub(PurchaseReportSource::documents($dateFrom, $dateToEnd, $source), 'dpo')
             ->join('master_supplier as ms', 'ms.id', '=', 'dpo.supplier_id')
-            ->join('master_warehouse as mw', 'mw.id', '=', 'dpo.warehouse_id')
-            ->select($select);
+            ->join('master_warehouse as mw', 'mw.id', '=', 'dpo.warehouse_id');
+
+        // ACC-3 Wave B: LEFT JOIN retur beli per PO so mode=net nets the list row itself (not just summary).
+        if ($canViewHarga && $applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnByPoSubquery($dateFrom, $dateToEnd),
+                'pret',
+                fn ($join) => $join->on('pret.po_id', '=', 'dpo.id')->whereRaw("dpo.sumber = 'po'")
+            );
+        }
+
+        $query->select($select);
 
         // Filters
         if ($request->filled('supplier_id')) {
@@ -122,12 +141,28 @@ class PerDokumenReportController extends BaseApiController
                 });
             }
 
-            $summaryRaw = $summaryQuery->select(
-                DB::raw('COUNT(*) as jumlah_po'),
-                DB::raw('COALESCE(SUM(dpo.subtotal), 0) as total_subtotal'),
-                DB::raw('COALESCE(SUM(dpo.total_diskon_header), 0) as total_diskon'),
-                DB::raw('COALESCE(SUM(dpo.grand_total), 0) as total_grand_total')
-            )->first();
+            // ACC-3 Wave B: mode=net nets subtotal/diskon/grand_total per row via LEFT JOIN,
+            // summary aggregates the same netted expressions (list & summary stay consistent).
+            if ($applyNet) {
+                $summaryQuery->leftJoinSub(
+                    ReportHelperService::purchaseReturnByPoSubquery($dateFrom, $dateToEnd),
+                    'pret',
+                    fn ($join) => $join->on('pret.po_id', '=', 'dpo.id')->whereRaw("dpo.sumber = 'po'")
+                );
+                $summaryRaw = $summaryQuery->selectRaw(
+                    'COUNT(*) as jumlah_po,
+                     COALESCE(SUM(GREATEST(dpo.subtotal - COALESCE(pret.ret_money, 0), 0)), 0) as total_subtotal,
+                     COALESCE(SUM(GREATEST(dpo.total_diskon_header - COALESCE(pret.ret_disc, 0), 0)), 0) as total_diskon,
+                     COALESCE(SUM(GREATEST(dpo.grand_total - COALESCE(pret.ret_money, 0), 0)), 0) as total_grand_total'
+                )->first();
+            } else {
+                $summaryRaw = $summaryQuery->select(
+                    DB::raw('COUNT(*) as jumlah_po'),
+                    DB::raw('COALESCE(SUM(dpo.subtotal), 0) as total_subtotal'),
+                    DB::raw('COALESCE(SUM(dpo.total_diskon_header), 0) as total_diskon'),
+                    DB::raw('COALESCE(SUM(dpo.grand_total), 0) as total_grand_total')
+                )->first();
+            }
 
             $summary = [
                 'jumlah_po' => $summaryRaw->jumlah_po ?? 0,
@@ -159,7 +194,7 @@ class PerDokumenReportController extends BaseApiController
         }
 
         return $this->success(
-            ReportHelperService::buildPaginatedResponse($paginator, $summary, ['can_view_harga' => $canViewHarga, 'source' => $source])
+            ReportHelperService::buildPaginatedResponse($paginator, $summary, ['can_view_harga' => $canViewHarga, 'source' => $source, 'mode' => $mode])
         );
     }
 
@@ -223,7 +258,7 @@ class PerDokumenReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         $filename = 'laporan_pembelian_per_dokumen_' . date('Y-m-d_His') . '.xlsx';
 
@@ -235,6 +270,7 @@ class PerDokumenReportController extends BaseApiController
             $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
             $request->input('search'),
             ReportHelperService::resolveSource($request),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 }

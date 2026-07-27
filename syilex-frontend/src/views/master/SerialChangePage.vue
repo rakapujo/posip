@@ -9,6 +9,8 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const { formatCurrency, formatNumber, formatPercent, formatDateTime, getPrimeDateFormatShort } = useFormatters();
@@ -71,10 +73,20 @@ const detailColumns = [
     { field: 'grade', header: 'Grade', align: 'center', width: '70px' },
     { field: 'battery_condition', header: 'Baterai' },
     { field: 'battery_health', header: 'Health', align: 'right', width: '90px' },
-    { field: 'account_status', header: 'Akun', align: 'center', width: '100px' }
+    { field: 'battery_cycle_count', header: 'Cycle', align: 'right', width: '80px' },
+    { field: 'account_status', header: 'Akun', align: 'center', width: '100px' },
+    { field: 'catatan', header: 'Catatan' }
 ];
 
 const detailRows = computed(() => (detailData.value.details || []).map((d, i) => ({ ...d, no: i + 1 })));
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 // Tampilkan "lama → baru" bila berubah
 function diff(item, field, fmt = (v) => v ?? '—', arrow = '→') {
@@ -112,7 +124,9 @@ async function exportDocPdf(item) {
         { header: 'Grade', width: 14, align: 'center', accessor: (r) => diff(r, 'grade', dash, '->') },
         { header: 'Baterai', width: 26, accessor: (r) => diff(r, 'battery_condition', dash, '->') },
         { header: 'Health', width: 18, align: 'right', accessor: (r) => diff(r, 'battery_health', (v) => (v != null ? formatPercent(v) : '-'), '->') },
-        { header: 'Akun', width: 20, align: 'center', accessor: (r) => diff(r, 'account_status', dash, '->') }
+        { header: 'Cycle', width: 14, align: 'right', accessor: (r) => diff(r, 'battery_cycle_count', (v) => (v != null ? formatNumber(v) : '-'), '->') },
+        { header: 'Akun', width: 20, align: 'center', accessor: (r) => diff(r, 'account_status', dash, '->') },
+        { header: 'Catatan', width: 28, accessor: (r) => diff(r, 'catatan', dash, '->') }
     ];
     const audit = [];
     if (d.created_by?.name) audit.push({ label: 'Dibuat oleh', value: d.created_by.name, date: formatDateTime(d.created_at) });
@@ -138,12 +152,16 @@ onMounted(loadData);
                 <Button v-if="canCreate" label="Perubahan Data Serial" icon="pi pi-plus" severity="primary" @click="createNew" />
             </template>
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilter" />
-                    <div class="w-40"><DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tgl Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" /></div>
-                    <div class="w-40"><DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tgl Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" /></div>
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
+                    <div class="list-filter-control">
+                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tgl Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
+                    </div>
+                    <div class="list-filter-control">
+                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tgl Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
+                    </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -198,13 +216,13 @@ onMounted(loadData);
             </Column>
             <Column header="Aksi" style="min-width: 200px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'" />
-                        <Button v-if="canEdit && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canEdit && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -236,7 +254,9 @@ onMounted(loadData);
                         <template #grade="{ item }">{{ diff(item, 'grade') }}</template>
                         <template #battery_condition="{ item }">{{ diff(item, 'battery_condition') }}</template>
                         <template #battery_health="{ item }">{{ diff(item, 'battery_health', (v) => (v != null ? formatPercent(v) : '—')) }}</template>
+                        <template #battery_cycle_count="{ item }">{{ diff(item, 'battery_cycle_count', (v) => (v != null ? formatNumber(v) : '—')) }}</template>
                         <template #account_status="{ item }">{{ diff(item, 'account_status') }}</template>
+                        <template #catatan="{ item }">{{ diff(item, 'catatan') }}</template>
                     </DetailTable>
 
                     <div v-if="detailData.status === 'approved' && detailData.approved_by" class="mt-4 pt-4 border-t border-surface-200">
@@ -252,27 +272,23 @@ onMounted(loadData);
                 </div>
             </template>
             <template #footer-extra>
-                <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportDocPdf(detailData)" />
-                <Button
-                    v-if="canEdit && canEditItem(detailData)"
+                <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" :loading="exporting" @click="exportDocPdf(detailData)"  outlined />
+                <Button v-if="canEdit && canEditItem(detailData)"
                     label="Edit"
                     icon="pi pi-pencil"
                     severity="warning"
                     @click="
                         editItem(detailData);
                         closeDetail();
-                    "
-                />
-                <Button
-                    v-if="canDeletePerm && canDelete(detailData)"
+                    " />
+                <Button v-if="canDeletePerm && canDelete(detailData)"
                     label="Hapus"
                     icon="pi pi-trash"
                     severity="danger"
                     @click="
                         confirmDelete(detailData);
                         closeDetail();
-                    "
-                />
+                    " />
                 <Button v-if="canApprove && canApproveItem(detailData)" label="Approve" icon="pi pi-check" severity="success" :loading="processingApprove" @click="confirmApprove(detailData)" />
             </template>
         </DetailDialog>

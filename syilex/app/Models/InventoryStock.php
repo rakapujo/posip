@@ -113,9 +113,11 @@ class InventoryStock extends Model
     public function scopeSearch($query, string $search)
     {
         return $query->whereHas('product', function ($q) use ($search) {
-            $q->where('kode_produk', 'like', "%{$search}%")
-              ->orWhere('barcode', 'like', "%{$search}%")
-              ->orWhere('nama_produk', 'like', "%{$search}%");
+            $q->where(function ($inner) use ($search) {
+                $inner->where('kode_produk', 'like', "%{$search}%")
+                    ->orWhere('barcode', 'like', "%{$search}%")
+                    ->orWhere('nama_produk', 'like', "%{$search}%");
+            });
         });
     }
 
@@ -162,20 +164,20 @@ class InventoryStock extends Model
      */
     public static function initializeForWarehouse(int $warehouseId): int
     {
-        $products = MasterProduk::active()->pluck('id');
+        $products = MasterProduk::active()->get(['id', 'avg_cost']);
         $count = 0;
 
-        foreach ($products as $productId) {
-            $exists = self::where('product_id', $productId)
+        foreach ($products as $product) {
+            $exists = self::where('product_id', $product->id)
                 ->where('warehouse_id', $warehouseId)
                 ->exists();
 
             if (!$exists) {
                 self::create([
-                    'product_id' => $productId,
+                    'product_id' => $product->id,
                     'warehouse_id' => $warehouseId,
                     'qty' => 0,
-                    'avg_cost' => 0,
+                    'avg_cost' => (float) $product->avg_cost,
                 ]);
                 $count++;
             }
@@ -189,6 +191,7 @@ class InventoryStock extends Model
      */
     public static function initializeForProduct(int $productId): int
     {
+        $avgCost = (float) (MasterProduk::where('id', $productId)->value('avg_cost') ?? 0);
         $warehouses = MasterWarehouse::active()->pluck('id');
         $count = 0;
 
@@ -202,7 +205,7 @@ class InventoryStock extends Model
                     'product_id' => $productId,
                     'warehouse_id' => $warehouseId,
                     'qty' => 0,
-                    'avg_cost' => 0,
+                    'avg_cost' => $avgCost,
                 ]);
                 $count++;
             }
@@ -216,22 +219,22 @@ class InventoryStock extends Model
      */
     public static function initializeAll(): int
     {
-        $products = MasterProduk::active()->pluck('id');
+        $products = MasterProduk::active()->get(['id', 'avg_cost']);
         $warehouses = MasterWarehouse::active()->pluck('id');
         $count = 0;
 
-        foreach ($products as $productId) {
+        foreach ($products as $product) {
             foreach ($warehouses as $warehouseId) {
-                $exists = self::where('product_id', $productId)
+                $exists = self::where('product_id', $product->id)
                     ->where('warehouse_id', $warehouseId)
                     ->exists();
 
                 if (!$exists) {
                     self::create([
-                        'product_id' => $productId,
+                        'product_id' => $product->id,
                         'warehouse_id' => $warehouseId,
                         'qty' => 0,
-                        'avg_cost' => 0,
+                        'avg_cost' => (float) $product->avg_cost,
                     ]);
                     $count++;
                 }
@@ -253,30 +256,28 @@ class InventoryStock extends Model
      */
     public static function adjustStock(int $productId, int $warehouseId, int $qtyChange, bool $syncAvgCost = true): self
     {
-        // Skip observer
         StockCard::$skipObserver = true;
 
-        // Get product's global avg_cost
-        $product = MasterProduk::find($productId);
-        $globalAvgCost = $product ? (float) $product->avg_cost : 0;
+        try {
+            $product = MasterProduk::find($productId);
+            $globalAvgCost = $product ? (float) $product->avg_cost : 0;
 
-        $stock = self::firstOrCreate(
-            ['product_id' => $productId, 'warehouse_id' => $warehouseId],
-            ['qty' => 0, 'avg_cost' => $globalAvgCost]
-        );
+            $stock = self::firstOrCreate(
+                ['product_id' => $productId, 'warehouse_id' => $warehouseId],
+                ['qty' => 0, 'avg_cost' => $globalAvgCost]
+            );
 
-        $stock->qty += $qtyChange;
+            $stock->qty += $qtyChange;
 
-        // Sync avg_cost from product (global HPP)
-        if ($syncAvgCost) {
-            $stock->avg_cost = $globalAvgCost;
+            if ($syncAvgCost) {
+                $stock->avg_cost = $globalAvgCost;
+            }
+
+            $stock->save();
+
+            return $stock;
+        } finally {
+            StockCard::$skipObserver = false;
         }
-
-        $stock->save();
-
-        // Reset flag
-        StockCard::$skipObserver = false;
-
-        return $stock;
     }
 }

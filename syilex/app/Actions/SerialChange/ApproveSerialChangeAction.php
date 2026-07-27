@@ -52,6 +52,7 @@ class ApproveSerialChangeAction
                         'grade' => $unit->grade,
                         'battery_condition' => $unit->battery_condition,
                         'battery_health' => $unit->battery_health,
+                        'battery_cycle_count' => $unit->battery_cycle_count,
                         'account_status' => $unit->account_status,
                         'catatan' => $unit->catatan,
                     ],
@@ -63,6 +64,7 @@ class ApproveSerialChangeAction
                     'grade' => $d->grade,
                     'battery_condition' => $d->battery_condition,
                     'battery_health' => $d->battery_health,
+                    'battery_cycle_count' => $d->battery_cycle_count,
                     'account_status' => $d->account_status,
                     'catatan' => $d->catatan,
                 ]);

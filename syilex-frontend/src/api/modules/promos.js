@@ -9,8 +9,8 @@ export const promosApi = {
      * @param {Object} params
      * @param {string} [params.search] - Search by kode_promo, nama_promo
      * @param {string} [params.status] - Filter by computed status (draft, active, upcoming, expired, inactive)
-     * @param {string} [params.date_from] - Filter by tanggal_mulai >= date_from
-     * @param {string} [params.date_to] - Filter by tanggal_selesai <= date_to
+     * @param {string} [params.date_from] - Periode overlap: selesai >= date_from (atau tanpa batas)
+     * @param {string} [params.date_to] - Periode overlap: mulai <= date_to
      * @param {string} [params.sort_field] - Sort field
      * @param {string} [params.sort_order] - Sort order (asc, desc)
      * @param {number} [params.per_page] - Items per page

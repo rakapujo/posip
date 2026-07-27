@@ -62,6 +62,7 @@ function rowFromUnit(u) {
         serial_unit_id: u.ulid,
         kode_internal: u.kode_internal || null,
         serial_number: u.serial_number,
+        warehouse_name: u.warehouse?.nama_warehouse || '—',
         cur_modal: u.harga_modal != null ? Number(u.harga_modal) : 0,
         cur_cost: u.cost_per_unit != null ? Number(u.cost_per_unit) : 0,
         harga_modal_baru: u.harga_modal != null ? Number(u.harga_modal) : 0,
@@ -175,7 +176,7 @@ function cancel() {
             <Button icon="pi pi-arrow-left" severity="secondary" text rounded @click="cancel" />
             <div>
                 <h2 class="text-2xl font-semibold m-0">{{ pageTitle }}</h2>
-                <small class="text-surface-500">Isi komponen biaya per unit — HPP/Landed dihitung otomatis. Tidak mengubah avg_cost agregat produk.</small>
+                <small class="text-surface-500">Isi komponen biaya per unit — HPP/Landed dihitung otomatis. Saat approve, avg_cost produk di-recalc (Metode A: rata-rata cost_per_unit unit tersedia).</small>
             </div>
         </div>
 
@@ -240,6 +241,9 @@ function cancel() {
                 <template #body="{ data }"
                     ><span class="font-mono">{{ data.serial_number }}</span></template
                 >
+            </Column>
+            <Column header="Gudang" style="min-width: 130px">
+                <template #body="{ data }">{{ data.warehouse_name }}</template>
             </Column>
             <Column style="min-width: 140px" bodyClass="text-right">
                 <template #header>

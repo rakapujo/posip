@@ -403,4 +403,21 @@ class CreatePurchaseOrderActionTest extends TestCase
         $this->assertEquals(29000, $po->subtotal, '15000 + 14000');
         $this->assertEquals(29000, $po->grand_total);
     }
+    #[Test]
+    public function store_rejects_duplicate_product_and_unit_via_http(): void
+    {
+        \Spatie\Permission\Models\Permission::findOrCreate('po.create', 'web');
+        $this->user->givePermissionTo('po.create');
+        \Laravel\Sanctum\Sanctum::actingAs($this->user);
+
+        $response = $this->postJson('/api/v1/purchase-orders', $this->baseData([
+            'details' => [
+                ['product_id' => $this->product->id, 'unit_used' => 'PCS', 'unit_konversi' => 1, 'qty_in_unit' => 3, 'harga_per_unit' => 5000],
+                ['product_id' => $this->product->id, 'unit_used' => 'PCS', 'unit_konversi' => 1, 'qty_in_unit' => 2, 'harga_per_unit' => 5000],
+            ],
+        ]));
+
+        $response->assertStatus(422)->assertJsonValidationErrors('details');
+        $this->assertSame(0, DocPurchaseOrder::count());
+    }
 }

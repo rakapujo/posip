@@ -10,12 +10,13 @@ use App\Traits\HasInventoryStock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use App\Actions\Concerns\RequiresAuthenticatedUser;
+use App\Actions\StockOpname\Concerns\ResolvesOpnamePresentUnits;
 
 class UpdateStockOpnameAction
 {
     use RequiresAuthenticatedUser;
-
     use HasInventoryStock;
+    use ResolvesOpnamePresentUnits;
 
     /**
      * Execute the action.
@@ -32,14 +33,32 @@ class UpdateStockOpnameAction
         }
 
         return DB::transaction(function () use ($opname, $data) {
+            if (! SettingService::isElektronikEnabled()) {
+                foreach ($data['details'] as $i => $detail) {
+                    if (! empty($detail['serial_unit_ids_present'])) {
+                        throw ValidationException::withMessages([
+                            "details.{$i}.serial_unit_ids_present" => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+                        ]);
+                    }
+                }
+            }
+
+            // Gudang immutable setelah create (FE sudah disable; tolak bypass API).
+            if (isset($data['warehouse_id']) && (int) $data['warehouse_id'] !== (int) $opname->warehouse_id) {
+                throw ValidationException::withMessages([
+                    'warehouse_id' => ['Gudang stock opname tidak boleh diubah.'],
+                ]);
+            }
+
+            $warehouseId = (int) $opname->warehouse_id;
+
             // Format notes
             $notes = isset($data['notes'])
                 ? SettingService::formatName($data['notes'])
                 : null;
 
-            // Update header
+            // Update header (tanpa ganti warehouse_id)
             $opname->update([
-                'warehouse_id' => $data['warehouse_id'],
                 'tanggal_opname' => $data['tanggal_opname'],
                 'mode' => $data['mode'] ?? $opname->mode,
                 'notes' => $notes,
@@ -54,13 +73,13 @@ class UpdateStockOpnameAction
                 ->pluck('id');
 
             // Create new details
-            foreach ($data['details'] as $detail) {
+            foreach ($data['details'] as $i => $detail) {
                 // Get current stock for this warehouse (qty_system)
-                $qtySystem = $this->getCurrentStock($detail['product_id'], $data['warehouse_id']);
+                $qtySystem = $this->getCurrentStock($detail['product_id'], $warehouseId);
 
                 $presentIds = null;
                 if ($serialProductIds->contains($detail['product_id'])) {
-                    $presentIds = $detail['serial_unit_ids_present'] ?? [];
+                    $presentIds = $this->resolvePresentUlids($detail, $i, (int) $detail['product_id'], $warehouseId);
                     $qtyPhysical = count($presentIds);
                 } else {
                     $qtyPhysical = (int) $detail['qty_physical'];

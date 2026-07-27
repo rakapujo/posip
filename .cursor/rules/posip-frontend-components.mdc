@@ -1,0 +1,49 @@
+---
+description: POSIP frontend — reusable components catalog & when to use
+globs: syilex-frontend/**
+alwaysApply: false
+---
+
+# POSIP frontend components
+
+**SSoT:** `syilex-frontend/src/components/common/` — cek folder sebelum bikin baru.
+
+## Catalog (wajib reuse)
+
+| Component | Pakai untuk |
+|-----------|-------------|
+| `DataTableHeader` | Header list: search + export |
+| `DetailDialog` + `DetailItem` + `DetailTable` | Detail dokumen (tabel di dialog = `DetailTable`, **bukan** DataTable PrimeVue) |
+| `ImageUpload` | Upload gambar produk/dll |
+| `SerialUnitPicker` | Pilih SN/unit di baris dokumen (bukan buat baris baru) |
+| `ProductUnitPickerDrawer` | Cari produk × unit (Sales/PO/retur/PBS header) |
+| `SerialLabelPrintDialog` | Cetak label serial |
+| `CustomerFormDialog` | Tambah/edit customer cepat |
+| `MoneySummaryPanel` | Ringkasan nominal (hutang/piutang/dll) |
+| `AgingBucketPanel` | Aging bucket AR/AP |
+| `ListFiltersSheet` | Sheet filter list |
+| `CollapsibleSection` | Section form yang bisa collapse |
+| `RowActionButtons` | Aksi baris (edit/hapus/…) |
+
+## Composables (wajib)
+
+| Composable | Pakai untuk |
+|------------|-------------|
+| `useFormatters` | Uang, qty, tanggal, `shouldUppercase` |
+| `useNotification` | Toast — **jangan** `toast.add()`; error API → `notify.apiError` |
+| `useMasterCrud` | List/CRUD master + confirm |
+| `useTransactionList` | List dokumen approve/delete |
+| `usePosCart` | Keranjang POS saja |
+| `useReceiptPdf` / `useReceiptEscPos` / `usePrintAdapter` / `usePrintTransport` | Cetak thermal (`composables/print/`) |
+| `useSalesInvoicePdf` | Faktur penjualan BO |
+| `useSerialLabelPrint` | Label serial |
+| `useExportPdf` / `useBarcodePrint` | Export A4 / barcode |
+| `useSessionGuard` | Session/auth helpers |
+| `useErrorLogger` | Error FE → API |
+
+## JANGAN
+
+- Component/composable baru tanpa cek catalog di atas
+- `DataTable` PrimeVue di dalam `DetailDialog`
+- Duplikasi picker produk/SN — pakai drawer/picker existing
+- `class="hidden md:…"` langsung di `Tag`/`Button` — bungkus `<div class="hidden md:flex">` (display komponen menang)

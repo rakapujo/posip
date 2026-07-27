@@ -31,6 +31,14 @@ class ApproveRepackAction
         }
 
         return DB::transaction(function () use ($repack) {
+            // Lock header + re-check draft di dalam TX (cegah double-approve race).
+            $repack = DocRepack::where('id', $repack->id)->lockForUpdate()->firstOrFail();
+            if (!$repack->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Repack sudah diproses, tidak bisa disetujui ulang.'],
+                ]);
+            }
+
             // Load inputs and outputs with products
             $repack->load(['inputs.product', 'outputs.product']);
 
@@ -57,7 +65,7 @@ class ApproveRepackAction
             $errors = [];
 
             foreach ($repack->inputs as $input) {
-                $currentStock = $stocks[$input->product_id]->qty ?? 0;
+                $currentStock = $stocks[$input->product_id]?->qty ?? 0;
                 $newStock = $currentStock - $input->qty;
 
                 if ($newStock < 0 && !$negativeStockAllowed) {
@@ -146,7 +154,12 @@ class ApproveRepackAction
                 // ==================== CALCULATE OUTPUT HPP ====================
                 $biayaRepack = (float) $repack->biaya_repack;
                 $totalCostOutput = $totalCostInput + $biayaRepack;
-                $totalOutputQty = $repack->outputs->sum('qty');
+                $totalOutputQty = (float) $repack->outputs->sum('qty');
+                if ($totalOutputQty <= 0) {
+                    throw ValidationException::withMessages([
+                        'outputs' => ['Total qty hasil harus lebih dari 0.'],
+                    ]);
+                }
 
                 // ==================== PROCESS OUTPUT (HASIL) ====================
                 foreach ($repack->outputs as $output) {

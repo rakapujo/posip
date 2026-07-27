@@ -42,10 +42,10 @@ class InventoryStockExport implements FromQuery, WithHeadings, WithMapping, With
             ])
             ->activeWarehouse();
 
-        // Filter by product status
-        if ($this->status) {
+        // Filter by product status (status=all → no filter; missing → active)
+        if ($this->status && $this->status !== 'all') {
             $query->whereHas('product', fn($q) => $q->where('status', $this->status));
-        } else {
+        } elseif ($this->status !== 'all') {
             $query->activeProduct();
         }
 

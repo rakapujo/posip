@@ -22,7 +22,6 @@
     RewriteCond %{REQUEST_URI} ^/api/ [OR]
     RewriteCond %{REQUEST_URI} ^/sanctum/ [OR]
     RewriteCond %{REQUEST_URI} ^/storage/ [OR]
-    RewriteCond %{REQUEST_URI} ^/downloads/ [OR]
     RewriteCond %{REQUEST_URI} /install [OR]
     RewriteCond %{REQUEST_URI} ^/public/install
     RewriteRule ^ index.php [L]

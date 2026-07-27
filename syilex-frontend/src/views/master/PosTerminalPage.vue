@@ -6,12 +6,14 @@ import { posTerminalsApi, warehousesApi, customersApi, metodePembayaransApi, use
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { usePrintAdapter } from '@/composables/print/usePrintAdapter';
-import { usePrintService } from '@/composables/usePrintService';
 import PrinterPickerPanel from '@/components/print/PrinterPickerPanel.vue';
 import { useShiftReport } from '@/composables/useShiftReport';
 import { useAuthStore } from '@/stores/auth';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
+import CollapsibleSection from '@/components/common/CollapsibleSection.vue';
 import ShiftReportDialog from '@/components/pos/ShiftReportDialog.vue';
 
 const router = useRouter();
@@ -20,7 +22,6 @@ const notify = useNotification();
 const confirm = useConfirm();
 const authStore = useAuthStore();
 const printAdapter = usePrintAdapter();
-const legacyPrintService = usePrintService();
 
 // ESC/POS generation
 import { useReceiptEscPos } from '@/composables/useReceiptEscPos';
@@ -29,17 +30,23 @@ const escpos = useReceiptEscPos();
 // Shift Report (composable)
 const { shiftReportDialog, shiftReportData, loadingShiftReport, loadShiftReport, printShiftReport: browserPrintShiftReport, downloadShiftReportPdf, closeShiftReport } = useShiftReport();
 
-// Override printShiftReport: direct thermal when available, fallback to browser
+// Thermal if ready, else PDF. Fail → PDF.
 const printShiftReport = async () => {
-    if (shiftReportData.value) {
-        await printAdapter.reconnect();
-        const bytes = escpos.buildShiftReport(shiftReportData.value, getPrintOpts());
-        const result = await printAdapter.printRaw(bytes, {
-            legacyPrinterId: getLegacyPrinterId()
-        });
-        if (result.success) return;
+    if (!shiftReportData.value) {
+        notify.warn('Data laporan shift tidak tersedia');
+        return;
     }
-    browserPrintShiftReport();
+    if (printAdapter.isReadyToThermal()) {
+        try {
+            await printAdapter.reconnect();
+            const bytes = escpos.buildShiftReport(shiftReportData.value, getPrintOpts());
+            const result = await printAdapter.printRaw(bytes);
+            if (result.success) return;
+        } catch (e) {
+            console.warn('[printShiftReport] thermal failed', e);
+        }
+    }
+    await browserPrintShiftReport();
 };
 
 function getPrintOpts() {
@@ -51,23 +58,32 @@ function getPrintOpts() {
     };
 }
 
-function getLegacyPrinterId() {
-    return (item.value?.default_printer || detailData.value?.default_printer)?.trim() || undefined;
-}
-
 const testingPrint = ref(false);
 async function testThermalPrint() {
     testingPrint.value = true;
     try {
         await printAdapter.reconnect();
         const bytes = escpos.buildTestPage(getPrintOpts());
-        const result = await printAdapter.printRaw(bytes, {
-            legacyPrinterId: getLegacyPrinterId()
-        });
+        const result = await printAdapter.printRaw(bytes);
         if (result.success) notify.success('Test print terkirim');
-        else notify.warn(result.message || 'Test print gagal — coba pasangkan printer atau gunakan legacy Print Service');
+        else notify.warn(result.message || 'Test print gagal — pasangkan printer dulu');
     } finally {
         testingPrint.value = false;
+    }
+}
+
+const mailTestTo = ref('');
+const testingMail = ref(false);
+async function sendMailTest() {
+    if (!item.value.ulid || !mailTestTo.value) return;
+    testingMail.value = true;
+    try {
+        const res = await posTerminalsApi.mailTest(item.value.ulid, { to_email: mailTestTo.value });
+        if (res.data.success) notify.success(res.data.message || 'Email uji terkirim');
+    } catch (e) {
+        notify.error(e?.response?.data?.message || 'Gagal kirim email uji');
+    } finally {
+        testingMail.value = false;
     }
 }
 
@@ -97,6 +113,12 @@ const statusOptions = ref([
     { label: 'Nonaktif', value: 'inactive' }
 ]);
 
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    return n;
+});
+
 // Pagination
 const lazyParams = ref({
     first: 0,
@@ -123,8 +145,6 @@ const customerOptions = ref([]);
 const defaultPaymentOptions = ref([]);
 const paymentMethodOptions = ref([]);
 const userOptions = ref([]);
-const printerOptions = ref([]);
-const loadingPrinters = ref(false);
 
 // Cached list semua terminal aktif (untuk deteksi shared warehouse di form edit).
 // Di-fetch sekali saat mount — tidak sensitif ke pagination/filter list utama.
@@ -142,20 +162,10 @@ async function loadAllActiveTerminals() {
 // Kalau ada → tampil banner warning tentang risiko oversell.
 const sharedWarehouseTerminals = computed(() => {
     if (!item.value.warehouse_id) return [];
-    return allActiveTerminals.value.filter((t) => t.warehouse_id === item.value.warehouse_id && t.id !== item.value.id);
+    return allActiveTerminals.value.filter(
+        (t) => t.warehouse_id === item.value.warehouse_id && t.ulid !== item.value.ulid
+    );
 });
-
-async function loadPrinters() {
-    loadingPrinters.value = true;
-    try {
-        const list = await legacyPrintService.getPrinters();
-        printerOptions.value = list.map((p) => ({ name: p.name, id: p.id }));
-    } catch {
-        printerOptions.value = [];
-    } finally {
-        loadingPrinters.value = false;
-    }
-}
 
 // ==================== DATA LOADING ====================
 
@@ -251,7 +261,15 @@ const emptyForm = {
     warehouse_id: null,
     default_customer_id: null,
     default_metode_pembayaran_id: null,
-    default_printer: '',
+    mail_driver: 'none',
+    mail_from_address: '',
+    mail_from_name: '',
+    smtp_host: '',
+    smtp_port: null,
+    smtp_encryption: null,
+    smtp_username: '',
+    smtp_password: '',
+    resend_api_key: '',
     auto_open_tray: false,
     // Auto-print flags — consumed by PosKasirPage to gate thermal print triggers
     auto_print_receipt: false,
@@ -296,6 +314,8 @@ async function editItem(data) {
                 warehouse_id: terminal.warehouse?.id || terminal.warehouse_id,
                 default_customer_id: terminal.default_customer?.id || terminal.default_customer_id || null,
                 default_metode_pembayaran_id: terminal.default_metode_pembayaran?.id || terminal.default_metode_pembayaran_id || null,
+                smtp_password: '',
+                resend_api_key: '',
                 user_ids: userIds,
                 metode_pembayaran_ids: terminal.allowed_payment_methods?.map((m) => m.id) || []
             };
@@ -358,6 +378,13 @@ async function saveItem() {
     if (!item.value.metode_pembayaran_ids?.length) return;
     if (!item.value.user_ids?.length) return;
 
+    // Ensure default metode stays in allow-list (BE also enforces)
+    const defaultPay = item.value.default_metode_pembayaran_id;
+    let metodeIds = [...(item.value.metode_pembayaran_ids || [])];
+    if (defaultPay && !metodeIds.includes(defaultPay)) {
+        metodeIds = [...metodeIds, defaultPay];
+    }
+
     saving.value = true;
     try {
         const data = {
@@ -365,7 +392,16 @@ async function saveItem() {
             warehouse_id: item.value.warehouse_id,
             default_customer_id: item.value.default_customer_id,
             default_metode_pembayaran_id: item.value.default_metode_pembayaran_id,
-            default_printer: item.value.default_printer?.trim() || null,
+            default_printer: null,
+            mail_driver: item.value.mail_driver || 'none',
+            mail_from_address: item.value.mail_from_address?.trim() || null,
+            mail_from_name: item.value.mail_from_name?.trim() || null,
+            smtp_host: item.value.smtp_host?.trim() || null,
+            smtp_port: item.value.smtp_port || null,
+            smtp_encryption: item.value.smtp_encryption || null,
+            smtp_username: item.value.smtp_username?.trim() || null,
+            smtp_password: item.value.smtp_password || null,
+            resend_api_key: item.value.resend_api_key || null,
             auto_open_tray: item.value.auto_open_tray,
             auto_print_receipt: item.value.auto_print_receipt,
             auto_print_retur: item.value.auto_print_retur,
@@ -381,7 +417,7 @@ async function saveItem() {
             keterangan: item.value.keterangan?.trim() || null,
             status: item.value.status,
             user_ids: item.value.user_ids || [],
-            metode_pembayaran_ids: item.value.metode_pembayaran_ids || []
+            metode_pembayaran_ids: metodeIds
         };
 
         if (!isEdit.value) {
@@ -399,7 +435,7 @@ async function saveItem() {
             notify.success(response.data.message);
             itemDialog.value = false;
             item.value = {};
-            await loadData();
+            await Promise.all([loadData(), loadAllActiveTerminals()]);
         }
     } catch (error) {
         notify.saveError(error);
@@ -531,12 +567,14 @@ function isAssignedToTerminal(terminal) {
     return terminal.users?.some((u) => u.ulid === currentUserUlid.value);
 }
 
+const canPosAccess = computed(() => authStore.can('pos.access'));
+
 function canStartShift(terminal) {
-    return !terminal.active_user_id && terminal.status === 'active' && isAssignedToTerminal(terminal);
+    return canPosAccess.value && !terminal.active_user_id && terminal.status === 'active' && isAssignedToTerminal(terminal);
 }
 
 function canEndShift(terminal) {
-    return terminal.active_user?.ulid === currentUserUlid.value;
+    return canPosAccess.value && terminal.active_user?.ulid === currentUserUlid.value;
 }
 
 function canForceReleaseTerminal(terminal) {
@@ -604,8 +642,6 @@ function getTerminalMissingFields(terminal) {
     if (!terminal.default_metode_pembayaran_id) missing.push('Default Metode Pembayaran');
     if (!terminal.allowed_payment_methods_count) missing.push('Metode Pembayaran');
     if (!terminal.users_count) missing.push('User');
-    // Print Service is OPTIONAL — POS works without it (PDF print fallback).
-    // Don't block "Mulai Shift" just because the Python proxy isn't running.
     return missing;
 }
 
@@ -637,8 +673,10 @@ onMounted(async () => {
                     <InputText v-model="searchQuery" placeholder="Cari terminal..." class="w-full" @keyup.enter="doSearch" />
                 </IconField>
             </div>
-            <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-full md:w-48" @change="onStatusChange" />
-            <Button icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" v-tooltip.top="'Reset Filter'" aria-label="Reset Filter" />
+            <ListFiltersSheet :active-count="activeFilterCount">
+                <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" @change="onStatusChange" />
+                <Button icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" v-tooltip.top="'Reset Filter'" aria-label="Reset Filter" />
+            </ListFiltersSheet>
         </div>
 
         <!-- Loading -->
@@ -723,17 +761,7 @@ onMounted(async () => {
 
                 <!-- Shift Actions -->
                 <div v-if="terminal.status === 'active'" class="flex flex-col gap-2 mb-3">
-                    <Button
-                        v-if="canStartShift(terminal)"
-                        label="Mulai Shift"
-                        icon="pi pi-play"
-                        severity="success"
-                        size="small"
-                        class="w-full"
-                        :loading="shiftLoading === terminal.ulid"
-                        :disabled="!isTerminalComplete(terminal)"
-                        @click="startShift(terminal)"
-                    />
+                    <Button v-if="canStartShift(terminal)" label="Mulai Shift" icon="pi pi-play" severity="success" size="small" class="w-full" :loading="shiftLoading === terminal.ulid" :disabled="!isTerminalComplete(terminal)" @click="startShift(terminal)" />
                     <template v-if="canEndShift(terminal)">
                         <Button label="Buka Kasir" icon="pi pi-shopping-cart" size="small" class="w-full" @click="openKasir" />
                         <Button label="Selesai Shift" icon="pi pi-stop" severity="warn" size="small" class="w-full" outlined :loading="shiftLoading === terminal.ulid" @click="confirmEndShift(terminal)" />
@@ -743,20 +771,22 @@ onMounted(async () => {
 
                 <!-- Card Footer -->
                 <div class="flex items-center gap-2 pt-3 border-t border-surface-200 dark:border-surface-700">
-                    <Button v-if="canEdit" icon="pi pi-pencil" severity="info" text rounded size="small" :disabled="!!terminal.active_user_id" @click="editItem(terminal)" v-tooltip.top="'Edit'" aria-label="Edit" />
+                    <RowActionButtons>
+                        <Button v-if="canEdit" icon="pi pi-pencil" severity="info" text rounded size="small" :disabled="!!terminal.active_user_id" @click="editItem(terminal)" v-tooltip.top="'Edit'" aria-label="Edit" />
+                        <Button v-if="canToggleStatus" :icon="terminal.status === 'active' ? 'pi pi-times-circle' : 'pi pi-check-circle'" :severity="terminal.status === 'active' ? 'warn' : 'success'" text rounded size="small" :disabled="!!terminal.active_user_id" @click="confirmToggleStatus(terminal)" v-tooltip.top="terminal.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'" />
+                        <Button v-if="canDelete" icon="pi pi-trash" severity="danger" text rounded size="small" :disabled="!!terminal.active_user_id" @click="confirmDelete(terminal)" v-tooltip.top="'Hapus'" aria-label="Hapus" />
+                    </RowActionButtons>
+                    <div class="flex-1"></div>
                     <Button
-                        v-if="canToggleStatus"
-                        :icon="terminal.status === 'active' ? 'pi pi-times-circle' : 'pi pi-check-circle'"
-                        :severity="terminal.status === 'active' ? 'warn' : 'success'"
+                        icon="pi pi-history"
+                        severity="secondary"
                         text
                         rounded
                         size="small"
-                        :disabled="!!terminal.active_user_id"
-                        @click="confirmToggleStatus(terminal)"
-                        v-tooltip.top="terminal.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'"
+                        v-tooltip.top="'Riwayat Shift'"
+                        aria-label="Riwayat Shift"
+                        @click="router.push({ name: 'pos-shift' })"
                     />
-                    <Button v-if="canDelete" icon="pi pi-trash" severity="danger" text rounded size="small" :disabled="!!terminal.active_user_id" @click="confirmDelete(terminal)" v-tooltip.top="'Hapus'" aria-label="Hapus" />
-                    <div class="flex-1"></div>
                 </div>
             </div>
         </div>
@@ -765,8 +795,8 @@ onMounted(async () => {
         <Paginator v-if="totalRecords > 0" :rows="lazyParams.rows" :totalRecords="totalRecords" :first="lazyParams.first" :rowsPerPageOptions="[10, 25, 50]" @page="onPageChange" class="mt-4" />
 
         <!-- ==================== FORM DIALOG ==================== -->
-        <Dialog v-model:visible="itemDialog" :style="{ width: '700px' }" :header="isEdit ? 'Edit Terminal' : 'Tambah Terminal'" :modal="true" :closable="!saving">
-            <div class="grid grid-cols-2 gap-4">
+        <Dialog v-model:visible="itemDialog" :style="{ width: '700px' }" :breakpoints="{ '960px': '95vw' }" :header="isEdit ? 'Edit Terminal' : 'Tambah Terminal'" :modal="true" :closable="!saving">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Section 1: Informasi Dasar -->
                 <div class="col-span-2 border-b pb-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Informasi Dasar</span>
@@ -865,25 +895,8 @@ onMounted(async () => {
                 <div class="col-span-2">
                     <label class="block font-medium mb-2">Printer Thermal</label>
                     <PrinterPickerPanel :terminal-ulid="item.ulid" class="mb-3" />
-                    <div class="flex flex-wrap gap-2 items-end">
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="block text-sm text-muted-color mb-1">Legacy Print Service (opsional)</label>
-                            <Select
-                                v-model="item.default_printer"
-                                :options="printerOptions"
-                                filter
-                                optionLabel="name"
-                                optionValue="id"
-                                placeholder="ID printer Windows/Network (opsional)"
-                                showClear
-                                fluid
-                                :loading="loadingPrinters"
-                            />
-                        </div>
-                        <Button icon="pi pi-refresh" severity="secondary" outlined @click="loadPrinters" :loading="loadingPrinters" v-tooltip.top="'Refresh legacy printers'" aria-label="Refresh legacy printers" />
-                        <Button label="Test Print" icon="pi pi-print" severity="info" outlined :loading="testingPrint" @click="testThermalPrint" />
-                    </div>
-                    <small class="text-surface-500">Browser pairing disimpan di perangkat ini. Legacy `:5123` dipakai jika browser transport gagal dan ID printer diisi.</small>
+                    <Button label="Test Print" icon="pi pi-print" severity="info" outlined :loading="testingPrint" @click="testThermalPrint" />
+                    <small class="block text-surface-500 mt-2">Pairing disimpan di browser perangkat ini (Chrome/Edge).</small>
                 </div>
 
                 <div class="col-span-2 flex items-center gap-3">
@@ -891,17 +904,19 @@ onMounted(async () => {
                     <label class="font-medium">Auto Open Tray</label>
                 </div>
 
+                <!-- Advanced settings (collapsed on mobile via CollapsibleSection) -->
+                <div class="col-span-2">
+                    <CollapsibleSection title="Pengaturan Lanjutan" subtitle="Auto print, keamanan, kertas, retur">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Auto Print — kontrol per-jenis-dokumen -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-2 border-b pb-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Auto Print</span>
                 </div>
                 <div class="col-span-1 flex items-center gap-3">
                     <ToggleSwitch v-model="item.auto_print_receipt" />
                     <label class="font-medium">Struk Penjualan (auto saat checkout)</label>
                 </div>
-                <div class="col-span-2 text-sm text-muted-color">
-                    Struk retur, kas, dan laporan shift hanya via tombol cetak manual (kebijakan browser thermal).
-                </div>
+                <div class="col-span-2 text-sm text-muted-color">Struk retur, kas, dan laporan shift hanya via tombol cetak manual (kebijakan browser thermal).</div>
                 <div class="col-span-1 flex items-center gap-3 opacity-60 pointer-events-none" v-tooltip.top="'Hanya manual — tidak auto-print'">
                     <ToggleSwitch v-model="item.auto_print_retur" disabled />
                     <label class="font-medium">Struk Retur (manual)</label>
@@ -980,6 +995,77 @@ onMounted(async () => {
                     <InputNumber v-select-on-focus v-model="item.durasi_retur" :min="0" placeholder="Kosongkan untuk unlimited" showButtons fluid />
                     <small class="text-surface-500">0 = shift ini saja, 1+ = jumlah hari, kosong = unlimited</small>
                 </div>
+                        </div>
+                    </CollapsibleSection>
+                </div>
+
+                <div class="col-span-2">
+                    <CollapsibleSection title="Email Struk" subtitle="Pengiriman struk ke pelanggan">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="col-span-2 flex flex-wrap gap-4">
+                                <div class="flex items-center gap-2">
+                                    <RadioButton v-model="item.mail_driver" inputId="mail_none" value="none" />
+                                    <label for="mail_none">Tidak aktif</label>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <RadioButton v-model="item.mail_driver" inputId="mail_smtp" value="smtp" />
+                                    <label for="mail_smtp">SMTP</label>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <RadioButton v-model="item.mail_driver" inputId="mail_resend" value="resend" />
+                                    <label for="mail_resend">Resend</label>
+                                </div>
+                            </div>
+                            <template v-if="item.mail_driver !== 'none'">
+                                <div>
+                                    <label class="block font-medium mb-2">Email Pengirim <span class="text-red-500">*</span></label>
+                                    <InputText v-model.trim="item.mail_from_address" type="email" placeholder="kasir@toko.com" fluid />
+                                </div>
+                                <div>
+                                    <label class="block font-medium mb-2">Nama Pengirim</label>
+                                    <InputText v-model.trim="item.mail_from_name" placeholder="Nama Toko" fluid />
+                                </div>
+                            </template>
+                            <template v-if="item.mail_driver === 'smtp'">
+                                <div>
+                                    <label class="block font-medium mb-2">SMTP Host <span class="text-red-500">*</span></label>
+                                    <InputText v-model.trim="item.smtp_host" placeholder="smtp.example.com" fluid />
+                                </div>
+                                <div>
+                                    <label class="block font-medium mb-2">SMTP Port <span class="text-red-500">*</span></label>
+                                    <InputNumber v-model="item.smtp_port" :min="1" :max="65535" fluid />
+                                </div>
+                                <div>
+                                    <label class="block font-medium mb-2">Enkripsi</label>
+                                    <Select v-model="item.smtp_encryption" :options="[{ label: 'TLS', value: 'tls' }, { label: 'SSL', value: 'ssl' }]" optionLabel="label" optionValue="value" showClear fluid />
+                                </div>
+                                <div>
+                                    <label class="block font-medium mb-2">Username</label>
+                                    <InputText v-model.trim="item.smtp_username" autocomplete="username" fluid />
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block font-medium mb-2">Password SMTP</label>
+                                    <Password v-model="item.smtp_password" :feedback="false" toggleMask fluid />
+                                    <small class="text-surface-500">Kosongkan saat edit untuk mempertahankan password saat ini.</small>
+                                </div>
+                            </template>
+                            <template v-if="item.mail_driver === 'resend'">
+                                <div class="col-span-2">
+                                    <label class="block font-medium mb-2">Resend API Key <span class="text-red-500">*</span></label>
+                                    <Password v-model="item.resend_api_key" :feedback="false" toggleMask fluid />
+                                    <small class="text-surface-500">Kosongkan saat edit untuk mempertahankan API key saat ini.</small>
+                                </div>
+                            </template>
+                            <div v-if="isEdit && item.mail_driver !== 'none'" class="col-span-2 flex flex-wrap items-end gap-2">
+                                <div class="flex-1 min-w-[12rem]">
+                                    <label class="block font-medium mb-2">Uji Kirim Ke</label>
+                                    <InputText v-model.trim="mailTestTo" type="email" placeholder="email@contoh.com" fluid />
+                                </div>
+                                <Button label="Kirim Uji" icon="pi pi-send" severity="secondary" outlined :loading="testingMail" :disabled="!mailTestTo" @click="sendMailTest" />
+                            </div>
+                        </div>
+                    </CollapsibleSection>
+                </div>
 
                 <!-- Section 4: Metode Pembayaran yang Diizinkan -->
                 <div class="col-span-2 border-b pb-2 mt-2 mb-1">
@@ -1024,7 +1110,7 @@ onMounted(async () => {
             </div>
 
             <template #footer>
-                <Button label="Batal" icon="pi pi-times" text @click="hideDialog" :disabled="saving" />
+                <Button label="Batal" icon="pi pi-times" severity="secondary" @click="hideDialog" :disabled="saving" />
                 <Button label="Simpan" icon="pi pi-check" @click="saveItem" :loading="saving" />
             </template>
         </Dialog>
@@ -1049,7 +1135,6 @@ onMounted(async () => {
                         <DetailItem label="Status" :value="getStatusLabel(detailData.status)" type="badge" :badge-severity="getStatusSeverity(detailData.status)" />
                         <DetailItem label="Default Customer" :value="detailData.default_customer?.nama || '-'" />
                         <DetailItem label="Default Metode Bayar" :value="detailData.default_metode_pembayaran?.nama_pembayaran || '-'" />
-                        <DetailItem label="Default Printer" :value="detailData.default_printer || '-'" />
                         <DetailItem label="Auto Open Tray" :value="detailData.auto_open_tray ? 'Ya' : 'Tidak'" />
                         <DetailItem label="Auto Print Struk" :value="detailData.auto_print_receipt ? 'Ya' : 'Tidak'" />
                         <DetailItem label="Auto Print Retur" :value="detailData.auto_print_retur ? 'Ya' : 'Tidak'" />
@@ -1109,19 +1194,12 @@ onMounted(async () => {
                 <!-- Pre-close: Tutup Paksa button — disabled until uang fisik filled -->
                 <template v-if="forceReleaseTerminal && !forceReleaseShiftClosed">
                     <Button label="Batal" icon="pi pi-times" severity="secondary" @click="closeForceReleaseDialog" :disabled="forceReleaseProcessing" />
-                    <Button
-                        :label="forceReleaseTerminal?._isOwnShift ? 'Tutup Shift' : 'Tutup Paksa'"
-                        :icon="forceReleaseTerminal?._isOwnShift ? 'pi pi-lock' : 'pi pi-power-off'"
-                        :severity="forceReleaseTerminal?._isOwnShift ? 'warn' : 'danger'"
-                        @click="submitForceRelease"
-                        :loading="forceReleaseProcessing"
-                        :disabled="forceReleaseSaldoFisik === null || forceReleaseSaldoFisik === ''"
-                    />
+                    <Button :label="forceReleaseTerminal?._isOwnShift ? 'Tutup Shift' : 'Tutup Paksa'" :icon="forceReleaseTerminal?._isOwnShift ? 'pi pi-lock' : 'pi pi-power-off'" :severity="forceReleaseTerminal?._isOwnShift ? 'warn' : 'danger'" @click="submitForceRelease" :loading="forceReleaseProcessing" :disabled="forceReleaseSaldoFisik === null || forceReleaseSaldoFisik === ''" />
                 </template>
                 <!-- Post-close: print/PDF/close -->
                 <template v-else>
                     <Button label="Print" icon="pi pi-print" severity="secondary" @click="printShiftReport" />
-                    <Button label="Download PDF" icon="pi pi-file-pdf" severity="secondary" @click="downloadShiftReportPdf" />
+                    <Button label="Download PDF" icon="pi pi-file-pdf" severity="secondary" outlined @click="downloadShiftReportPdf" />
                     <Button label="Tutup" icon="pi pi-check" @click="closeForceReleaseDialog" />
                 </template>
             </template>

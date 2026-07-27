@@ -224,7 +224,7 @@ const router = createRouter({
                     path: 'inventory/opname/:ulid/edit',
                     name: 'inventory-opname-edit',
                     component: () => import('@/views/inventory/StockOpnameFormPage.vue'),
-                    meta: { permission: 'opname.create' }
+                    meta: { permission: 'opname.update' }
                 },
                 {
                     path: 'inventory/adjustment',
@@ -242,7 +242,7 @@ const router = createRouter({
                     path: 'inventory/adjustment/:ulid/edit',
                     name: 'inventory-adjustment-edit',
                     component: () => import('@/views/inventory/AdjustmentFormPage.vue'),
-                    meta: { permission: 'adjustment.create' }
+                    meta: { permission: 'adjustment.update' }
                 },
                 {
                     path: 'inventory/transfer',
@@ -296,7 +296,7 @@ const router = createRouter({
                     path: 'inventory/hpp-correction/:ulid/edit',
                     name: 'inventory-hpp-correction-edit',
                     component: () => import('@/views/inventory/HppCorrectionFormPage.vue'),
-                    meta: { permission: 'hpp.create' }
+                    meta: { permission: 'hpp.update' }
                 },
                 // Pembelian Serial (modul serial A+)
                 {
@@ -390,6 +390,73 @@ const router = createRouter({
                     component: () => import('@/views/pembelian/SupplierDepositPage.vue'),
                     meta: { permission: 'deposit-supplier.view' }
                 },
+                // Penjualan Backoffice
+                {
+                    path: 'penjualan/sales',
+                    name: 'penjualan-sales',
+                    component: () => import('@/views/penjualan/SalesPage.vue'),
+                    meta: { permission: 'sales.view' }
+                },
+                {
+                    path: 'penjualan/sales/create',
+                    name: 'penjualan-sales-create',
+                    component: () => import('@/views/penjualan/SalesFormPage.vue'),
+                    meta: { permission: 'sales.create' }
+                },
+                {
+                    path: 'penjualan/sales/:ulid/edit',
+                    name: 'penjualan-sales-edit',
+                    component: () => import('@/views/penjualan/SalesFormPage.vue'),
+                    meta: { permission: 'sales.update' }
+                },
+                {
+                    path: 'penjualan/retur',
+                    name: 'penjualan-retur',
+                    component: () => import('@/views/penjualan/SalesReturnPage.vue'),
+                    meta: { permission: 'retur-jual.view' }
+                },
+                {
+                    path: 'penjualan/retur/create',
+                    name: 'penjualan-retur-create',
+                    component: () => import('@/views/penjualan/SalesReturnFormPage.vue'),
+                    meta: { permission: 'retur-jual.create' }
+                },
+                {
+                    path: 'penjualan/retur/:ulid/edit',
+                    name: 'penjualan-retur-edit',
+                    component: () => import('@/views/penjualan/SalesReturnFormPage.vue'),
+                    meta: { permission: 'retur-jual.update' }
+                },
+                {
+                    path: 'penjualan/piutang',
+                    name: 'penjualan-piutang',
+                    component: () => import('@/views/penjualan/CustomerPiutangPage.vue'),
+                    meta: { permission: 'piutang.view' }
+                },
+                {
+                    path: 'penjualan/pembayaran',
+                    name: 'penjualan-pembayaran-piutang',
+                    component: () => import('@/views/penjualan/PembayaranPiutangPage.vue'),
+                    meta: { permission: 'pembayaran-piutang.view' }
+                },
+                {
+                    path: 'penjualan/pembayaran/create',
+                    name: 'penjualan-pembayaran-piutang-create',
+                    component: () => import('@/views/penjualan/PembayaranPiutangFormPage.vue'),
+                    meta: { permission: 'pembayaran-piutang.create' }
+                },
+                {
+                    path: 'penjualan/pembayaran/:ulid/edit',
+                    name: 'penjualan-pembayaran-piutang-edit',
+                    component: () => import('@/views/penjualan/PembayaranPiutangFormPage.vue'),
+                    meta: { permission: 'pembayaran-piutang.update' }
+                },
+                {
+                    path: 'penjualan/deposit',
+                    name: 'penjualan-deposit',
+                    component: () => import('@/views/penjualan/CustomerDepositPage.vue'),
+                    meta: { permission: 'deposit-customer.view' }
+                },
                 // POS
                 // pos-kasir is a standalone route at /pos-kasir (full-screen, no sidebar)
                 {
@@ -464,7 +531,7 @@ const router = createRouter({
                     path: 'laporan/pembelian/diskon',
                     name: 'laporan-pembelian-diskon',
                     component: () => import('@/views/laporan/pembelian/DiskonPage.vue'),
-                    meta: { permission: 'laporan.pembelian' }
+                    meta: { permissions: ['laporan.pembelian', 'po.view_harga'] }
                 },
                 {
                     path: 'laporan/pembelian/harga-terakhir',

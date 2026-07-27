@@ -97,11 +97,19 @@ const model = computed(() => {
 
     const pembelianItems = [
         { label: 'Purchase Order', icon: 'pi pi-fw pi-shopping-cart', to: '/app/pembelian/po', visible: can('po.view') },
-        { label: 'Purchase Order Serial', icon: 'pi pi-fw pi-qrcode', to: '/app/inventory/serial-intake', visible: serialEnabled.value && can('serial-intake.view') },
+        { label: 'Pembelian Serial', icon: 'pi pi-fw pi-qrcode', to: '/app/inventory/serial-intake', visible: serialEnabled.value && can('serial-intake.view') },
         { label: 'Hutang Supplier', icon: 'pi pi-fw pi-wallet', to: '/app/pembelian/hutang', visible: can('hutang.view') },
         { label: 'Pembayaran Hutang', icon: 'pi pi-fw pi-money-bill', to: '/app/pembelian/pembayaran', visible: can('pembayaran-hutang.view') },
         { label: 'Retur Pembelian', icon: 'pi pi-fw pi-replay', to: '/app/pembelian/retur', visible: can('retur-beli.view') },
         { label: 'Deposit Supplier', icon: 'pi pi-fw pi-dollar', to: '/app/pembelian/deposit', visible: can('deposit-supplier.view') }
+    ];
+
+    const penjualanItems = [
+        { label: 'Penjualan', icon: 'pi pi-fw pi-shopping-bag', to: '/app/penjualan/sales', visible: can('sales.view') },
+        { label: 'Retur Penjualan', icon: 'pi pi-fw pi-replay', to: '/app/penjualan/retur', visible: can('retur-jual.view') },
+        { label: 'Piutang Customer', icon: 'pi pi-fw pi-wallet', to: '/app/penjualan/piutang', visible: can('piutang.view') },
+        { label: 'Pembayaran Piutang', icon: 'pi pi-fw pi-money-bill', to: '/app/penjualan/pembayaran', visible: can('pembayaran-piutang.view') },
+        { label: 'Deposit Customer', icon: 'pi pi-fw pi-dollar', to: '/app/penjualan/deposit', visible: can('deposit-customer.view') }
     ];
 
     const posItems = [
@@ -136,6 +144,7 @@ const model = computed(() => {
         { label: 'Master Data', items: masterItems, visible: anyVisible(masterItems) },
         { label: 'Inventory', items: inventoryItems, visible: anyVisible(inventoryItems) },
         { label: 'Pembelian', items: pembelianItems, visible: anyVisible(pembelianItems) },
+        { label: 'Penjualan', items: penjualanItems, visible: anyVisible(penjualanItems) },
         { label: 'POS', items: posItems, visible: anyVisible(posItems) },
         { label: 'Laporan', items: laporanItems, visible: anyVisible(laporanItems) },
         { label: 'Pengaturan', items: pengaturanItems, visible: anyVisible(pengaturanItems) }

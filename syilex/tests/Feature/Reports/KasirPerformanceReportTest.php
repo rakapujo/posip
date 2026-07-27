@@ -18,11 +18,17 @@ class KasirPerformanceReportTest extends TestCase
     use RefreshDatabase;
 
     protected User $viewer;
+
     protected User $kasirA;
+
     protected User $kasirB;
+
     protected int $terminalId;
+
     protected int $cashMethodId;
+
     protected int $customerId;
+
     protected int $warehouseId;
 
     protected function setUp(): void
@@ -88,6 +94,7 @@ class KasirPerformanceReportTest extends TestCase
             'ended_by_force' => $force,
             'selisih' => $force ? -10_000 : 0,
         ]);
+
         return $shift->id;
     }
 
@@ -95,7 +102,7 @@ class KasirPerformanceReportTest extends TestCase
     {
         return DB::table('doc_sales')->insertGetId([
             'ulid' => (string) Str::ulid(),
-            'nomor_dokumen' => 'INV-' . fake()->unique()->numerify('######'),
+            'nomor_dokumen' => 'INV-'.fake()->unique()->numerify('######'),
             'tanggal' => now()->toDateTimeString(),
             'terminal_id' => $this->terminalId,
             'shift_id' => $shiftId,
@@ -115,11 +122,11 @@ class KasirPerformanceReportTest extends TestCase
         ]);
     }
 
-    private function makeRetur(int $userId, int $salesId, int $shiftId, float $grandTotal): int
+    private function makeRetur(int $userId, int $salesId, int $shiftId, float $grandTotal, string $status = 'approved'): int
     {
         return DB::table('doc_sales_returns')->insertGetId([
             'ulid' => (string) Str::ulid(),
-            'nomor_dokumen' => 'RTR-' . fake()->unique()->numerify('######'),
+            'nomor_dokumen' => 'RTR-'.fake()->unique()->numerify('######'),
             'tanggal' => now()->toDateTimeString(),
             'sales_id' => $salesId,
             'terminal_id' => $this->terminalId,
@@ -127,6 +134,8 @@ class KasirPerformanceReportTest extends TestCase
             'warehouse_id' => $this->warehouseId,
             'customer_id' => $this->customerId,
             'refund_method' => 'cash',
+            'source' => 'pos',
+            'status' => $status,
             'grand_total' => $grandTotal,
             'created_by' => $userId,
             'created_at' => now(),
@@ -156,6 +165,8 @@ class KasirPerformanceReportTest extends TestCase
 
         // Kasir B: 1 completed
         $this->makeSale($this->kasirB->id, $shiftB, 50_000, 0);
+        $manualSale = $this->makeSale($this->kasirA->id, $shiftA, 999_000, 0);
+        DB::table('doc_sales')->where('id', $manualSale)->update(['source' => 'manual']);
 
         $response = $this->actingAs($this->viewer)
             ->getJson('/api/v1/reports/kasir-performance?sort=omzet_desc')
@@ -400,6 +411,58 @@ class KasirPerformanceReportTest extends TestCase
         )->keyBy('user_id');
 
         $this->assertEquals(1, $items->get($this->kasirA->id)['shift_total']);
+    }
+
+    // ─── B1.3: mode=bruto|net ──────────────────────────────────────────────
+
+    public function test_mode_default_bruto_omzet_tidak_dikurangi_retur(): void
+    {
+        $shiftA = $this->makeShift($this->kasirA->id);
+        $saleA = $this->makeSale($this->kasirA->id, $shiftA, 100_000, 0);
+        $this->makeRetur($this->kasirA->id, $saleA, $shiftA, 30_000, 'approved');
+
+        $items = collect(
+            $this->actingAs($this->viewer)
+                ->getJson('/api/v1/reports/kasir-performance')
+                ->assertOk()->json('data.items')
+        )->keyBy('user_id');
+
+        $this->assertEquals(100_000, $items->get($this->kasirA->id)['omzet']);
+    }
+
+    public function test_mode_net_mengurangi_omzet_dengan_retur_lock_dan_approved(): void
+    {
+        $shiftA = $this->makeShift($this->kasirA->id);
+        $saleA = $this->makeSale($this->kasirA->id, $shiftA, 100_000, 0);
+        $this->makeRetur($this->kasirA->id, $saleA, $shiftA, 20_000, 'approved');
+        $this->makeRetur($this->kasirA->id, $saleA, $shiftA, 10_000, 'lock');
+        // draft tidak boleh ikut menetkan omzet.
+        $this->makeRetur($this->kasirA->id, $saleA, $shiftA, 5_000, 'draft');
+
+        $response = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/kasir-performance?mode=net')
+            ->assertOk();
+
+        $this->assertEquals('net', $response->json('data.mode'));
+        $items = collect($response->json('data.items'))->keyBy('user_id');
+        // 100_000 - (20_000 + 10_000) = 70_000; retur draft (5_000) diabaikan.
+        $this->assertEquals(70_000, $items->get($this->kasirA->id)['omzet']);
+        $this->assertEquals(70_000, $items->get($this->kasirA->id)['avg_per_trx']); // 70_000/1 trx
+    }
+
+    public function test_mode_net_omzet_tidak_negatif_saat_retur_lebih_besar(): void
+    {
+        $shiftA = $this->makeShift($this->kasirA->id);
+        $saleA = $this->makeSale($this->kasirA->id, $shiftA, 50_000, 0);
+        $this->makeRetur($this->kasirA->id, $saleA, $shiftA, 999_000, 'approved');
+
+        $items = collect(
+            $this->actingAs($this->viewer)
+                ->getJson('/api/v1/reports/kasir-performance?mode=net')
+                ->assertOk()->json('data.items')
+        )->keyBy('user_id');
+
+        $this->assertEquals(0, $items->get($this->kasirA->id)['omzet']);
     }
 
     private function makeProduk(): int

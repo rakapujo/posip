@@ -144,12 +144,72 @@ class RoleSerialPermissionTest extends TestCase
     #[Test]
     public function endpoint_permissions_butuh_izin_role_update(): void
     {
-        // Tanpa role.update → 403 Unauthorized (guard di RoleController::permissions).
+        // Tanpa role.create|role.update → 403 (canAny di RoleController::permissions).
         $user = User::factory()->create();
 
         $this->actingAs($user)
             ->getJson('/api/v1/roles/permissions')
             ->assertStatus(403)
             ->assertJson(['success' => false]);
+    }
+
+    #[Test]
+    public function permission_editor_hides_serial_modules_when_elektronik_off(): void
+    {
+        foreach ([
+            'role.update',
+            'serial-intake.view', 'serial-change.view', 'serial-hpp.view',
+        ] as $p) {
+            Permission::firstOrCreate(['name' => $p, 'guard_name' => 'web']);
+        }
+        \App\Models\Setting::updateOrCreate(
+            ['group' => 'modules', 'key' => 'elektronik_enabled'],
+            ['value' => 'false', 'type' => 'boolean']
+        );
+        \App\Services\SettingService::clearCache();
+
+        $admin = User::factory()->create();
+        $admin->givePermissionTo('role.update');
+
+        $modules = collect(
+            $this->actingAs($admin)->getJson('/api/v1/roles/permissions')->assertOk()->json('data.groups')
+        )->flatMap(fn ($g) => collect($g['modules']))->keyBy('prefix');
+
+        $this->assertFalse($modules->has('serial-intake'));
+        $this->assertFalse($modules->has('serial-change'));
+        $this->assertFalse($modules->has('serial-hpp'));
+    }
+
+    #[Test]
+    public function update_role_preserves_serial_permissions_when_elektronik_off(): void
+    {
+        foreach ([
+            'role.update', 'role.view',
+            'serial-intake.view', 'warehouse.view',
+        ] as $p) {
+            Permission::firstOrCreate(['name' => $p, 'guard_name' => 'web']);
+        }
+        $admin = User::factory()->create();
+        $admin->givePermissionTo(['role.update', 'warehouse.view', 'serial-intake.view']);
+
+        $role = \Spatie\Permission\Models\Role::create(['name' => 'kasir-test', 'guard_name' => 'web']);
+        $role->syncPermissions(['serial-intake.view', 'warehouse.view']);
+
+        \App\Models\Setting::updateOrCreate(
+            ['group' => 'modules', 'key' => 'elektronik_enabled'],
+            ['value' => 'false', 'type' => 'boolean']
+        );
+        \App\Services\SettingService::clearCache();
+
+        // FE hanya kirim permission non-serial yang terlihat
+        $this->actingAs($admin)->putJson("/api/v1/roles/{$role->id}", [
+            'name' => 'kasir-test',
+            'permissions' => ['warehouse.view'],
+        ])->assertOk();
+
+        $role->refresh();
+        $names = $role->permissions->pluck('name')->all();
+        $this->assertContains('warehouse.view', $names);
+        $this->assertContains('serial-intake.view', $names, 'serial-* harus di-preserve saat elektronik OFF');
     }
 }

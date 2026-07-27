@@ -9,6 +9,8 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const { formatQty, formatDateTime, getPrimeDateFormatShort } = useFormatters();
@@ -20,9 +22,26 @@ const canUpdate = computed(() => authStore.can('adjustment.update'));
 const canDeletePerm = computed(() => authStore.can('adjustment.delete'));
 const canApprove = computed(() => authStore.can('adjustment.approve'));
 
+function sourceLabel(source) {
+    return source === 'opname' ? 'Opname' : 'Manual';
+}
+
+function sourceSeverity(source) {
+    return source === 'opname' ? 'info' : 'secondary';
+}
+
 // Warehouses for filter
 const warehouses = ref([]);
 
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (additionalFilters.value?.warehouse_id) n++;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 // Initialize composable
 const {
     items: adjustments,
@@ -168,17 +187,17 @@ onMounted(async () => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="additionalFilters.warehouse_id" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Semua Gudang" class="w-40" filter showClear @change="onFilter" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilter" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="additionalFilters.warehouse_id" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Semua Gudang" filter showClear @change="onFilter" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -231,6 +250,12 @@ onMounted(async () => {
                 </template>
             </Column>
 
+            <Column header="Sumber" style="min-width: 110px">
+                <template #body="{ data }">
+                    <Tag :value="sourceLabel(data.source)" :severity="sourceSeverity(data.source)" />
+                </template>
+            </Column>
+
             <Column header="Item" style="min-width: 60px; text-align: center">
                 <template #body="{ data }">
                     <Badge :value="data.details_count" severity="secondary" />
@@ -251,13 +276,13 @@ onMounted(async () => {
 
             <Column header="Aksi" style="min-width: 220px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'" />
-                        <Button v-if="canUpdate && canEdit(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canUpdate && canEdit(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -279,6 +304,17 @@ onMounted(async () => {
                     <DetailItem label="Status" :value="getStatusLabel(detailData.status)" type="badge" :badge-severity="getStatusSeverity(detailData.status)" />
                     <DetailItem label="Gudang" :value="detailData.warehouse?.nama_warehouse" />
                     <DetailItem label="Tanggal" :value="formatDateTime(detailData.tanggal)" />
+                    <DetailItem label="Sumber" :value="sourceLabel(detailData.source)" type="badge" :badge-severity="sourceSeverity(detailData.source)" />
+                    <div v-if="detailData.source === 'opname' && detailData.opname">
+                        <span class="text-surface-500 text-sm block mb-1">Stock Opname</span>
+                        <router-link
+                            :to="{ name: 'inventory-opname' }"
+                            class="text-primary font-medium hover:underline"
+                            @click="detailDialog = false"
+                        >
+                            {{ detailData.opname.nomor_dokumen }}
+                        </router-link>
+                    </div>
                 </div>
 
                 <div class="mb-4" v-if="detailData.keterangan">
@@ -329,27 +365,23 @@ onMounted(async () => {
 
             <template #footer-extra>
                 <div class="flex flex-wrap gap-2">
-                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportDocPdf(detailData)" />
-                    <Button
-                        v-if="canUpdate && canEdit(detailData)"
+                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" :loading="exporting" @click="exportDocPdf(detailData)"  outlined />
+                    <Button v-if="canUpdate && canEdit(detailData)"
                         label="Edit"
                         icon="pi pi-pencil"
                         severity="warning"
                         @click="
                             editItem(detailData);
                             closeDetail();
-                        "
-                    />
-                    <Button
-                        v-if="canDeletePerm && canDelete(detailData)"
+                        " />
+                    <Button v-if="canDeletePerm && canDelete(detailData)"
                         label="Hapus"
                         icon="pi pi-trash"
                         severity="danger"
                         @click="
                             confirmDelete(detailData);
                             closeDetail();
-                        "
-                    />
+                        " />
                     <Button v-if="canApprove && canApproveItem(detailData)" label="Approve" icon="pi pi-check" severity="success" :loading="processingApprove" @click="confirmApprove(detailData)" />
                 </div>
             </template>

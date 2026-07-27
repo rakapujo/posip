@@ -182,4 +182,17 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Backup binaries (mysqldump / mysql client)
+    |--------------------------------------------------------------------------
+    |
+    | Optional absolute paths. Leave empty to auto-detect (Laragon/WAMP/PATH).
+    |
+    */
+    'backup_bin' => [
+        'mysqldump' => env('MYSQLDUMP_PATH'),
+        'mysql' => env('MYSQL_CLIENT_PATH'),
+    ],
+
 ];

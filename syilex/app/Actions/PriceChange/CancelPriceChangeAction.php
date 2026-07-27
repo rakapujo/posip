@@ -18,21 +18,21 @@ class CancelPriceChangeAction
     {
         $this->ensureAuthenticated();
 
-        if (!$priceChange->isScheduled()) {
-            throw ValidationException::withMessages([
-                'status' => ['Hanya dokumen dengan status scheduled yang dapat dibatalkan.'],
-            ]);
-        }
-
         return DB::transaction(function () use ($priceChange) {
-            // Update header status back to draft
+            // Lock header so cancel↔apply cannot race (cancel → draft, not cancelled)
+            $priceChange = DocPriceChange::whereKey($priceChange->id)->lockForUpdate()->first();
+            if (! $priceChange || ! $priceChange->isScheduled()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Hanya dokumen dengan status scheduled yang dapat dibatalkan.'],
+                ]);
+            }
+
             $priceChange->update([
                 'status' => 'draft',
                 'approved_at' => null,
                 'approved_by' => null,
             ]);
 
-            // Reload for response
             $priceChange->load(['details.product', 'createdBy', 'updatedBy']);
 
             return $priceChange;

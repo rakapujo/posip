@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Builder;
  * Menyediakan scopeByDateRange($from, $to) dengan batas inklusif penuh hari:
  *   from → '... 00:00:00', to → '... 23:59:59'
  * Mencegah record hari ini (jam > 0) tersaring keluar saat filter dikirim date-only
- * (MySQL meng-coerce 'YYYY-MM-DD' menjadi '... 00:00:00'). Lihat CLAUDE.md §7 Backend #8.
+ * (MySQL meng-coerce 'YYYY-MM-DD' menjadi '... 00:00:00'). Lihat AI-AGENT.md §7 Backend #8.
  *
  * Default kolom = 'tanggal'. Model dengan kolom lain override:
  *   protected $dateRangeColumn = 'tanggal_po';

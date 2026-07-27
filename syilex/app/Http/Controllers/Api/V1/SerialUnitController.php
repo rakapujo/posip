@@ -53,12 +53,12 @@ class SerialUnitController extends BaseApiController
             $base->search($request->search);
         }
 
-        // Ringkasan status (hormati filter, sebelum filter status diterapkan)
-        $summary = [
-            'total' => (clone $base)->count(),
-            'tersedia' => (clone $base)->where('status', 'tersedia')->count(),
-            'terjual' => (clone $base)->where('status', 'terjual')->count(),
-        ];
+        // Ringkasan status (hormati filter non-status; 1 query GROUP BY)
+        $counts = (clone $base)->selectRaw('status, COUNT(*) as c')->groupBy('status')->pluck('c', 'status');
+        $summary = ['total' => (int) $counts->sum()];
+        foreach (SerialUnit::STATUSES as $status) {
+            $summary[$status] = (int) ($counts[$status] ?? 0);
+        }
 
         // Filter status hanya untuk daftar
         if ($request->filled('status')) {
@@ -69,11 +69,15 @@ class SerialUnitController extends BaseApiController
             'product:id,ulid,kode_produk,nama_produk',
             'warehouse:id,ulid,kode_warehouse,nama_warehouse',
             'intake:id,ulid,nomor_dokumen,tanggal',
+            'sale:id,ulid,nomor_dokumen',
         ]);
 
         $sortField = $request->input('sort_field', 'created_at');
         $sortOrder = $request->input('sort_order', 'desc') === 'asc' ? 'asc' : 'desc';
-        $sortable = ['kode_internal', 'serial_number', 'harga_modal', 'harga_jual', 'status', 'created_at', 'sold_at'];
+        $sortable = ['kode_internal', 'serial_number', 'harga_jual', 'status', 'created_at', 'sold_at'];
+        if (auth()->user()->can('stok.view_hpp')) {
+            $sortable[] = 'harga_modal';
+        }
         if (in_array($sortField, $sortable, true)) {
             $query->orderBy($sortField, $sortOrder);
         } else {
@@ -84,9 +88,13 @@ class SerialUnitController extends BaseApiController
         $items = $query->paginate($perPage);
 
         // Cost (modal + HPP landed) = sensitif → hanya untuk yang berizin lihat HPP.
-        if (!auth()->user()->can('stok.view_hpp')) {
-            $items->getCollection()->each->makeHidden(['harga_modal', 'cost_per_unit']);
-        }
+        // sale relation: makeVisible agar FE bisa deep-link nota (sale_id tetap hidden).
+        $items->getCollection()->each(function (SerialUnit $unit) {
+            $unit->sale?->makeVisible(['id']);
+            if (!auth()->user()->can('stok.view_hpp')) {
+                $unit->makeHidden(['harga_modal', 'cost_per_unit']);
+            }
+        });
 
         return $this->success([
             'items' => $items->items(),
@@ -109,8 +117,21 @@ class SerialUnitController extends BaseApiController
      */
     public function available(Request $request): JsonResponse
     {
-        $allowed = collect(['pos.access', 'serial-intake.view', 'transfer.create', 'adjustment.create', 'retur-beli.create', 'opname.create'])
-            ->contains(fn ($p) => auth()->user()->can($p));
+        $allowed = collect([
+            'pos.access',
+            'serial-intake.view',
+            'transfer.create',
+            'transfer.update',
+            'adjustment.create',
+            'retur-beli.create',
+            'retur-jual.create',
+            'retur-jual.update',
+            'retur-jual.view',
+            'opname.create',
+            'sales.create',
+            'sales.update',
+            'sales.view',
+        ])->contains(fn ($p) => auth()->user()->can($p));
         if (!$allowed) {
             return $this->forbidden();
         }
@@ -118,10 +139,16 @@ class SerialUnitController extends BaseApiController
         $request->validate([
             'product_id' => 'required|string',
             'warehouse_id' => 'nullable|string',
+            'status' => 'nullable|in:tersedia,terjual',
+            'customer_id' => 'nullable|integer',
+            'sales_id' => 'nullable|integer',
+            'sale_detail_id' => 'nullable|integer',
+            'intake_id' => 'nullable|string',
         ]);
 
+        $status = $request->input('status', SerialUnit::STATUS_TERSEDIA);
         $query = SerialUnit::query()
-            ->where('status', SerialUnit::STATUS_TERSEDIA)
+            ->where('status', $status)
             ->with(['product:id,ulid,kode_produk,nama_produk', 'warehouse:id,ulid,nama_warehouse']);
 
         $pid = $request->product_id;
@@ -129,13 +156,35 @@ class SerialUnitController extends BaseApiController
 
         if ($request->filled('warehouse_id')) {
             $wid = $request->warehouse_id;
+            // Untuk terjual: gudang bisa dari unit.warehouse_id saat dijual; tetap filter bila dikirim
             $query->whereHas('warehouse', fn ($q) => is_numeric($wid) ? $q->where('id', $wid) : $q->where('ulid', $wid));
+        }
+
+        if ($request->filled('intake_id')) {
+            $iid = $request->intake_id;
+            if (is_numeric($iid)) {
+                $query->where('intake_id', (int) $iid);
+            } else {
+                $query->whereHas('intake', fn ($q) => $q->where('ulid', $iid));
+            }
+        }
+
+        if ($status === SerialUnit::STATUS_TERJUAL) {
+            if ($request->filled('sale_detail_id')) {
+                $query->where('sale_detail_id', (int) $request->input('sale_detail_id'));
+            } elseif ($request->filled('sales_id')) {
+                $query->where('sale_id', (int) $request->input('sales_id'));
+            } elseif ($request->filled('customer_id')) {
+                $cid = (int) $request->input('customer_id');
+                $query->whereHas('sale', fn ($q) => $q->where('customer_id', $cid));
+            }
         }
 
         $units = $query->orderBy('serial_number')->get([
             'ulid', 'product_id', 'warehouse_id', 'serial_number', 'kode_internal',
             'harga_modal', 'cost_per_unit', 'harga_jual',
-            'grade', 'battery_condition', 'battery_health', 'account_status', 'status',
+            'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status', 'status',
+            'sale_id', 'sale_detail_id',
         ]);
 
         // Cost (modal + HPP landed) = sensitif → hanya untuk yang berizin lihat HPP.
@@ -271,6 +320,7 @@ class SerialUnitController extends BaseApiController
             'grade' => $unit->grade,
             'battery_condition' => $unit->battery_condition,
             'battery_health' => $unit->battery_health,
+            'battery_cycle_count' => $unit->battery_cycle_count,
             'account_status' => $unit->account_status,
             'catatan' => $unit->catatan,
             'harga_jual' => $unit->harga_jual,

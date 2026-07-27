@@ -2,6 +2,7 @@
 
 namespace App\Exports;
 
+use App\Services\ReportHelperService;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -23,6 +24,7 @@ class PurchasePerBarangExport implements FromQuery, WithHeadings, WithMapping, W
     protected ?int $kategoriId;
     protected ?string $search;
     protected string $source;
+    protected string $mode;
     protected int $rowNumber = 0;
 
     public function __construct(
@@ -34,7 +36,8 @@ class PurchasePerBarangExport implements FromQuery, WithHeadings, WithMapping, W
         ?int $brandId = null,
         ?int $kategoriId = null,
         ?string $search = null,
-        ?string $source = null
+        ?string $source = null,
+        ?string $mode = null
     ) {
         $this->dateFrom = $dateFrom;
         $this->dateTo = $dateTo . ' 23:59:59';
@@ -45,19 +48,28 @@ class PurchasePerBarangExport implements FromQuery, WithHeadings, WithMapping, W
         $this->kategoriId = $kategoriId;
         $this->search = $search;
         $this->source = $source ?? 'all';
+        $this->mode = $mode === 'net' ? 'net' : 'bruto';
     }
 
     public function query()
     {
+        $applyNet = $this->canViewHarga && $this->mode === 'net' && $this->source !== 'serial';
+
         $selectColumns = [
             'mp.kode_produk', 'mp.nama_produk',
             'mb.nama_brand as brand', 'mk.nama_kategori as kategori',
             DB::raw('COUNT(DISTINCT dpod.nomor_dokumen) as jumlah_po'),
-            DB::raw('SUM(dpod.qty_in_base) as total_qty'),
+            $applyNet
+                ? DB::raw('GREATEST(SUM(dpod.qty_in_base) - COALESCE(MAX(pret.ret_qty), 0), 0) as total_qty')
+                : DB::raw('SUM(dpod.qty_in_base) as total_qty'),
         ];
 
         if ($this->canViewHarga) {
-            $selectColumns = array_merge($selectColumns, [
+            $selectColumns = array_merge($selectColumns, $applyNet ? [
+                DB::raw('GREATEST(COALESCE(SUM(dpod.harga_bruto), 0) - COALESCE(MAX(pret.ret_bruto), 0), 0) as total_bruto'),
+                DB::raw('GREATEST(COALESCE(SUM(dpod.total_diskon_item), 0) - COALESCE(MAX(pret.ret_diskon), 0), 0) as total_diskon'),
+                DB::raw('GREATEST(COALESCE(SUM(dpod.subtotal), 0) - COALESCE(MAX(pret.ret_subtotal), 0), 0) as total_subtotal'),
+            ] : [
                 DB::raw('COALESCE(SUM(dpod.harga_bruto), 0) as total_bruto'),
                 DB::raw('COALESCE(SUM(dpod.total_diskon_item), 0) as total_diskon'),
                 DB::raw('COALESCE(SUM(dpod.subtotal), 0) as total_subtotal'),
@@ -68,8 +80,23 @@ class PurchasePerBarangExport implements FromQuery, WithHeadings, WithMapping, W
             ->fromSub(\App\Services\PurchaseReportSource::lines($this->dateFrom, $this->dateTo, $this->source), 'dpod')
             ->join('master_produk as mp', 'mp.id', '=', 'dpod.product_id')
             ->leftJoin('master_brand as mb', 'mb.id', '=', 'mp.brand_id')
-            ->leftJoin('master_kategori as mk', 'mk.id', '=', 'mp.kategori_id')
-            ->select($selectColumns)
+            ->leftJoin('master_kategori as mk', 'mk.id', '=', 'mp.kategori_id');
+
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnLinesByProductSubquery($this->dateFrom, $this->dateTo, [
+                    'supplier_id' => $this->supplierId,
+                    'warehouse_id' => $this->warehouseId,
+                    'brand_id' => $this->brandId,
+                    'kategori_id' => $this->kategoriId,
+                    'search' => $this->search,
+                ]),
+                'pret',
+                fn ($join) => $join->on('pret.product_id', '=', 'mp.id')
+            );
+        }
+
+        $query->select($selectColumns)
             ->groupBy('mp.id', 'mp.kode_produk', 'mp.nama_produk', 'mb.nama_brand', 'mk.nama_kategori');
 
         if ($this->supplierId) {

@@ -12,13 +12,16 @@ use App\Models\DocPurchaseOrder;
 use App\Models\DocPurchaseOrderDetail;
 use App\Models\DocPurchaseReturn;
 use App\Models\DocPurchaseReturnDetail;
+use App\Models\DocSerialIntake;
 use App\Models\HistoryHargaBeli;
 use App\Models\MasterProduk;
+use App\Models\SerialUnit;
 use App\Services\PurchaseReturnCalculationService;
 use App\Services\PurchaseMasterRules;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PurchaseReturnController extends BaseApiController
@@ -35,6 +38,7 @@ class PurchaseReturnController extends BaseApiController
             'supplier_id' => 'required|exists:master_supplier,id',
             'warehouse_id' => 'required|exists:master_warehouse,id',
             'po_id' => 'nullable|exists:doc_purchase_order,id',
+            'serial_intake_id' => 'nullable|exists:doc_serial_intake,id',
             'notes' => 'nullable|string|max:1000',
 
             // Header discounts (3 lines)
@@ -188,8 +192,17 @@ class PurchaseReturnController extends BaseApiController
         $perPage = $this->getPerPage($request, 15);
         $items = $query->paginate($perPage);
 
+        $canViewHarga = auth()->user()->can('po.view_harga');
+        $transformed = collect($items->items())->map(function ($item) use ($canViewHarga) {
+            if (! $canViewHarga) {
+                $item->makeHidden(['nilai_kalkulasi', 'nilai_diakui', 'selisih']);
+            }
+
+            return $item;
+        });
+
         return $this->success([
-            'items' => $items->items(),
+            'items' => $transformed,
             'pagination' => [
                 'current_page' => $items->currentPage(),
                 'last_page' => $items->lastPage(),
@@ -231,7 +244,8 @@ class PurchaseReturnController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), $e->getMessage());
         } catch (\Exception $e) {
-            return $this->error('Gagal membuat retur pembelian: ' . $e->getMessage(), 500);
+            Log::error('Gagal membuat retur pembelian', ['exception' => $e]);
+            return $this->error('Gagal membuat retur pembelian.', 500);
         }
     }
 
@@ -248,6 +262,7 @@ class PurchaseReturnController extends BaseApiController
             'supplier:id,ulid,kode_supplier,nama_supplier',
             'warehouse:id,ulid,kode_warehouse,nama_warehouse',
             'purchaseOrder:id,ulid,nomor_dokumen',
+            'serialIntake:id,ulid,nomor_dokumen,product_id,tanggal',
             'details.product:id,ulid,kode_produk,nama_produk,barcode,is_serial,unit_1,konversi_1,unit_2,konversi_2,unit_3,konversi_3,unit_4,konversi_4',
             'deposit',
             'createdBy:id,name,email',
@@ -261,7 +276,7 @@ class PurchaseReturnController extends BaseApiController
         }
 
         // Make hidden IDs visible for form binding
-        $retur->makeVisible(['supplier_id', 'warehouse_id', 'po_id']);
+        $retur->makeVisible(['supplier_id', 'warehouse_id', 'po_id', 'serial_intake_id']);
         if ($retur->supplier) {
             $retur->supplier->makeVisible('id');
         }
@@ -270,6 +285,9 @@ class PurchaseReturnController extends BaseApiController
         }
         if ($retur->purchaseOrder) {
             $retur->purchaseOrder->makeVisible('id');
+        }
+        if ($retur->serialIntake) {
+            $retur->serialIntake->makeVisible(['id', 'product_id']);
         }
 
         // Tempelkan rincian unit serial (kode_internal/SN) untuk tampil di detail + PDF
@@ -326,6 +344,21 @@ class PurchaseReturnController extends BaseApiController
             }
         }
 
+        if (! auth()->user()->can('po.view_harga')) {
+            $retur->makeHidden(['nilai_kalkulasi', 'nilai_diakui', 'selisih']);
+            foreach ($retur->details as $detail) {
+                $detail->makeHidden([
+                    'harga_per_unit', 'harga_per_base', 'harga_bruto',
+                    'diskon_1_hasil', 'diskon_2_hasil', 'diskon_3_hasil',
+                    'diskon_4_hasil', 'diskon_5_hasil', 'total_diskon_item',
+                    'subtotal',
+                ]);
+            }
+            if ($retur->relationLoaded('deposit') && $retur->deposit) {
+                $retur->deposit->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
+            }
+        }
+
         return $this->success([
             'purchase_return' => $retur,
         ]);
@@ -373,7 +406,8 @@ class PurchaseReturnController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), $e->getMessage());
         } catch (\Exception $e) {
-            return $this->error('Gagal memperbarui retur pembelian: ' . $e->getMessage(), 500);
+            Log::error('Gagal memperbarui retur pembelian', ['exception' => $e]);
+            return $this->error('Gagal memperbarui retur pembelian.', 500);
         }
     }
 
@@ -444,7 +478,8 @@ class PurchaseReturnController extends BaseApiController
 
             return $this->validationError($errors, $detailMessage ?: 'Validasi gagal');
         } catch (\Exception $e) {
-            return $this->error('Gagal mengunci retur pembelian: ' . $e->getMessage(), 500);
+            Log::error('Gagal mengunci retur pembelian', ['exception' => $e]);
+            return $this->error('Gagal mengunci retur pembelian.', 500);
         }
     }
 
@@ -481,7 +516,7 @@ class PurchaseReturnController extends BaseApiController
 
             return $this->success([
                 'purchase_return' => $retur,
-            ], 'Retur pembelian berhasil disetujui. Deposit supplier telah dibuat.');
+            ], 'Retur pembelian berhasil disetujui. Hutang digesek (jika ada), sisa menjadi deposit supplier.');
         } catch (ValidationException $e) {
             // Build detailed error message
             $errors = $e->errors();
@@ -499,7 +534,8 @@ class PurchaseReturnController extends BaseApiController
 
             return $this->validationError($errors, $detailMessage ?: 'Validasi gagal');
         } catch (\Exception $e) {
-            return $this->error('Gagal menyetujui retur pembelian: ' . $e->getMessage(), 500);
+            Log::error('Gagal menyetujui retur pembelian', ['exception' => $e]);
+            return $this->error('Gagal menyetujui retur pembelian.', 500);
         }
     }
 
@@ -508,7 +544,7 @@ class PurchaseReturnController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('retur-beli.create')) {
+        if (! auth()->user()->canAny(['retur-beli.create', 'retur-beli.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -526,15 +562,17 @@ class PurchaseReturnController extends BaseApiController
                 'unit_3', 'konversi_3', 'harga_3',
                 'unit_4', 'konversi_4', 'harga_4',
             ]);
+        SettingService::constrainNonSerialWhenDisabled($query);
 
         if ($search) {
             $query->search($search);
         }
 
         $products = $query->limit(20)->get();
+        $canViewHarga = auth()->user()->can('po.view_harga');
 
         // Transform to include units array (filter duplicates)
-        $items = $products->map(function ($product) {
+        $items = $products->map(function ($product) use ($canViewHarga) {
             $units = [];
             $seenUnits = [];
 
@@ -546,7 +584,7 @@ class PurchaseReturnController extends BaseApiController
                     $units[] = [
                         'unit' => $unit,
                         'konversi' => $product->{"konversi_{$i}"},
-                        'harga_jual' => $product->{"harga_{$i}"},
+                        'harga_jual' => $canViewHarga ? $product->{"harga_{$i}"} : null,
                     ];
                 }
             }
@@ -557,7 +595,7 @@ class PurchaseReturnController extends BaseApiController
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'avg_cost' => $product->avg_cost,
+                'avg_cost' => $canViewHarga ? $product->avg_cost : null,
                 'is_serial' => (bool) $product->is_serial, // frontend: tampilkan pemilih unit serial
                 'units' => $units,
             ];
@@ -573,7 +611,7 @@ class PurchaseReturnController extends BaseApiController
      */
     public function getLastPrice(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('retur-beli.create')) {
+        if (! auth()->user()->canAny(['retur-beli.create', 'retur-beli.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -595,12 +633,14 @@ class PurchaseReturnController extends BaseApiController
             ]);
         }
 
+        $canViewHarga = auth()->user()->can('po.view_harga');
+
         return $this->success([
             'last_price' => [
                 'tanggal' => $lastPrice->tanggal,
                 'unit_used' => $lastPrice->unit_used,
-                'harga_per_unit' => $lastPrice->harga_per_unit,
-                'harga_per_base' => $lastPrice->harga_per_base,
+                'harga_per_unit' => $canViewHarga ? $lastPrice->harga_per_unit : null,
+                'harga_per_base' => $canViewHarga ? $lastPrice->harga_per_base : null,
                 'qty_in_unit' => $lastPrice->qty_in_unit,
             ],
         ]);
@@ -611,7 +651,7 @@ class PurchaseReturnController extends BaseApiController
      */
     public function calculate(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('retur-beli.create')) {
+        if (! auth()->user()->canAny(['retur-beli.create', 'retur-beli.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -624,7 +664,8 @@ class PurchaseReturnController extends BaseApiController
                 'calculation' => $calculated,
             ]);
         } catch (\Exception $e) {
-            return $this->error('Gagal menghitung: ' . $e->getMessage(), 500);
+            Log::error('Gagal menghitung retur pembelian', ['exception' => $e]);
+            return $this->error('Gagal menghitung.', 500);
         }
     }
 
@@ -633,6 +674,10 @@ class PurchaseReturnController extends BaseApiController
      */
     public function getTaxSettings(): JsonResponse
     {
+        if (! auth()->user()->canAny(['retur-beli.create', 'retur-beli.update'])) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'tax' => SettingService::getPurchaseTaxSettings(),
         ]);
@@ -654,7 +699,7 @@ class PurchaseReturnController extends BaseApiController
      */
     public function getReturnableDetails(string $poUlid): JsonResponse
     {
-        if (!auth()->user()->can('retur-beli.create')) {
+        if (! auth()->user()->canAny(['retur-beli.create', 'retur-beli.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -683,6 +728,7 @@ class PurchaseReturnController extends BaseApiController
 
         // Build returnable details
         $returnableDetails = [];
+        $canViewHarga = auth()->user()->can('po.view_harga');
 
         foreach ($po->details as $detail) {
             $qtyOrdered = (float) $detail->qty_in_base;
@@ -738,18 +784,17 @@ class PurchaseReturnController extends BaseApiController
                     : $qtyReturned,
                 'qty_available' => $qtyAvailable,
                 'qty_available_unit' => $qtyAvailableInUnit,
-                'harga_per_unit' => $detail->harga_per_unit,
-                // Include discounts from PO
-                'diskon_1_tipe' => $detail->diskon_1_tipe,
-                'diskon_1_nilai' => $detail->diskon_1_nilai,
-                'diskon_2_tipe' => $detail->diskon_2_tipe,
-                'diskon_2_nilai' => $detail->diskon_2_nilai,
-                'diskon_3_tipe' => $detail->diskon_3_tipe,
-                'diskon_3_nilai' => $detail->diskon_3_nilai,
-                'diskon_4_tipe' => $detail->diskon_4_tipe,
-                'diskon_4_nilai' => $detail->diskon_4_nilai,
-                'diskon_5_tipe' => $detail->diskon_5_tipe,
-                'diskon_5_nilai' => $detail->diskon_5_nilai,
+                'harga_per_unit' => $canViewHarga ? $detail->harga_per_unit : null,
+                'diskon_1_tipe' => $canViewHarga ? $detail->diskon_1_tipe : 'none',
+                'diskon_1_nilai' => $canViewHarga ? $detail->diskon_1_nilai : null,
+                'diskon_2_tipe' => $canViewHarga ? $detail->diskon_2_tipe : 'none',
+                'diskon_2_nilai' => $canViewHarga ? $detail->diskon_2_nilai : null,
+                'diskon_3_tipe' => $canViewHarga ? $detail->diskon_3_tipe : 'none',
+                'diskon_3_nilai' => $canViewHarga ? $detail->diskon_3_nilai : null,
+                'diskon_4_tipe' => $canViewHarga ? $detail->diskon_4_tipe : 'none',
+                'diskon_4_nilai' => $canViewHarga ? $detail->diskon_4_nilai : null,
+                'diskon_5_tipe' => $canViewHarga ? $detail->diskon_5_tipe : 'none',
+                'diskon_5_nilai' => $canViewHarga ? $detail->diskon_5_nilai : null,
             ];
         }
 
@@ -771,6 +816,136 @@ class PurchaseReturnController extends BaseApiController
                 'tanggal_po' => $po->tanggal_po,
             ],
             'details' => $returnableDetails,
+        ]);
+    }
+
+    /**
+     * List approved serial intakes (PBS) for purchase-return cascade.
+     */
+    public function listSerialIntakes(Request $request): JsonResponse
+    {
+        if (! auth()->user()->can('retur-beli.create') && ! auth()->user()->can('retur-beli.update')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
+        $query = DocSerialIntake::query()
+            ->approved()
+            ->whereHas('units', fn ($q) => $q->where('status', SerialUnit::STATUS_TERSEDIA))
+            ->select(['id', 'ulid', 'nomor_dokumen', 'tanggal', 'supplier_id', 'warehouse_id', 'product_id', 'total_unit'])
+            ->withCount(['units as returnable_unit_count' => fn ($q) => $q->where('status', SerialUnit::STATUS_TERSEDIA)])
+            ->with(['product:id,ulid,kode_produk,nama_produk,is_serial,unit_1,konversi_1,unit_2,konversi_2,unit_3,konversi_3,unit_4,konversi_4'])
+            ->orderByDesc('tanggal')
+            ->orderByDesc('id');
+
+        if ($request->filled('supplier_id')) {
+            $query->where('supplier_id', (int) $request->input('supplier_id'));
+        }
+        if ($request->filled('warehouse_id')) {
+            $query->where('warehouse_id', (int) $request->input('warehouse_id'));
+        }
+
+        $items = $query->limit(100)->get();
+        $items->each(function (DocSerialIntake $item) {
+            $item->makeVisible(['id', 'supplier_id', 'warehouse_id', 'product_id']);
+            $item->product?->makeVisible('id');
+        });
+
+        return $this->success(['items' => $items]);
+    }
+
+    /**
+     * Returnable units from a PBS (tersedia only) for purchase-return form prefill.
+     */
+    public function getSerialIntakeReturnable(string $intakeUlid): JsonResponse
+    {
+        if (! auth()->user()->can('retur-beli.create') && ! auth()->user()->can('retur-beli.update')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
+        $intake = DocSerialIntake::with([
+            'product:id,ulid,kode_produk,nama_produk,barcode,is_serial,unit_1,konversi_1,unit_2,konversi_2,unit_3,konversi_3,unit_4,konversi_4',
+        ])->where('ulid', $intakeUlid)->first();
+
+        if (! $intake) {
+            return $this->notFound('Pembelian serial tidak ditemukan.');
+        }
+        if ($intake->status !== 'approved') {
+            return $this->error('Hanya PBS yang sudah disetujui yang dapat diretur.', 422);
+        }
+
+        $units = SerialUnit::query()
+            ->where('intake_id', $intake->id)
+            ->where('status', SerialUnit::STATUS_TERSEDIA)
+            ->orderBy('serial_number')
+            ->get([
+                'ulid', 'product_id', 'warehouse_id', 'intake_id', 'serial_number', 'kode_internal',
+                'harga_modal', 'cost_per_unit', 'status',
+            ]);
+
+        if ($units->isEmpty()) {
+            $statusCounts = SerialUnit::query()
+                ->where('intake_id', $intake->id)
+                ->selectRaw('status, COUNT(*) as c')
+                ->groupBy('status')
+                ->pluck('c', 'status')
+                ->all();
+            $hintParts = [];
+            foreach ($statusCounts as $st => $c) {
+                $hintParts[] = "{$st}: {$c}";
+            }
+            $hint = $hintParts !== []
+                ? ' Status unit saat ini: '.implode(', ', $hintParts).'.'
+                : ' Tidak ada unit terhubung ke dokumen ini.';
+
+            return $this->success([
+                'serial_intake' => [
+                    'id' => $intake->id,
+                    'ulid' => $intake->ulid,
+                    'nomor_dokumen' => $intake->nomor_dokumen,
+                    'tanggal' => $intake->tanggal,
+                    'product_id' => $intake->product_id,
+                ],
+                'product' => null,
+                'units' => [],
+                'message' => 'Tidak ada unit tersedia yang dapat diretur dari PBS ini.'.$hint,
+            ]);
+        }
+
+        $avgModal = round((float) $units->avg('harga_modal'), 2);
+        $product = $intake->product;
+        $product?->makeVisible('id');
+        $intake->makeVisible(['id', 'product_id', 'supplier_id', 'warehouse_id']);
+
+        $unitsPayload = $units->map(fn (SerialUnit $u) => [
+            'ulid' => $u->ulid,
+            'serial_number' => $u->serial_number,
+            'kode_internal' => $u->kode_internal,
+            'harga_modal' => (float) $u->harga_modal,
+            'status' => $u->status,
+        ])->values();
+
+        if (! auth()->user()->can('stok.view_hpp')) {
+            $unitsPayload = $unitsPayload->map(function (array $row) {
+                unset($row['harga_modal']);
+
+                return $row;
+            });
+        }
+
+        return $this->success([
+            'serial_intake' => [
+                'id' => $intake->id,
+                'ulid' => $intake->ulid,
+                'nomor_dokumen' => $intake->nomor_dokumen,
+                'tanggal' => $intake->tanggal,
+                'product_id' => $intake->product_id,
+                'supplier_id' => $intake->supplier_id,
+                'warehouse_id' => $intake->warehouse_id,
+            ],
+            'product' => $product,
+            'harga_per_unit' => $avgModal,
+            'units' => $unitsPayload,
+            'returnable_count' => $units->count(),
         ]);
     }
 }

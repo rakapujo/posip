@@ -99,23 +99,6 @@
         </div>
     </div>
 
-    {{-- Cost Allocation --}}
-    <div class="border-b pb-4">
-        <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Alokasi Biaya ke HPP</h3>
-        <div>
-            <select name="cost_allocation_mode" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <option value="by_value" {{ $data['cost_allocation_mode'] === 'by_value' ? 'selected' : '' }}>Proporsional (By Value) — direkomendasikan</option>
-                <option value="equal" {{ $data['cost_allocation_mode'] === 'equal' ? 'selected' : '' }}>Merata (Equal)</option>
-            </select>
-        </div>
-        <div class="mt-2 bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
-            <p class="font-semibold mb-1">Contoh: PO 2 item + ongkir Rp 10.000</p>
-            <p>Item A: Rp 80.000, Item B: Rp 20.000</p>
-            <p><strong>Proporsional:</strong> A = 80% × 10.000 = 8.000, B = 20% × 10.000 = 2.000</p>
-            <p><strong>Merata:</strong> A = 5.000, B = 5.000</p>
-        </div>
-    </div>
-
     {{-- Modul Elektronik --}}
     <div class="border-b pb-4">
         <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Modul Elektronik (Serial)</h3>

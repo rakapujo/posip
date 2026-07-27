@@ -31,7 +31,8 @@ const emptyCustomer = {
     tipe_customer_ulid: null,
     kategori_customer_ulid: null,
     jenis: 'spesifik',
-    status: 'active'
+    status: 'active',
+    tempo_default: 0
 };
 
 const form = ref({ ...emptyCustomer });
@@ -73,7 +74,8 @@ watch(
                 tipe_customer_ulid: c.tipe_customer?.ulid || null,
                 kategori_customer_ulid: c.kategori_customer?.ulid || null,
                 jenis: c.jenis,
-                status: c.status
+                status: c.status,
+                tempo_default: c.tempo_default ?? 0
             };
         } else {
             form.value = { ...emptyCustomer };
@@ -105,7 +107,8 @@ async function save() {
             tipe_customer_ulid: form.value.tipe_customer_ulid || null,
             kategori_customer_ulid: form.value.kategori_customer_ulid || null,
             jenis: form.value.jenis,
-            status: form.value.status
+            status: form.value.status,
+            tempo_default: Number(form.value.tempo_default) || 0
         };
         // kode_customer hanya saat create (immutable setelah dibuat)
         if (!isEdit.value) data.kode_customer = form.value.kode_customer.trim();
@@ -126,7 +129,7 @@ async function save() {
 </script>
 
 <template>
-    <Dialog :visible="visible" @update:visible="emit('update:visible', $event)" :style="{ width: '750px' }" :header="isEdit ? 'Edit Customer' : 'Tambah Customer'" :modal="true" :closable="!saving">
+    <Dialog :visible="visible" @update:visible="emit('update:visible', $event)" :style="{ width: '750px' }" :breakpoints="{ '960px': '95vw' }" :header="isEdit ? 'Edit Customer' : 'Tambah Customer'" :modal="true" :closable="!saving">
         <div class="grid grid-cols-2 gap-4">
             <!-- Kode Customer -->
             <div>
@@ -161,7 +164,7 @@ async function save() {
                 <small v-if="submitted && !form.telepon" class="text-red-500">Telepon wajib diisi</small>
             </div>
 
-            <!-- Email (dikecualikan dari uppercase — CLAUDE.md §3.5) -->
+            <!-- Email (dikecualikan dari uppercase — AI-AGENT.md §3.5) -->
             <div>
                 <label class="block font-medium mb-2">Email</label>
                 <InputText v-model.trim="form.email" fluid placeholder="Email (opsional)" autocomplete="off" />
@@ -241,6 +244,13 @@ async function save() {
                 />
                 <small v-if="submitted && !form.jenis" class="text-red-500">Jenis wajib dipilih</small>
                 <small v-if="isEdit && form.jenis === 'walk_in'" class="text-surface-500">Walk-in tidak dapat diubah</small>
+            </div>
+
+            <!-- Tempo default -->
+            <div>
+                <label class="block font-medium mb-2">Tempo Default (hari)</label>
+                <InputNumber v-model="form.tempo_default" :min="0" :max="3650" fluid placeholder="0" />
+                <small class="text-surface-500">Dipakai sebagai default tempo di Penjualan BO</small>
             </div>
 
             <!-- Status -->

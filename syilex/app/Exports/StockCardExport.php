@@ -55,9 +55,15 @@ class StockCardExport implements FromQuery, WithHeadings, WithMapping, WithStyle
             ])
             ->byProduct($this->productId);
 
-        // Filter by warehouse
+        // Filter by warehouse (HPP mode includes null-WH global corrections)
         if ($this->warehouseId) {
-            $query->byWarehouse($this->warehouseId);
+            if ($this->hppChangedOnly) {
+                $query->where(function ($q) {
+                    $q->where('warehouse_id', $this->warehouseId)->orWhereNull('warehouse_id');
+                });
+            } else {
+                $query->byWarehouse($this->warehouseId);
+            }
         }
 
         // Filter by date range

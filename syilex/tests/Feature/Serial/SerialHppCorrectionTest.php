@@ -19,7 +19,7 @@ use PHPUnit\Framework\Attributes\Test;
 
 /**
  * Fase 5 — Koreksi HPP Serial (per-unit): koreksi harga_modal & cost_per_unit unit
- * tersedia; default TIDAK mengubah avg_cost agregat produk.
+ * tersedia; saat approve rekalkulasi avg_cost Metode A.
  */
 class SerialHppCorrectionTest extends TestCase
 {
@@ -33,7 +33,10 @@ class SerialHppCorrectionTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['serial-hpp.view', 'serial-hpp.create', 'serial-hpp.update', 'serial-hpp.delete', 'serial-hpp.approve'] as $perm) {
+        foreach ([
+            'serial-hpp.view', 'serial-hpp.create', 'serial-hpp.update', 'serial-hpp.delete', 'serial-hpp.approve',
+            'stok.view_hpp',
+        ] as $perm) {
             Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
         }
         $this->admin = User::factory()->create();
@@ -177,5 +180,106 @@ class SerialHppCorrectionTest extends TestCase
         $this->postJson("/api/v1/serial-hpp-corrections/{$ulid}/approve")->assertOk();
         // Approve kedua kali → ditolak (bukan draft)
         $this->postJson("/api/v1/serial-hpp-corrections/{$ulid}/approve")->assertStatus(422);
+    }
+
+    // ==================== EDGE CASE TAMBAHAN — permission approve ====================
+
+    /**
+     * approve() digate permission TERPISAH `serial-hpp.approve` (bukan cukup
+     * `.create`/`.update`) — mirror pola approve dokumen lain (repack.approve,
+     * retur-beli.approve). User dengan create+update tapi TANPA approve harus
+     * ditolak 403, dan koreksi TIDAK ikut ter-approve (unit tetap belum berubah).
+     */
+    #[Test]
+    public function approve_requires_serial_hpp_approve_permission_not_just_create_update()
+    {
+        $unit = $this->seedUnit();
+        $res = $this->postJson('/api/v1/serial-hpp-corrections', [
+            'product_id' => $this->serial->ulid,
+            'tanggal' => now()->toDateString(),
+            'units' => [
+                ['serial_unit_id' => $unit->ulid, 'harga_modal_baru' => 1000, 'biaya_kirim_baru' => 100, 'biaya_lain_baru' => 0],
+            ],
+        ])->assertCreated();
+        $ulid = $res->json('data.serial_hpp_correction.ulid');
+
+        $creatorOnly = User::factory()->create();
+        $creatorOnly->givePermissionTo(['serial-hpp.view', 'serial-hpp.create', 'serial-hpp.update']);
+
+        $this->actingAs($creatorOnly)
+            ->postJson("/api/v1/serial-hpp-corrections/{$ulid}/approve")
+            ->assertForbidden();
+
+        // Tidak ter-approve: unit & avg_cost produk tetap nilai lama.
+        $unit->refresh();
+        $this->assertSame(1100.0000, (float) $unit->cost_per_unit);
+        $this->assertSame('1100.0000', (string) $this->serial->fresh()->avg_cost);
+        $this->assertSame('draft', DocSerialHppCorrection::where('ulid', $ulid)->first()->status);
+
+        // Dengan permission approve (admin) → berhasil.
+        $this->actingAs($this->admin)
+            ->postJson("/api/v1/serial-hpp-corrections/{$ulid}/approve")
+            ->assertOk();
+        $this->assertSame(1210.0000, (float) $unit->fresh()->cost_per_unit);
+    }
+
+    #[Test]
+    public function approve_rejects_when_unit_no_longer_tersedia()
+    {
+        $unit = $this->seedUnit();
+        $res = $this->postJson('/api/v1/serial-hpp-corrections', [
+            'product_id' => $this->serial->ulid,
+            'tanggal' => now()->toDateString(),
+            'units' => [
+                ['serial_unit_id' => $unit->ulid, 'harga_modal_baru' => 1000, 'biaya_kirim_baru' => 100, 'biaya_lain_baru' => 0],
+            ],
+        ])->assertCreated();
+        $ulid = $res->json('data.serial_hpp_correction.ulid');
+
+        $unit->update(['status' => 'terjual']);
+
+        $this->postJson("/api/v1/serial-hpp-corrections/{$ulid}/approve")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['units']);
+
+        $this->assertSame('draft', DocSerialHppCorrection::where('ulid', $ulid)->value('status'));
+        $this->assertSame(0, SerialUnitMovement::where('doc_type', 'HPP_SERIAL')->count());
+    }
+
+    #[Test]
+    public function show_strips_cost_without_view_hpp()
+    {
+        $unit = $this->seedUnit();
+        $res = $this->postJson('/api/v1/serial-hpp-corrections', [
+            'product_id' => $this->serial->ulid,
+            'tanggal' => now()->toDateString(),
+            'units' => [
+                ['serial_unit_id' => $unit->ulid, 'harga_modal_baru' => 1000, 'biaya_kirim_baru' => 100, 'biaya_lain_baru' => 0],
+            ],
+        ])->assertCreated();
+        $ulid = $res->json('data.serial_hpp_correction.ulid');
+
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo(['serial-hpp.view']); // tanpa stok.view_hpp
+
+        $show = $this->actingAs($viewer)
+            ->getJson("/api/v1/serial-hpp-corrections/{$ulid}")
+            ->assertOk();
+
+        $detail = $show->json('data.serial_hpp_correction.details.0');
+        $this->assertArrayNotHasKey('harga_modal_baru', $detail);
+        $this->assertArrayNotHasKey('cost_per_unit_baru', $detail);
+        $this->assertArrayNotHasKey('before', $detail);
+    }
+
+    #[Test]
+    public function units_forbidden_without_view_hpp()
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo(['serial-hpp.create', 'serial-hpp.update']); // tanpa stok.view_hpp
+
+        $this->actingAs($viewer)
+            ->getJson("/api/v1/serial-hpp-corrections/units?product_id={$this->serial->ulid}")
+            ->assertForbidden();
     }
 }

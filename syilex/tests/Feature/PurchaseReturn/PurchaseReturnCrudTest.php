@@ -61,6 +61,10 @@ class PurchaseReturnCrudTest extends TestCase
             'nama_produk' => 'Test Product',
             'avg_cost' => 8000,
             'status' => 'active',
+            'unit_3' => 'BOX',
+            'konversi_3' => 12,
+            'unit_4' => 'PCS',
+            'konversi_4' => 1,
         ]);
 
         // Initial stock = 50
@@ -289,13 +293,12 @@ class PurchaseReturnCrudTest extends TestCase
     }
 
     /**
-     * Regresi bug dedup: dua baris detail untuk produk SAMA dulu memecah invariant
-     * (inventory di-decrement 2× tapi stock_card di-dedup). Setelah perbaikan,
-     * LockPurchaseReturnAction memberi guard defense-in-depth (tolak produk ganda),
-     * sehingga stok TIDAK berubah & invariant tetap konsisten.
+     * Dua baris detail untuk produk & SATUAN yang SAMA tetap ditolak (defense-in-depth,
+     * controller juga sudah blok lewat hasDuplicateProducts). Produk sama dengan satuan
+     * BERBEDA (lihat test lock_mengizinkan_produk_sama_dengan_satuan_berbeda) diizinkan.
      */
     #[Test]
-    public function lock_menolak_dua_baris_produk_sama()
+    public function lock_menolak_dua_baris_produk_dan_satuan_sama()
     {
         $this->seedOpeningBalanceWithStockCard(50, 8000);
 
@@ -316,6 +319,43 @@ class PurchaseReturnCrudTest extends TestCase
         // Lock di-rollback → stok utuh, tak ada stock_card retur, invariant bersih
         $this->assertEquals(50, InventoryStock::where('product_id', $this->product->id)->value('qty'));
         $this->assertSame(0, StockCard::where('transaction_id', $retur->id)->where('transaction_type', 'PURCHASE_RETURN')->count());
+        $this->assertSame(0, Artisan::call('data:verify', ['--fail-on-mismatch' => true]));
+    }
+
+    /**
+     * Produk sama dengan SATUAN BERBEDA (PCS + BOX) WAJIB tetap bisa lock —
+     * running stock per product_id (mirip ApprovePurchaseOrderAction) menangani
+     * multi-baris produk yang sama, dan setiap baris tetap punya stock_card sendiri.
+     */
+    #[Test]
+    public function lock_mengizinkan_produk_sama_dengan_satuan_berbeda()
+    {
+        $this->seedOpeningBalanceWithStockCard(50, 8000);
+
+        $retur = $this->createAction->execute($this->baseData([
+            'details' => [
+                ['product_id' => $this->product->id, 'unit_used' => 'PCS', 'unit_konversi' => 1, 'qty_in_unit' => 3, 'harga_per_unit' => 8000],
+                ['product_id' => $this->product->id, 'unit_used' => 'BOX', 'unit_konversi' => 12, 'qty_in_unit' => 1, 'harga_per_unit' => 96000],
+            ],
+        ]));
+
+        $locked = $this->lockAction->execute($retur->fresh());
+
+        $this->assertEquals('lock', $locked->status);
+
+        // Total qty_out = 3 (PCS) + 12 (BOX 1×12) = 15 → stok 50 - 15 = 35
+        $stock = InventoryStock::where('product_id', $this->product->id)->first();
+        $this->assertEquals(35, $stock->qty);
+
+        // Setiap baris punya stock_card sendiri (2 baris = 2 entri, bukan di-dedup jadi 1)
+        $cards = StockCard::where('transaction_id', $retur->id)
+            ->where('transaction_type', 'PURCHASE_RETURN')
+            ->orderBy('id')
+            ->get();
+        $this->assertCount(2, $cards);
+        $this->assertEquals(3, $cards[0]->qty_out);
+        $this->assertEquals(12, $cards[1]->qty_out);
+
         $this->assertSame(0, Artisan::call('data:verify', ['--fail-on-mismatch' => true]));
     }
     #[Test]

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { pembayaranHutangsApi, suppliersApi } from '@/api';
+import { useConfirm } from 'primevue/useconfirm';
 import { useTransactionList } from '@/composables/useTransactionList';
 import { useFormatters } from '@/composables/useFormatters';
 import { useAuthStore } from '@/stores/auth';
@@ -9,8 +10,11 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
+const confirm = useConfirm();
 const { formatCurrency, formatDateTime, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportDocumentPdf } = useExportPdf();
 
@@ -28,6 +32,15 @@ const customStatusOptions = [
     { label: 'Draft', value: 'draft' },
     { label: 'Completed', value: 'completed' }
 ];
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (additionalFilters.supplier_id) n++;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 // Initialize composable
 const {
@@ -57,7 +70,7 @@ const {
     viewDetail,
     closeDetail,
     confirmDelete,
-    confirmApprove,
+    approveItem,
     getStatusSeverity,
     getStatusLabel,
     canEdit: canEditItem,
@@ -106,9 +119,18 @@ async function loadSuppliers() {
     }
 }
 
-// Custom complete handler using the api's complete endpoint
-async function handleComplete(data) {
-    confirmApprove(data);
+// Custom complete confirmation (bukan pesan stok)
+function confirmComplete(data) {
+    confirm.require({
+        message: `Apakah Anda yakin ingin menyelesaikan pembayaran ${data.nomor_dokumen}? Hutang supplier akan diperbarui dan tidak dapat dibatalkan.`,
+        header: 'Konfirmasi Complete',
+        icon: 'pi pi-check-circle',
+        rejectLabel: 'Batal',
+        acceptLabel: 'Complete',
+        rejectClass: 'p-button-secondary p-button-outlined',
+        acceptClass: 'p-button-success',
+        accept: () => approveItem(data)
+    });
 }
 
 // Get metode pembayaran label
@@ -145,7 +167,7 @@ async function exportDocPdf(item) {
     // Table 1: Hutang details
     const hutangCols = [
         { header: '#', field: '#', width: 8, align: 'center' },
-        { header: 'No. PO', accessor: (row) => row.hutang?.purchase_order?.nomor_dokumen || '-' },
+        { header: 'No. PO / PBS', accessor: (row) => row.hutang?.purchase_order?.nomor_dokumen || row.hutang?.serial_intake?.nomor_dokumen || '-' },
         { header: 'Tgl Hutang', width: 22, accessor: (row) => formatDateTime(row.hutang?.tanggal) },
         { header: 'Nominal Awal', width: 24, align: 'right', accessor: (row) => formatCurrency(row.hutang?.nominal_awal) },
         { header: 'Sumber', width: 16, accessor: (row) => (row.sumber === 'deposit' ? 'Deposit' : 'Cash') },
@@ -206,17 +228,17 @@ onMounted(async () => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="additionalFilters.supplier_id" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilter" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilter" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="additionalFilters.supplier_id" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" filter showClear @change="onFilter" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -298,13 +320,13 @@ onMounted(async () => {
 
             <Column header="Aksi" style="min-width: 220px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'" />
-                        <Button v-if="canEditPerm && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canCompletePerm && canCompleteItem(data)" icon="pi pi-check" severity="success" text rounded @click="handleComplete(data)" v-tooltip.top="'Complete'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canEditPerm && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canCompletePerm && canCompleteItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmComplete(data)" v-tooltip.top="'Complete'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -339,7 +361,7 @@ onMounted(async () => {
                         <h4 class="text-lg font-medium mb-3">Detail Hutang Dibayar ({{ detailData.details?.length || 0 }} item)</h4>
                         <DetailTable :data="detailData.details" :columns="hutangDetailColumns">
                             <template #no_po="{ item }">
-                                <span class="font-medium">{{ item.hutang?.purchase_order?.nomor_dokumen || '-' }}</span>
+                                <span class="font-medium">{{ item.hutang?.purchase_order?.nomor_dokumen || item.hutang?.serial_intake?.nomor_dokumen || '-' }}</span>
                             </template>
                             <template #tanggal_hutang="{ item }">{{ formatDateTime(item.hutang?.tanggal) }}</template>
                             <template #nominal_awal="{ item }">{{ formatCurrency(item.hutang?.nominal_awal) }}</template>
@@ -407,28 +429,24 @@ onMounted(async () => {
 
             <template #footer-extra>
                 <div class="flex flex-wrap gap-2">
-                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportDocPdf(detailData)" />
-                    <Button
-                        v-if="canEditPerm && canEditItem(detailData)"
+                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" :loading="exporting" @click="exportDocPdf(detailData)"  outlined />
+                    <Button v-if="canEditPerm && canEditItem(detailData)"
                         label="Edit"
                         icon="pi pi-pencil"
                         severity="warning"
                         @click="
                             editItem(detailData);
                             closeDetail();
-                        "
-                    />
-                    <Button
-                        v-if="canDeletePerm && canDelete(detailData)"
+                        " />
+                    <Button v-if="canDeletePerm && canDelete(detailData)"
                         label="Hapus"
                         icon="pi pi-trash"
                         severity="danger"
                         @click="
                             confirmDelete(detailData);
                             closeDetail();
-                        "
-                    />
-                    <Button v-if="canCompletePerm && canCompleteItem(detailData)" label="Complete" icon="pi pi-check" severity="success" :loading="processingApprove" @click="handleComplete(detailData)" />
+                        " />
+                    <Button v-if="canCompletePerm && canCompleteItem(detailData)" label="Complete" icon="pi pi-check" severity="success" :loading="processingApprove" @click="confirmComplete(detailData)" />
                 </div>
             </template>
         </DetailDialog>

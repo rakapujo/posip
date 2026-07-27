@@ -2,15 +2,18 @@
 import { adjustmentsApi, warehousesApi } from '@/api';
 import { useConfirm } from 'primevue/useconfirm';
 import { useRouter, useRoute } from 'vue-router';
-import { onMounted, ref, computed, watch } from 'vue';
+import { onMounted, ref, computed, watch, nextTick } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useSettingsStore } from '@/stores/settings';
 import SerialUnitPicker from '@/components/common/SerialUnitPicker.vue';
 
 const notify = useNotification();
 const confirm = useConfirm();
 const router = useRouter();
 const route = useRoute();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const { formatQty, shouldUppercase, getPrimeDateFormatShort, toDateTimeString, now, parseDateTime, isAfterNow, getLocale, getQtyMinFractionDigits, getQtyMaxFractionDigits } = useFormatters();
 
 // Mode
@@ -30,6 +33,8 @@ const form = ref({
     keterangan: '',
     details: []
 });
+
+const canAddLines = computed(() => !!form.value.warehouse_id);
 
 // Product search
 const productSuggestions = ref([]);
@@ -53,7 +58,11 @@ function syncExpandedSerial() {
     for (const d of form.value.details) {
         if (d.is_serial && d._uid) map[d._uid] = true;
     }
-    expandedRows.value = map;
+    const prev = Object.keys(expandedRows.value || {})
+        .sort()
+        .join('|');
+    const next = Object.keys(map).sort().join('|');
+    if (prev !== next) expandedRows.value = map;
 }
 watch(() => form.value.details.map((d) => `${d._uid}:${d.is_serial ? 1 : 0}`).join('|'), syncExpandedSerial);
 
@@ -65,12 +74,18 @@ const serialOutStatusOptions = [
 
 // Pilihan unit serial berubah → qty & stok_akhir; rekonsiliasi status fate per unit (default 'rusak')
 function onSerialChange(detail, ulids) {
+    const prev = detail.serial_unit_ids || [];
+    const same =
+        ulids.length === prev.length &&
+        [...ulids].map(String).sort().join('|') === [...prev].map(String).sort().join('|');
+    if (same && Number(detail.qty) === ulids.length) return;
+
     detail.serial_unit_ids = ulids;
     detail.qty = ulids.length;
     detail.stok_akhir = calculateStokAkhir(detail.stok_sistem, 'kredit', ulids.length);
-    const prev = detail.serial_unit_statuses || {};
+    const prevStatus = detail.serial_unit_statuses || {};
     const next = {};
-    for (const ulid of ulids) next[ulid] = prev[ulid] || 'rusak';
+    for (const ulid of ulids) next[ulid] = prevStatus[ulid] || 'rusak';
     detail.serial_unit_statuses = next;
 }
 
@@ -133,9 +148,9 @@ async function loadAdjustment() {
                     _uid: nextUid(),
                     product_id: d.product_id,
                     product: d.product,
-                    is_serial: !!d.product?.is_serial,
-                    serial_unit_ids: d.serial_unit_ids || (d.product?.is_serial ? [] : null),
-                    serial_unit_statuses: d.serial_unit_statuses || (d.product?.is_serial ? {} : null),
+                    is_serial: serialEnabled.value && !!d.product?.is_serial,
+                    serial_unit_ids: d.serial_unit_ids || (serialEnabled.value && d.product?.is_serial ? [] : null),
+                    serial_unit_statuses: d.serial_unit_statuses || (serialEnabled.value && d.product?.is_serial ? {} : null),
                     serial_unit_objs: [],
                     jenis: d.jenis,
                     stok_sistem: d.stok_sistem,
@@ -215,7 +230,7 @@ function onProductSelect(event, index) {
     if (product && typeof product === 'object' && product.id) {
         const currentDetail = form.value.details[index];
         const stokSistem = product.stok ?? 0;
-        const isSerial = !!product.is_serial;
+        const isSerial = serialEnabled.value && !!product.is_serial;
         // Produk serial hanya boleh kredit (keluar); qty diturunkan dari unit dipilih
         const jenis = isSerial ? 'kredit' : currentDetail.jenis || 'kredit';
         const qty = isSerial ? 0 : currentDetail.qty || 1;
@@ -237,12 +252,16 @@ function onProductSelect(event, index) {
 }
 
 function addDetail() {
-    if (!form.value.warehouse_id) {
+    if (!canAddLines.value) {
         notify.selectFirst('warehouse');
         return;
     }
 
-    form.value.details.push({
+    form.value.details.push(emptyDetail());
+}
+
+function emptyDetail() {
+    return {
         _uid: nextUid(),
         product_id: null,
         product: null,
@@ -255,6 +274,19 @@ function addDetail() {
         qty: 1,
         stok_akhir: 0,
         notes: ''
+    };
+}
+
+function insertDetailAfter(index) {
+    if (!canAddLines.value) {
+        notify.selectFirst('warehouse');
+        return;
+    }
+    form.value.details.splice(index + 1, 0, emptyDetail());
+    nextTick(() => {
+        const inputs = document.querySelectorAll('.adj-detail-table .p-autocomplete-input');
+        const el = inputs[index + 1];
+        if (el && typeof el.focus === 'function') el.focus();
     });
 }
 
@@ -269,7 +301,7 @@ const scanProdukFeedback = ref(null); // { ok, msg }
 async function onScanProduk() {
     const code = (scanProduk.value || '').trim();
     if (!code) return;
-    if (!form.value.warehouse_id) {
+    if (!canAddLines.value) {
         notify.selectFirst('warehouse');
         return;
     }
@@ -480,9 +512,16 @@ function getProductLabel(product) {
                     <div class="flex items-center gap-2">
                         <IconField iconPosition="left">
                             <InputIcon class="pi pi-qrcode" />
-                            <InputText v-model="scanProduk" @keyup.enter="onScanProduk" placeholder="Scan barcode produk lalu Enter…" :disabled="!form.warehouse_id" style="width: 240px" />
+                            <InputText v-model="scanProduk" @keyup.enter="onScanProduk" placeholder="Scan barcode produk lalu Enter…" :disabled="!canAddLines" style="width: 240px" />
                         </IconField>
-                        <Button label="Tambah" icon="pi pi-plus" size="small" @click="addDetail" />
+                        <Button
+                            label="Tambah"
+                            icon="pi pi-plus"
+                            size="small"
+                            @click="addDetail"
+                            :disabled="!canAddLines"
+                            v-tooltip.top="canAddLines ? null : 'Pilih gudang dulu'"
+                        />
                     </div>
                 </div>
                 <small v-if="scanProdukFeedback" :class="scanProdukFeedback.ok ? 'text-green-600' : 'text-red-500'" class="block mb-2 text-xs">{{ scanProdukFeedback.msg }}</small>
@@ -498,7 +537,7 @@ function getProductLabel(product) {
                 </Message>
 
                 <!-- Detail Table -->
-                <DataTable :value="form.details" class="p-datatable-sm" responsiveLayout="scroll" v-if="form.details.length > 0" dataKey="_uid" v-model:expandedRows="expandedRows">
+                <DataTable :value="form.details" class="p-datatable-sm adj-detail-table" responsiveLayout="scroll" v-if="form.details.length > 0" dataKey="_uid" v-model:expandedRows="expandedRows">
                     <Column expander style="width: 3rem" />
                     <Column header="#" style="width: 40px">
                         <template #body="{ index }">{{ index + 1 }}</template>
@@ -506,7 +545,14 @@ function getProductLabel(product) {
 
                     <Column header="Produk" style="min-width: 250px">
                         <template #body="{ data, index }">
+                            <!-- Serial: jangan AutoComplete — remount + search loop (sama kasus penjualan) -->
+                            <div v-if="serialEnabled && data.is_serial && data.product_id" class="flex flex-col">
+                                <span class="font-medium">{{ data.product?.kode_produk }}</span>
+                                <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
+                                <span class="text-xs text-primary">Serial</span>
+                            </div>
                             <AutoComplete
+                                v-else
                                 v-model="data.product"
                                 :suggestions="productSuggestions"
                                 @complete="searchProducts"
@@ -546,16 +592,16 @@ function getProductLabel(product) {
                                 optionLabel="label"
                                 optionValue="value"
                                 class="w-full"
-                                :disabled="data.is_serial"
+                                :disabled="serialEnabled && data.is_serial"
                                 @update:modelValue="() => updateStokAkhir(index)"
-                                v-tooltip.top="data.is_serial ? 'Produk serial hanya bisa keluar (kredit)' : ''"
+                                v-tooltip.top="serialEnabled && data.is_serial ? 'Produk serial hanya bisa keluar (kredit)' : ''"
                             />
                         </template>
                     </Column>
 
                     <Column header="Qty" style="width: 110px">
                         <template #body="{ data, index }">
-                            <div v-if="data.is_serial">
+                            <div v-if="serialEnabled && data.is_serial">
                                 <Tag :value="`${data.serial_unit_ids?.length || 0} unit`" severity="info" />
                                 <div class="text-xs text-surface-500 mt-1">dari pilih unit ↓</div>
                             </div>
@@ -595,23 +641,35 @@ function getProductLabel(product) {
                         </template>
                     </Column>
 
-                    <Column header="" style="width: 50px">
+                    <Column header="" style="width: 90px">
                         <template #body="{ index }">
-                            <Button icon="pi pi-trash" severity="danger" text rounded @click="removeDetail(index)" />
+                            <div class="flex items-center justify-end gap-0">
+                                <Button
+                                    icon="pi pi-plus"
+                                    severity="secondary"
+                                    text
+                                    rounded
+                                    :disabled="!canAddLines"
+                                    v-tooltip.top="canAddLines ? 'Tambah baris di bawah' : 'Pilih gudang dulu'"
+                                    @click="insertDetailAfter(index)"
+                                />
+                                <Button icon="pi pi-trash" severity="danger" text rounded v-tooltip.top="'Hapus baris'" @click="removeDetail(index)" />
+                            </div>
                         </template>
                     </Column>
 
                     <!-- Pemilih unit serial (kredit/keluar) tepat di bawah baris produknya -->
                     <template #expansion="{ data }">
-                        <div v-if="data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
+                        <div v-if="serialEnabled && data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="pi pi-qrcode text-primary"></i>
                                 <span class="font-medium text-sm"> Pilih Unit Serial yang Dikeluarkan — {{ data.product?.kode_produk }} {{ data.product?.nama_produk }} </span>
                             </div>
                             <SerialUnitPicker
+                                :key="data._uid"
                                 :productId="data.product?.ulid"
                                 :warehouseId="form.warehouse_id"
-                                :modelValue="data.serial_unit_ids || []"
+                                :modelValue="data.serial_unit_ids"
                                 @update:modelValue="(v) => onSerialChange(data, v)"
                                 @change="(units) => onSerialUnitsObjs(data, units)"
                             />

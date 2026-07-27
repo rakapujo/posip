@@ -19,7 +19,9 @@ class GrossProfitReportTest extends TestCase
     use RefreshDatabase;
 
     protected User $userWithPerm;
+
     protected User $userNoHpp;
+
     protected User $userNoAny;
 
     protected function setUp(): void
@@ -165,6 +167,7 @@ class GrossProfitReportTest extends TestCase
             'warehouse_id' => $warehouse->id,
             'customer_id' => $customerId,
             'refund_method' => 'cash',
+            'status' => 'approved',
             'grand_total' => 2000,
             'created_by' => $this->userWithPerm->id,
             'created_at' => now(),
@@ -312,9 +315,9 @@ class GrossProfitReportTest extends TestCase
 
         $items = $response->json('data.items');
         $this->assertCount(1, $items);
-        $this->assertEquals(10000, $items[0]['revenue']);
-        $this->assertEquals(6000, $items[0]['hpp']);
-        $this->assertEquals(4000, $items[0]['profit']);
+        $this->assertEquals(8000, $items[0]['revenue']);
+        $this->assertEquals(4800, $items[0]['hpp']);
+        $this->assertEquals(3200, $items[0]['profit']);
     }
 
     public function test_terminal_filter_limits_scope(): void
@@ -441,7 +444,7 @@ class GrossProfitReportTest extends TestCase
         $this->assertEquals(10000, $items[0]['hpp']);
         $this->assertEquals(30000, $items[0]['profit']);
         $this->assertEquals(75.0, $items[0]['margin_percent']);
-        $this->assertEquals(4000, $items[1]['profit']);
+        $this->assertEquals(3200, $items[1]['profit']);
     }
 
     public function test_top_products_limit_dibatasi(): void
@@ -510,5 +513,34 @@ class GrossProfitReportTest extends TestCase
         $this->assertEquals(5000, $items[0]['revenue']);
         $this->assertEquals(2000, $items[0]['hpp']); // 5 × 400
         $this->assertEquals(3000, $items[0]['profit']);
+    }
+
+    public function test_per_barang_summary_net_aligns_with_gross_profit_revenue_net(): void
+    {
+        Permission::firstOrCreate(['name' => 'laporan.penjualan', 'guard_name' => 'web']);
+        $this->userWithPerm->givePermissionTo('laporan.penjualan');
+
+        $this->seedData();
+
+        $from = now()->startOfMonth()->toDateString();
+        $to = now()->endOfMonth()->toDateString();
+        $q = "date_from={$from}&date_to={$to}";
+
+        $gp = $this->actingAs($this->userWithPerm)
+            ->getJson("/api/v1/reports/gross-profit/summary?{$q}")
+            ->assertOk()
+            ->json('data');
+
+        $pb = $this->actingAs($this->userWithPerm)
+            ->getJson("/api/v1/sales-product-report?{$q}")
+            ->assertOk()
+            ->json('data.summary');
+
+        $this->assertEqualsWithDelta((float) $gp['revenue_net'], (float) $pb['total_pendapatan_net'], 0.01);
+        $this->assertEqualsWithDelta((float) $gp['hpp_net'], (float) $pb['total_hpp_net'], 0.01);
+        $this->assertEqualsWithDelta((float) $gp['gross_profit'], (float) $pb['total_laba_net'], 0.01);
+        $this->assertEquals(10000.0, (float) $pb['total_pendapatan']);
+        $this->assertEquals(2000.0, (float) $pb['total_pendapatan_retur']);
+        $this->assertEquals(2.0, (float) $pb['total_qty_retur']);
     }
 }

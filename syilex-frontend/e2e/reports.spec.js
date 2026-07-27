@@ -1,16 +1,17 @@
 import { test, expect } from '@playwright/test';
+import { getAuthData, injectAuth } from './helpers/auth.js';
+
+let authData;
 
 test.describe('Laporan smoke', () => {
     test.describe.configure({ mode: 'serial' });
 
+    test.beforeAll(async ({ request }) => {
+        authData = await getAuthData(request);
+    });
+
     test.beforeEach(async ({ page }) => {
-        await page.goto('/');
-        await page.waitForLoadState('domcontentloaded');
-        await page.locator('#email').waitFor({ state: 'visible', timeout: 15000 });
-        await page.locator('#email').fill('admin@posip.com');
-        await page.locator('#password input').fill('password');
-        await page.locator('button[type="submit"]').click();
-        await page.waitForURL((url) => url.pathname.startsWith('/app'), { timeout: 30000 });
+        await injectAuth(page, authData);
     });
 
     test('penjualan per nota page loads table shell', async ({ page }) => {
@@ -52,15 +53,15 @@ test.describe('Laporan smoke', () => {
         await page.goto('/app/laporan/keuangan/gross-profit');
         await page.waitForLoadState('networkidle');
 
-        await expect(page.getByRole('button', { name: 'Export Excel' })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeVisible({ timeout: 10000 });
     });
 
     test('top customer page loads with export', async ({ page }) => {
         await page.goto('/app/laporan/performa/top-customer');
         await page.waitForLoadState('networkidle');
 
-        await expect(page.getByText('Top Customer')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByRole('button', { name: 'Export Excel' })).toBeVisible();
+        await expect(page.getByRole('toolbar').getByText('Top Customer')).toBeVisible({ timeout: 10000 });
+        await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeVisible();
     });
 
     test('metode pembayaran page loads with export', async ({ page }) => {
@@ -68,7 +69,7 @@ test.describe('Laporan smoke', () => {
         await page.waitForLoadState('networkidle');
 
         await expect(page.getByText('Breakdown Metode Pembayaran')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByRole('button', { name: 'Export Excel' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeVisible();
     });
 
     test('retur pattern page loads with export', async ({ page }) => {
@@ -76,11 +77,11 @@ test.describe('Laporan smoke', () => {
         await page.waitForLoadState('networkidle');
 
         await expect(page.getByText('Pattern Retur Penjualan')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByRole('button', { name: 'Export Excel' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Export Excel', exact: true })).toBeVisible();
     });
 
     test('pembulatan financial report loads pdf export', async ({ page }) => {
-        await page.goto('/app/laporan/keuangan/pembulatan');
+        await page.goto('/app/laporan/penjualan/pembulatan');
         await page.waitForLoadState('networkidle');
 
         await expect(page.getByText('Laporan Pembulatan')).toBeVisible({ timeout: 10000 });

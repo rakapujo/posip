@@ -4,9 +4,11 @@ namespace App\Services;
 
 use App\Models\DocPurchaseOrder;
 use App\Models\DocPurchaseReturn;
+use App\Models\DocSerialIntake;
 use App\Models\MasterProduk;
 use App\Models\MasterSupplier;
 use App\Models\MasterWarehouse;
+use Illuminate\Validation\ValidationException;
 
 class PurchaseMasterRules
 {
@@ -63,6 +65,37 @@ class PurchaseMasterRules
     }
 
     /**
+     * Resolve unit_konversi from master by unit_used. Reject unknown / inactive konversi.
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public static function resolveUnitKonversi(MasterProduk $product, string $unitUsed, string $errorKey = 'unit_used'): int
+    {
+        $needle = mb_strtolower(trim($unitUsed));
+        for ($i = 1; $i <= 4; $i++) {
+            $unit = $product->{"unit_{$i}"} ?? null;
+            if ($unit === null || $unit === '') {
+                continue;
+            }
+            if (mb_strtolower(trim((string) $unit)) !== $needle) {
+                continue;
+            }
+            $k = (int) ($product->{"konversi_{$i}"} ?? 0);
+            if ($k < 1) {
+                throw ValidationException::withMessages([
+                    $errorKey => ["Konversi satuan '{$unitUsed}' pada produk {$product->kode_produk} tidak valid."],
+                ]);
+            }
+
+            return $k;
+        }
+
+        throw ValidationException::withMessages([
+            $errorKey => ["Satuan '{$unitUsed}' tidak ada di master produk {$product->kode_produk}."],
+        ]);
+    }
+
+    /**
      * @param  list<array{product_id: int}>  $details
      * @return array<string, list<string>>|null
      */
@@ -107,19 +140,41 @@ class PurchaseMasterRules
     }
 
     /**
+     * @return array<string, list<string>>|null
+     */
+    public static function serialIntakeDocumentErrors(DocSerialIntake $intake): ?array
+    {
+        $errors = [];
+        if ($intake->supplier_id) {
+            $errors = array_merge($errors, self::supplierAndWarehouseErrors($intake->supplier_id, $intake->warehouse_id) ?? []);
+        } elseif ($warehouseErrors = self::warehouseErrors($intake->warehouse_id)) {
+            $errors = array_merge($errors, $warehouseErrors);
+        }
+
+        $product = MasterProduk::find($intake->product_id);
+        if (! $product) {
+            $errors['product_id'] = ['Produk tidak ditemukan.'];
+        } elseif (! $product->isActive()) {
+            $errors['product_id'] = ['Produk tidak aktif.'];
+        }
+
+        return $errors !== [] ? $errors : null;
+    }
+
+    /**
      * Validasi produk aktif untuk modul inventory (adjustment, transfer, opname, repack, HPP).
      *
      * @param  list<array<string, mixed>>  $lines
      * @return array<string, list<string>>|null
      */
-    public static function inventoryProductLinesErrors(array $lines, string $prefix = 'details', string $field = 'product_id'): ?array
+    public static function inventoryProductLinesErrors(array $lines, string $prefix = 'details', string $field = 'product_id', bool $blockSerial = false): ?array
     {
         $details = [];
         foreach ($lines as $line) {
             $details[] = ['product_id' => $line[$field]];
         }
 
-        $baseErrors = self::returDetailProductErrors($details);
+        $baseErrors = self::detailProductErrors($details, $blockSerial);
         if ($baseErrors === null) {
             return null;
         }
@@ -167,7 +222,7 @@ class PurchaseMasterRules
             }
 
             if ($blockSerial && $product->is_serial) {
-                $errors[$field] = ['Produk serial hanya dapat dibeli melalui PO Serial.'];
+                $errors[$field] = ['Produk serial tidak diizinkan pada dokumen ini.'];
             }
         }
 

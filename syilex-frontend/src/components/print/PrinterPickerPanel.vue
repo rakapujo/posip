@@ -70,45 +70,15 @@ defineExpose({
             <Tag v-else severity="secondary" value="Belum dipasangkan" />
         </div>
 
-        <div v-if="!supported" class="text-sm text-orange-600 dark:text-orange-400">
-            Web Serial / WebUSB / Web Bluetooth tidak tersedia. Struk tetap bisa dicetak via PDF.
-        </div>
+        <div v-if="!supported" class="text-sm text-orange-600 dark:text-orange-400">Web Serial / WebUSB / Web Bluetooth tidak tersedia. Struk tetap bisa dicetak via PDF.</div>
 
         <div v-else class="flex flex-wrap gap-2">
-            <Button
-                v-if="support.bluetooth"
-                label="Bluetooth"
-                icon="pi pi-bluetooth"
-                size="small"
-                :loading="picking"
-                :disabled="picking"
-                @click="pickKind('bluetooth')"
-            />
-            <Button
-                v-if="support.serial"
-                label="USB Serial"
-                icon="pi pi-link"
-                size="small"
-                severity="secondary"
-                :loading="picking"
-                :disabled="picking"
-                @click="pickKind('serial')"
-            />
-            <Button
-                v-if="support.usb"
-                label="WebUSB"
-                icon="pi pi-usb"
-                size="small"
-                severity="help"
-                :loading="picking"
-                :disabled="picking"
-                @click="pickKind('usb')"
-            />
+            <Button v-if="support.bluetooth" label="Bluetooth" icon="pi pi-bluetooth" size="small" :loading="picking" :disabled="picking" @click="pickKind('bluetooth')" />
+            <Button v-if="support.serial" label="USB Serial" icon="pi pi-link" size="small" severity="secondary" :loading="picking" :disabled="picking" @click="pickKind('serial')" />
+            <Button v-if="support.usb" label="WebUSB" icon="pi pi-usb" size="small" severity="help" :loading="picking" :disabled="picking" @click="pickKind('usb')" />
             <Button v-if="isPaired || printerLabel" label="Lupakan" icon="pi pi-times" size="small" severity="danger" text :disabled="picking" @click="forget" />
         </div>
 
-        <p v-if="!compact" class="text-xs text-muted-color mb-0">
-            Pairing disimpan per browser (localStorage). Legacy Print Service (:5123) masih bisa dipakai jika `default_printer` terminal diisi ID Windows/Network.
-        </p>
+        <p v-if="!compact" class="text-xs text-muted-color mb-0">Pairing disimpan per browser (localStorage). Firefox/Safari: cetak via PDF.</p>
     </div>
 </template>

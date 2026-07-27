@@ -103,6 +103,18 @@ onMounted(async () => {
 
     if (isEdit.value) {
         await loadPembayaran();
+    } else if (route.query.supplier_id) {
+        form.value.supplier_id = parseInt(route.query.supplier_id, 10);
+        await Promise.all([loadOutstandingHutangs(form.value.supplier_id), loadAvailableDeposits(form.value.supplier_id)]);
+        if (route.query.hutang_ulid) {
+            const hutang = outstandingHutangs.value.find((h) => h.ulid === route.query.hutang_ulid);
+            if (hutang && hutang.status !== 'paid') {
+                hutangPayments.value[hutang.id] = {
+                    cash: getMaxPayment(hutang),
+                    deposit: 0
+                };
+            }
+        }
     }
 });
 
@@ -240,6 +252,18 @@ function getMaxPayment(hutang) {
     return parseFloat(hutang.sisa_hutang) || 0;
 }
 
+// Get max deposit payment for a hutang row (capped by remaining deposit pool)
+function getMaxDepositPayment(hutangId) {
+    const hutang = outstandingHutangs.value.find((h) => h.id === hutangId);
+    if (!hutang) return 0;
+
+    const hutangRemaining = Math.max(0, getMaxPayment(hutang) - (hutangPayments.value[hutangId]?.cash || 0));
+    const currentDeposit = hutangPayments.value[hutangId]?.deposit || 0;
+    const poolRemaining = remainingDepositAvailable.value + currentDeposit;
+
+    return Math.min(hutangRemaining, Math.max(0, poolRemaining));
+}
+
 // Get max deposit usage
 function getMaxDepositUsage(deposit) {
     return parseFloat(deposit.sisa_deposit) || 0;
@@ -263,6 +287,10 @@ function validateHutangPayment(hutangId, changedField = 'cash') {
         } else {
             payment.cash = Math.max(0, (payment.cash || 0) - excess);
         }
+    }
+
+    if (changedField === 'deposit' && (payment.deposit || 0) > getMaxDepositPayment(hutangId)) {
+        payment.deposit = getMaxDepositPayment(hutangId);
     }
 }
 
@@ -545,9 +573,9 @@ function fillMaxDeposit(hutangId) {
                         <template #body="{ index }">{{ index + 1 }}</template>
                     </Column>
 
-                    <Column header="No. PO" style="min-width: 150px">
+                    <Column header="No. PO / PBS" style="min-width: 150px">
                         <template #body="{ data }">
-                            <span class="font-medium">{{ data.purchase_order?.nomor_dokumen || '-' }}</span>
+                            <span class="font-medium">{{ data.purchase_order?.nomor_dokumen || data.serial_intake?.nomor_dokumen || '-' }}</span>
                         </template>
                     </Column>
 
@@ -611,7 +639,7 @@ function fillMaxDeposit(hutangId) {
                                     v-select-on-focus
                                     v-model="hutangPayments[data.id].deposit"
                                     :min="0"
-                                    :max="getMaxPayment(data) - (hutangPayments[data.id]?.cash || 0)"
+                                    :max="getMaxDepositPayment(data.id)"
                                     :prefix="currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
                                     :suffix="currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
                                     :locale="getLocale"

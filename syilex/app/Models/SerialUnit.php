@@ -23,7 +23,7 @@ class SerialUnit extends Model
 
     protected $table = 'serial_units';
 
-    /** Status unit (kolom string, bukan enum — CLAUDE.md §2F). */
+    /** Status unit (kolom string, bukan enum — AI-AGENT.md §2F). */
     public const STATUS_PENDING = 'pending';   // intake draft, belum commit stok
     public const STATUS_TERSEDIA = 'tersedia';  // siap (di gudang)
     public const STATUS_TERJUAL = 'terjual';   // terjual (Fase penjualan)
@@ -72,6 +72,7 @@ class SerialUnit extends Model
         'grade',
         'battery_condition',
         'battery_health',
+        'battery_cycle_count',
         'account_status',
         'status',
         'sale_id',
@@ -100,6 +101,7 @@ class SerialUnit extends Model
             'cost_per_unit' => 'decimal:4',
             'harga_jual' => 'decimal:2',
             'battery_health' => 'decimal:2',
+            'battery_cycle_count' => 'integer',
             'sold_at' => LocalDateTime::class,
             'created_at' => LocalDateTime::class,
             'updated_at' => LocalDateTime::class,

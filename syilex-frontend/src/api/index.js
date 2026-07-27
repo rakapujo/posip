@@ -33,7 +33,13 @@ export { purchaseReturnsApi } from './modules/purchaseReturns';
 export { supplierHutangsApi } from './modules/supplierHutangs';
 export { supplierDepositsApi } from './modules/supplierDeposits';
 export { pembayaranHutangsApi } from './modules/pembayaranHutangs';
+export { salesApi } from './modules/sales';
+export { salesReturnsApi } from './modules/salesReturns';
+export { customerPiutangsApi } from './modules/customerPiutangs';
+export { pembayaranPiutangsApi } from './modules/pembayaranPiutangs';
+export { customerDepositsApi } from './modules/customerDeposits';
 export { priceChangesApi } from './modules/priceChanges';
+
 export { posTerminalsApi } from './modules/posTerminals';
 export { shiftsApi } from './modules/shifts';
 export { posApi } from './modules/pos';

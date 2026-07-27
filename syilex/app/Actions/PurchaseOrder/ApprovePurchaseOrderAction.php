@@ -142,20 +142,23 @@ class ApprovePurchaseOrderAction
                 StockCard::$skipObserver = false;
             }
 
-            // Create supplier hutang record
-            $hutang = SupplierHutang::create([
-                'supplier_id' => $po->supplier_id,
-                'po_id' => $po->id,
-                'tanggal' => $po->tanggal_po,
-                'tanggal_jatuh_tempo' => $po->tanggal_jatuh_tempo,
-                'nominal_awal' => $po->grand_total,
-                'nominal_terbayar' => 0,
-                'sisa_hutang' => $po->grand_total,
-                'status' => 'unpaid',
-            ]);
+            // Create supplier hutang only when grand_total > 0 (parity PBS / Q4).
+            $hutang = null;
+            if ((float) $po->grand_total > 0) {
+                $hutang = SupplierHutang::create([
+                    'supplier_id' => $po->supplier_id,
+                    'po_id' => $po->id,
+                    'tanggal' => $po->tanggal_po,
+                    'tanggal_jatuh_tempo' => $po->tanggal_jatuh_tempo,
+                    'nominal_awal' => $po->grand_total,
+                    'nominal_terbayar' => 0,
+                    'sisa_hutang' => $po->grand_total,
+                    'status' => 'unpaid',
+                ]);
 
-            // Cash / lunas langsung → otomatis buat + complete pembayaran hutang
-            $this->settleCashPayment($po, $hutang);
+                // Cash / lunas langsung → otomatis buat + complete pembayaran hutang
+                $this->settleCashPayment($po, $hutang);
+            }
 
             // Update PO status
             $po->update([

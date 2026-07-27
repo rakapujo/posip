@@ -329,7 +329,7 @@ export function useMasterCrud(api, options = {}) {
         const displayName = getDisplayName(data);
 
         confirm.require({
-            message: `Apakah Anda yakin ingin menghapus ${entityName} "${displayName}"? Data yang dihapus tidak dapat dikembalikan.`,
+            message: `Apakah Anda yakin ingin menghapus ${entityName} "${displayName}"? Data akan diarsipkan (tidak ada restore dari UI).`,
             header: 'Konfirmasi Hapus',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: {

@@ -233,15 +233,18 @@ class AuditLogTest extends TestCase
     #[Test]
     public function retensi_membersihkan_log_lebih_tua_dari_365_hari_dan_menyisakan_yang_baru(): void
     {
-        // Retensi: config activitylog.delete_records_older_than_days = 365.
-        $this->assertEquals(365, config('activitylog.delete_records_older_than_days'));
+        // Default config + setting seeder: 365. Middleware overrides config dari setting sebelum clean.
+        $retention = (int) (\App\Services\SettingService::get('scheduler.activity_log_retention_days', 365) ?: 365);
+        $retention = max(30, min(3650, $retention));
+        config(['activitylog.delete_records_older_than_days' => $retention]);
+        $this->assertEquals(365, $retention);
 
         // Buat log baru (created saat makePromo) → harus tetap.
         $promo = $this->makePromo();
         $recent = Activity::where('subject_id', $promo->id)->first();
         $this->assertNotNull($recent);
 
-        // Buat satu log "lama" dengan created_at > 365 hari lalu.
+        // Buat satu log "lama" dengan created_at > retention hari lalu.
         $old = Activity::create([
             'log_name' => 'DocPromo',
             'description' => 'old record',
@@ -252,8 +255,8 @@ class AuditLogTest extends TestCase
             'properties' => [],
             'event' => 'updated',
         ]);
-        // Backdate melewati ambang retensi (366 hari).
-        $old->created_at = now()->subDays(366);
+        // Backdate melewati ambang retensi (retention+1 hari).
+        $old->created_at = now()->subDays($retention + 1);
         $old->save();
 
         $totalBefore = Activity::count();
@@ -262,7 +265,7 @@ class AuditLogTest extends TestCase
         Artisan::call('activitylog:clean');
 
         // Log lama TERHAPUS, log baru TETAP ada.
-        $this->assertNull(Activity::find($old->id), 'Log > 365 hari harus dihapus');
+        $this->assertNull(Activity::find($old->id), "Log > {$retention} hari harus dihapus");
         $this->assertNotNull(Activity::find($recent->id), 'Log baru harus tetap ada');
         $this->assertEquals($totalBefore - 1, Activity::count());
     }

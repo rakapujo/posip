@@ -45,6 +45,7 @@ class AnalyticReportExportController extends BaseApiController
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
+            $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
         ), $filename);
     }
 
@@ -65,6 +66,7 @@ class AnalyticReportExportController extends BaseApiController
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
+            $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
         ), $filename);
     }
 
@@ -88,6 +90,7 @@ class AnalyticReportExportController extends BaseApiController
             $request->date_to,
             (int) $request->input('limit', 10),
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
+            $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
         ), $filename);
     }
 
@@ -102,13 +105,19 @@ class AnalyticReportExportController extends BaseApiController
 
         $request->validate([
             'price_field' => 'nullable|in:harga_1,harga_2,harga_3,harga_4',
+            'brand_id' => 'nullable|integer',
+            'tipe_id' => 'nullable|integer',
+            'kategori_id' => 'nullable|integer',
+            'grup_id' => 'nullable|integer',
+            'margin_bucket' => 'nullable|in:low,medium,high,any',
+            'status' => 'nullable|in:active,inactive',
+            'search' => 'nullable|string|max:100',
+            'sort' => 'nullable|in:margin_asc,margin_desc,nama_asc,kode_asc',
         ]);
 
         $filename = 'laporan_margin_per_barang_'.date('Y-m-d_His').'.xlsx';
 
-        return Excel::download(new MarginPerBarangExport(
-            $request->input('price_field', 'harga_4'),
-        ), $filename);
+        return Excel::download(MarginPerBarangExport::fromRequest($request), $filename);
     }
 
     public function kasirPerformance(Request $request): BinaryFileResponse|JsonResponse
@@ -120,7 +129,7 @@ class AnalyticReportExportController extends BaseApiController
             return $this->forbidden('Export performance kasir butuh laporan.performa.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         $filename = 'laporan_kasir_performance_'.date('Y-m-d_His').'.xlsx';
 
@@ -128,6 +137,7 @@ class AnalyticReportExportController extends BaseApiController
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 
@@ -148,6 +158,7 @@ class AnalyticReportExportController extends BaseApiController
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
+            $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
         ), $filename);
     }
 
@@ -167,6 +178,7 @@ class AnalyticReportExportController extends BaseApiController
             'grup_id' => 'nullable|integer',
             'warehouse_id' => 'nullable|integer',
             'status' => 'nullable|in:active,inactive',
+            'is_serial' => 'nullable|boolean',
             'min_stock' => 'nullable|numeric|min:0',
             'sort' => 'nullable|in:days_desc,value_desc,qty_desc',
         ]);
@@ -181,6 +193,7 @@ class AnalyticReportExportController extends BaseApiController
             'grup_id' => $request->input('grup_id'),
             'warehouse_id' => $request->input('warehouse_id'),
             'status' => $request->input('status'),
+            'is_serial' => $request->has('is_serial') ? $request->boolean('is_serial') : null,
             'min_stock' => $request->input('min_stock', 0.01),
             'sort' => $request->input('sort', 'days_desc'),
         ], $canViewHpp), $filename);
@@ -220,7 +233,7 @@ class AnalyticReportExportController extends BaseApiController
             return $this->forbidden('Export top customer butuh laporan.performa.');
         }
 
-        $request->validate(array_merge(ReportHelperService::dateRangeRules(), [
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules(), [
             'limit' => 'nullable|integer|min:1|max:200',
             'sort' => 'nullable|in:omzet_desc,trx_desc,avg_desc,last_desc',
         ]));
@@ -232,6 +245,7 @@ class AnalyticReportExportController extends BaseApiController
             $request->date_to,
             (int) $request->input('limit', 50),
             $request->input('sort', 'omzet_desc'),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 

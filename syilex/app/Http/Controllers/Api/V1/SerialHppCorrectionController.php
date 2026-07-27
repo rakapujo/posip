@@ -16,7 +16,8 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Koreksi HPP Serial (modul serial A+) — koreksi harga_modal & cost_per_unit unit
- * tersedia per-unit, alur draft → approved. Default tidak mengubah avg_cost agregat.
+ * tersedia per-unit, alur draft → approved. Saat approve: Metode A rekalkulasi
+ * avg_cost dari rata-rata cost_per_unit unit tersedia + stock_card HPP_CORRECTION.
  */
 class SerialHppCorrectionController extends BaseApiController
 {
@@ -84,21 +85,37 @@ class SerialHppCorrectionController extends BaseApiController
         $serialHppCorrection->load([
             'product:id,ulid,kode_produk,nama_produk',
             'details' => fn ($q) => $q->orderBy('id'),
-            'details.serialUnit:id,ulid,kode_internal,serial_number',
+            'details.serialUnit:id,ulid,kode_internal,serial_number,warehouse_id',
+            'details.serialUnit.warehouse:id,ulid,nama_warehouse',
             'createdBy:id,name',
             'updatedBy:id,name',
             'approvedBy:id,name',
         ]);
+
+        // Cost gate orthogonal: strip tanpa stok.view_hpp (mirror Register Unit).
+        if (!auth()->user()->can('stok.view_hpp')) {
+            $serialHppCorrection->details->each(function ($d) {
+                $d->makeHidden([
+                    'harga_modal_baru', 'biaya_kirim_baru', 'biaya_lain_baru',
+                    'pajak_baru', 'cost_per_unit_baru', 'before',
+                ]);
+                $d->serialUnit?->makeHidden(['harga_modal', 'cost_per_unit']);
+            });
+        }
 
         return $this->success(['serial_hpp_correction' => $serialHppCorrection]);
     }
 
     /**
      * Unit TERSEDIA suatu produk serial + harga_modal & cost_per_unit terkini (untuk form).
+     * Memerlukan stok.view_hpp — form koreksi HPP tidak berguna tanpa lihat cost.
      */
     public function units(Request $request): JsonResponse
     {
         if (!auth()->user()->canAny(['serial-hpp.create', 'serial-hpp.update'])) {
+            return $this->forbidden();
+        }
+        if (!auth()->user()->can('stok.view_hpp')) {
             return $this->forbidden();
         }
 
@@ -108,8 +125,9 @@ class SerialHppCorrectionController extends BaseApiController
         }
 
         $units = SerialUnit::byProduct($product->id)->tersedia()
+            ->with('warehouse:id,ulid,nama_warehouse')
             ->orderBy('serial_number')
-            ->get(['ulid', 'kode_internal', 'serial_number', 'harga_modal', 'cost_per_unit', 'harga_jual', 'grade']);
+            ->get(['ulid', 'kode_internal', 'serial_number', 'warehouse_id', 'harga_modal', 'cost_per_unit', 'harga_jual', 'grade']);
 
         // Setting pajak pembelian → frontend hitung pajak & landed live (otomatis)
         return $this->success([

@@ -25,9 +25,5 @@ Homestead.yaml
 Thumbs.db
 sipos-shared-hosting.zip
 /.htaccess
-/print-service/build/
-/print-service/dist/
-/print-service/__pycache__/
-/print-service/*.spec
 /storage/installed
 /graphify-out/

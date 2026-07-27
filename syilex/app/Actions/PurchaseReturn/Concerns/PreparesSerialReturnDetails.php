@@ -17,7 +17,10 @@ use Illuminate\Validation\ValidationException;
  */
 trait PreparesSerialReturnDetails
 {
-    protected function prepareSerialReturnDetails(array $details): array
+    /**
+     * @param  int|null  $serialIntakeId  Bila link PBS: unit wajib milik intake ini.
+     */
+    protected function prepareSerialReturnDetails(array $details, ?int $serialIntakeId = null): array
     {
         $serialProductIds = MasterProduk::whereIn('id', collect($details)->pluck('product_id'))
             ->where('is_serial', true)
@@ -31,7 +34,7 @@ trait PreparesSerialReturnDetails
         $allUlids = collect($details)->flatMap(fn ($d) => $d['serial_unit_ids'] ?? [])->filter()->unique()->all();
         $units = SerialUnit::whereIn('ulid', $allUlids)->get()->keyBy('ulid');
 
-        return collect($details)->map(function ($d) use ($serialProductIds, $units) {
+        return collect($details)->map(function ($d) use ($serialProductIds, $units, $serialIntakeId) {
             if (!$serialProductIds->contains($d['product_id'])) {
                 return $d;
             }
@@ -41,6 +44,17 @@ trait PreparesSerialReturnDetails
                 throw ValidationException::withMessages([
                     'details' => ['Produk serial wajib memilih unit (nomor seri) yang diretur.'],
                 ]);
+            }
+
+            if ($serialIntakeId) {
+                foreach ($ulids as $ulid) {
+                    $unit = $units->get($ulid);
+                    if (! $unit || (int) $unit->intake_id !== $serialIntakeId) {
+                        throw ValidationException::withMessages([
+                            'details' => ["Unit serial {$ulid} bukan dari PBS yang dipilih."],
+                        ]);
+                    }
+                }
             }
 
             $count = count($ulids);

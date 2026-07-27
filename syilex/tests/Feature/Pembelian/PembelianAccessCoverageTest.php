@@ -44,6 +44,7 @@ class PembelianAccessCoverageTest extends TestCase
             'pembayaran-hutang.view', 'pembayaran-hutang.create', 'pembayaran-hutang.update',
             'pembayaran-hutang.delete', 'pembayaran-hutang.complete',
             'hutang.view', 'hutang.view_nominal', 'laporan.export',
+            'deposit-supplier.view', 'deposit-supplier.create', 'deposit-supplier.delete',
         ] as $permission) {
             Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
         }
@@ -283,6 +284,29 @@ class PembelianAccessCoverageTest extends TestCase
 
         $this->actingAs($denied)
             ->getJson('/api/v1/supplier-hutangs/'.(string) Str::ulid())
+            ->assertForbidden();
+    }
+
+    public function test_supplier_deposit_index_forbidden_without_view_permission(): void
+    {
+        $denied = User::factory()->create();
+
+        $this->actingAs($denied)
+            ->getJson('/api/v1/supplier-deposits')
+            ->assertForbidden();
+    }
+
+    public function test_supplier_deposit_store_forbidden_without_create_permission(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo('deposit-supplier.view');
+
+        $this->actingAs($viewer)
+            ->postJson('/api/v1/supplier-deposits', [
+                'supplier_id' => $this->supplier->id,
+                'tanggal' => now()->toDateString(),
+                'jumlah' => 100000,
+            ])
             ->assertForbidden();
     }
 }

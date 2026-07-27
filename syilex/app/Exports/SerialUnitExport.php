@@ -74,7 +74,7 @@ class SerialUnitExport implements FromQuery, WithHeadings, WithMapping, WithStyl
         return array_merge(
             ['No', 'Kode Internal', 'Nomor Seri', 'Produk', 'Status'],
             $cost,
-            ['Harga Jual', 'Grade', 'Baterai', 'Health (%)', 'Akun',
+            ['Harga Jual', 'Grade', 'Baterai', 'Health (%)', 'Cycle', 'Akun', 'Catatan',
                 'Gudang', 'Asal Dokumen', 'Tgl Masuk', 'Terjual'],
         );
     }
@@ -99,7 +99,9 @@ class SerialUnitExport implements FromQuery, WithHeadings, WithMapping, WithStyl
                 $u->grade ?? '-',
                 $u->battery_condition ?? '-',
                 $u->battery_health,
+                $u->battery_cycle_count,
                 $u->account_status ?? '-',
+                $u->catatan ?? '-',
                 $u->warehouse?->nama_warehouse ?? '-',
                 $u->intake?->nomor_dokumen ?? '-',
                 $u->intake?->tanggal?->format('Y-m-d') ?? '-',

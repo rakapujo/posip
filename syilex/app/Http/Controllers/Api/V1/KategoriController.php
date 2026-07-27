@@ -6,6 +6,7 @@ use App\Exports\MasterListExport;
 use App\Http\Controllers\Api\BaseApiController;
 use App\Http\Controllers\Concerns\HandlesSimpleMasterCrud;
 use App\Models\MasterKategori;
+use App\Models\MasterProduk;
 use App\Models\MasterTipe;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -75,8 +76,10 @@ class KategoriController extends BaseApiController
                     return $this->error('Tipe Produk tidak aktif', 422);
                 }
 
-                if ($kategori->status === 'active' && $validated['status'] === 'inactive' && $kategori->grups()->exists()) {
-                    return $this->error('Tidak dapat menonaktifkan Kategori Produk karena masih memiliki Grup', 422);
+                if ($kategori->status === 'active' && $validated['status'] === 'inactive') {
+                    if ($message = \App\Services\KategoriRules::deactivationBlockMessage($kategori)) {
+                        return $this->error($message, 422);
+                    }
                 }
 
                 return null;
@@ -122,8 +125,10 @@ class KategoriController extends BaseApiController
             'after_update' => fn (MasterKategori $kategori) => $kategori->load('tipe:id,kode_tipe,nama_tipe'),
             'after_toggle' => fn (MasterKategori $kategori) => $kategori->load('tipe:id,kode_tipe,nama_tipe'),
             'before_toggle' => function (MasterKategori $kategori) {
-                if ($kategori->status === 'active' && $kategori->grups()->exists()) {
-                    return $this->error('Tidak dapat menonaktifkan Kategori Produk karena masih memiliki Grup', 422);
+                if ($kategori->status === 'active') {
+                    if ($message = \App\Services\KategoriRules::deactivationBlockMessage($kategori)) {
+                        return $this->error($message, 422);
+                    }
                 }
 
                 return null;
@@ -131,6 +136,9 @@ class KategoriController extends BaseApiController
             'can_delete' => function (MasterKategori $kategori) {
                 if ($kategori->grups()->exists()) {
                     return $this->error('Tidak dapat menghapus Kategori Produk karena masih memiliki Grup', 422);
+                }
+                if (MasterProduk::where('kategori_id', $kategori->id)->exists()) {
+                    return $this->error('Tidak dapat menghapus Kategori Produk karena masih digunakan oleh produk', 422);
                 }
 
                 return null;

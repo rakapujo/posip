@@ -1,11 +1,12 @@
 <script setup>
+import { computed } from 'vue';
 import Dialog from 'primevue/dialog';
 import Button from 'primevue/button';
 import ProgressSpinner from 'primevue/progressspinner';
 import Divider from 'primevue/divider';
 import DetailItem from './DetailItem.vue';
 
-defineProps({
+const props = defineProps({
     visible: {
         type: Boolean,
         default: false
@@ -48,13 +49,18 @@ defineProps({
 
 const emit = defineEmits(['update:visible']);
 
+const dialogStyle = computed(() => ({
+    width: `min(${props.width}, 95vw)`,
+    maxWidth: '95vw'
+}));
+
 function closeDialog() {
     emit('update:visible', false);
 }
 </script>
 
 <template>
-    <Dialog :visible="visible" @update:visible="$emit('update:visible', $event)" :style="{ width: width }" :header="title" :modal="true" :closable="!loading">
+    <Dialog :visible="visible" @update:visible="$emit('update:visible', $event)" :style="dialogStyle" :breakpoints="{ '960px': '95vw' }" :header="title" :modal="true" :closable="!loading">
         <!-- Loading State -->
         <div v-if="loading" class="flex justify-center items-center py-8">
             <ProgressSpinner style="width: 50px; height: 50px" strokeWidth="4" />
@@ -73,7 +79,7 @@ function closeDialog() {
                         <i class="pi pi-history"></i>
                         Informasi Audit
                     </h4>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <DetailItem label="Dibuat pada" :value="createdAt" type="datetime" :user="createdBy" />
                         <DetailItem label="Diubah pada" :value="updatedAt" type="datetime" :user="updatedBy" />
                     </div>

@@ -28,6 +28,26 @@ class SalesCalculationService
         return DocumentCalculation::discountLevel($tipe, $nilai, $base);
     }
 
+    public static function applyLineDiscounts(array $item, string $mode): array
+    {
+        $bruto = (float) $item['qty'] * (float) $item['harga_satuan'];
+        $running = $bruto;
+        $total = 0.0;
+
+        for ($slot = 1; $slot <= 5; $slot++) {
+            $type = $item["diskon_{$slot}_tipe"] ?? 'none';
+            $value = (float) ($item["diskon_{$slot}_nilai"] ?? 0);
+            $result = self::calculateDiscountLevel($type, $value, $mode === 'recursive' ? $running : $bruto);
+            $item["diskon_{$slot}_tipe"] = $type;
+            $item["diskon_{$slot}_nilai"] = $value;
+            $item["diskon_{$slot}_hasil"] = $result;
+            $running -= $result;
+            $total += $result;
+        }
+
+        return array_merge($item, ['diskon_total' => $total, 'jumlah' => $bruto - $total]);
+    }
+
     /**
      * Calculate a single biaya/fee level.
      */
@@ -41,11 +61,11 @@ class SalesCalculationService
      *
      * Flow: Subtotal → Disc 1,2,3 (recursive) → Total → +Biaya Kirim → +Biaya Lain → DPP → Pajak → Grand Total
      *
-     * @param float $subtotal SUM of detail jumlah
-     * @param array $discounts [['tipe' => ..., 'nilai' => ...], ...] up to 3 levels
-     * @param array $biayaKirim ['tipe' => ..., 'nilai' => ...]
-     * @param array $biayaLain ['tipe' => ..., 'nilai' => ...]
-     * @param array $payments Array of payment methods with nominal and biaya_tambahan
+     * @param  float  $subtotal  SUM of detail jumlah
+     * @param  array  $discounts  [['tipe' => ..., 'nilai' => ...], ...] up to 3 levels
+     * @param  array  $biayaKirim  ['tipe' => ..., 'nilai' => ...]
+     * @param  array  $biayaLain  ['tipe' => ..., 'nilai' => ...]
+     * @param  array  $payments  Array of payment methods with nominal and biaya_tambahan
      * @return array Calculated totals
      */
     public static function calculateTotals(
@@ -151,6 +171,38 @@ class SalesCalculationService
             'nominal' => $nilai,
             default => 0,
         };
+    }
+
+    /**
+     * Rebuild biaya_tambahan from master metode (ignore FE-supplied fees).
+     *
+     * @param  list<array<string, mixed>>  $payments
+     * @return list<array<string, mixed>>
+     */
+    public static function applyMasterPaymentFees(array $payments): array
+    {
+        $ids = array_unique(array_column($payments, 'metode_pembayaran_id'));
+        if ($ids === []) {
+            return $payments;
+        }
+
+        $methods = \App\Models\MasterMetodePembayaran::whereIn('id', $ids)
+            ->get(['id', 'biaya_tambahan_tipe', 'biaya_tambahan_nilai'])
+            ->keyBy('id');
+
+        foreach ($payments as &$payment) {
+            $method = $methods->get($payment['metode_pembayaran_id'] ?? null);
+            $payment['biaya_tambahan'] = $method
+                ? self::calculatePaymentFee(
+                    (float) ($payment['nominal'] ?? 0),
+                    (string) ($method->biaya_tambahan_tipe ?? 'none'),
+                    (float) ($method->biaya_tambahan_nilai ?? 0),
+                )
+                : 0;
+        }
+        unset($payment);
+
+        return $payments;
     }
 
     /**

@@ -33,6 +33,15 @@ class MasterPosTerminal extends Model
         'default_metode_pembayaran_id',
         'template_struk_id',
         'default_printer',
+        'mail_driver',
+        'mail_from_address',
+        'mail_from_name',
+        'smtp_host',
+        'smtp_port',
+        'smtp_encryption',
+        'smtp_username',
+        'smtp_password',
+        'resend_api_key',
         'auto_open_tray',
         'auto_print_receipt',
         'auto_print_retur',
@@ -50,6 +59,8 @@ class MasterPosTerminal extends Model
         'status',
         'created_by',
         'updated_by',
+        'smtp_password',
+        'resend_api_key',
     ];
 
     /**
@@ -77,6 +88,8 @@ class MasterPosTerminal extends Model
             'auto_print_retur' => 'boolean',
             'auto_print_kas' => 'boolean',
             'auto_print_report' => 'boolean',
+            'smtp_password' => 'encrypted',
+            'resend_api_key' => 'encrypted',
             'created_at' => LocalDateTime::class,
             'updated_at' => LocalDateTime::class,
         ];
@@ -95,7 +108,35 @@ class MasterPosTerminal extends Model
      */
     public function isInUse(): bool
     {
-        return $this->active_user_id !== null;
+        if ($this->active_user_id !== null) {
+            return true;
+        }
+
+        // Orphan open shift (active_user cleared but shift still open)
+        if (array_key_exists('active_shift', $this->getRelations())) {
+            return $this->getRelation('active_shift') !== null;
+        }
+
+        return $this->activeShift()->exists();
+    }
+
+    public function isMailConfigured(): bool
+    {
+        return match ($this->mail_driver) {
+            'smtp' => filled($this->smtp_host) && filled($this->smtp_port) && filled($this->mail_from_address),
+            'resend' => filled($this->resend_api_key) && filled($this->mail_from_address),
+            default => false,
+        };
+    }
+
+    public function sales()
+    {
+        return $this->hasMany(DocSales::class, 'terminal_id');
+    }
+
+    public function cashTransactions()
+    {
+        return $this->hasMany(PosCashTransaction::class, 'terminal_id');
     }
 
     /**

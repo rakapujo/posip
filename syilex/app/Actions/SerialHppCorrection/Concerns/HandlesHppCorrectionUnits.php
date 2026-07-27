@@ -20,7 +20,7 @@ trait HandlesHppCorrectionUnits
      * @return array{0: MasterProduk, 1: Collection}  [product, serialUnits(keyBy ulid)]
      * @throws ValidationException
      */
-    protected function validateHppPayload(int $productId, array $units): array
+    protected function validateHppPayload(int $productId, array $units, ?int $excludeCorrectionId = null): array
     {
         $product = MasterProduk::find($productId);
         if (!$product) {
@@ -34,21 +34,38 @@ trait HandlesHppCorrectionUnits
         }
 
         $ulids = array_map(fn ($u) => (string) ($u['serial_unit_id'] ?? ''), $units);
+        if (count($ulids) !== count(array_unique($ulids))) {
+            throw ValidationException::withMessages(['units' => ['Unit tidak boleh duplikat dalam satu dokumen.']]);
+        }
+
         $serialUnits = SerialUnit::whereIn('ulid', $ulids)
             ->where('product_id', $product->id)
             ->get()
             ->keyBy('ulid');
 
+        if ($serialUnits->count() !== count($ulids)) {
+            throw ValidationException::withMessages(['units' => ['Ada unit yang tidak valid / bukan milik produk ini.']]);
+        }
+
         foreach ($units as $u) {
             $su = $serialUnits->get((string) ($u['serial_unit_id'] ?? ''));
-            if (!$su) {
-                throw ValidationException::withMessages(['units' => ['Ada unit yang tidak valid / bukan milik produk ini.']]);
-            }
             if ($su->status !== SerialUnit::STATUS_TERSEDIA) {
                 throw ValidationException::withMessages([
                     'units' => ["Unit {$su->kode_internal} (SN {$su->serial_number}) tidak bisa dikoreksi (status: {$su->status})."],
                 ]);
             }
+        }
+
+        // Tolak overlap: unit yang sudah ada di draft koreksi lain.
+        $overlap = DocSerialHppCorrectionDetail::query()
+            ->whereIn('serial_unit_id', $serialUnits->pluck('id'))
+            ->whereHas('correction', fn ($q) => $q->where('status', 'draft'))
+            ->when($excludeCorrectionId, fn ($q) => $q->where('correction_id', '!=', $excludeCorrectionId))
+            ->exists();
+        if ($overlap) {
+            throw ValidationException::withMessages([
+                'units' => ['Sebagian unit sudah ada di draft Koreksi HPP Serial lain.'],
+            ]);
         }
 
         return [$product, $serialUnits];
@@ -73,7 +90,7 @@ trait HandlesHppCorrectionUnits
             $lain = (float) ($u['biaya_lain_baru'] ?? 0);
             $dpp = $modal + $kirim + $lain;
             $pajak = $included ? round($dpp * $percent / 100, 2) : 0.0;
-            $landed = $dpp + $pajak;
+            $landed = round($dpp + $pajak, 2);
 
             DocSerialHppCorrectionDetail::create([
                 'correction_id' => $correction->id,

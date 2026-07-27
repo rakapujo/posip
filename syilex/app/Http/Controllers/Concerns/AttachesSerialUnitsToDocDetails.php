@@ -35,10 +35,10 @@ trait AttachesSerialUnitsToDocDetails
         $units = $ulids->isEmpty()
             ? collect()
             : SerialUnit::whereIn('ulid', $ulids)
-                ->get(['ulid', 'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'account_status', 'catatan', 'status'])
+                ->get(['ulid', 'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status', 'catatan', 'status'])
                 ->keyBy('ulid');
 
-        $fields = ['kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'account_status', 'catatan', 'status'];
+        $fields = ['kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status', 'catatan', 'status'];
 
         foreach ($details as $d) {
             $fateMap = $fateField ? ($d->{$fateField} ?? []) : [];

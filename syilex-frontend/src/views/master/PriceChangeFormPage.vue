@@ -651,17 +651,15 @@ const summary = computed(() => {
 <template>
     <div class="card">
         <!-- Header -->
-        <div class="flex items-center justify-between mb-6">
-            <div class="flex items-center gap-3">
-                <Button icon="pi pi-arrow-left" text rounded @click="goBack" v-tooltip.top="'Kembali'" aria-label="Kembali" />
-                <span class="text-xl font-semibold">{{ pageTitle }}</span>
-                <Tag v-if="originalData" :value="originalData.nomor_dokumen" severity="info" />
-                <Tag v-if="isAutoMode" value="Auto Mode" severity="secondary" class="ml-2" />
-                <Tag v-else value="Manual Mode" severity="warn" class="ml-2" />
-            </div>
-            <div class="flex gap-2">
-                <Button v-if="isEdit && canApprovePerm" label="Approve" icon="pi pi-check" severity="success" :loading="approving" @click="confirmApprove" />
-                <Button label="Simpan" icon="pi pi-save" :loading="saving" @click="save" />
+        <div class="flex items-center gap-4 mb-6">
+            <Button icon="pi pi-arrow-left" severity="secondary" text rounded @click="goBack" />
+            <div>
+                <h2 class="text-2xl font-semibold m-0">{{ pageTitle }}</h2>
+                <div class="flex flex-wrap items-center gap-2 mt-1">
+                    <Tag v-if="originalData" :value="originalData.nomor_dokumen" severity="info" />
+                    <Tag v-if="isAutoMode" value="Auto Mode" severity="secondary" />
+                    <Tag v-else value="Manual Mode" severity="warn" />
+                </div>
             </div>
         </div>
 
@@ -937,6 +935,12 @@ const summary = computed(() => {
                         </template>
                     </Column>
                 </DataTable>
+            </div>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <Button label="Batal" severity="secondary" outlined @click="goBack" :disabled="saving || approving" />
+                <Button v-if="isEdit && canApprovePerm" label="Approve" icon="pi pi-check" severity="success" :loading="approving" @click="confirmApprove" />
+                <Button label="Simpan" icon="pi pi-save" :loading="saving" @click="save" />
             </div>
         </div>
     </div>

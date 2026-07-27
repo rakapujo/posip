@@ -109,7 +109,18 @@ export const purchaseReturnsApi = {
      * @param {string} poUlid - PO ULID
      * @returns {Promise}
      */
-    getReturnableDetails: (poUlid) => client.get(`/purchase-returns/po/${poUlid}/returnable-details`)
+    getReturnableDetails: (poUlid) => client.get(`/purchase-returns/po/${poUlid}/returnable-details`),
+
+    /**
+     * List approved PBS for cascade (supplier + warehouse)
+     */
+    listSerialIntakes: (params = {}) => client.get('/purchase-returns/serial-intakes/list', { params }),
+
+    /**
+     * Returnable units from a PBS
+     */
+    getSerialIntakeReturnable: (intakeUlid) =>
+        client.get(`/purchase-returns/serial-intake/${intakeUlid}/returnable-units`)
 };
 
 export default purchaseReturnsApi;

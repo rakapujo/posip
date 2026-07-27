@@ -5,12 +5,15 @@ import { useFormatters } from '@/composables/useFormatters';
 import { useReportList } from '@/composables/useReportList';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 const { formatQty, formatCurrency, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
 const canExport = computed(() => authStore.can('laporan.export'));
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 
 const canViewHarga = ref(false);
 const selectedSupplier = ref(null);
@@ -18,11 +21,14 @@ const selectedWarehouse = ref(null);
 const selectedBrand = ref(null);
 const selectedKategori = ref(null);
 const selectedSource = ref(null);
-const sourceOptions = [
-    { label: 'Semua Sumber', value: null },
-    { label: 'Purchase Order', value: 'po' },
-    { label: 'Serial', value: 'serial' }
-];
+const sourceOptions = computed(() => {
+    const opts = [
+        { label: 'Semua Sumber', value: null },
+        { label: 'Purchase Order', value: 'po' }
+    ];
+    if (serialEnabled.value) opts.push({ label: 'Serial', value: 'serial' });
+    return opts;
+});
 
 const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, lazyParams, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams } = useReportList({
     fetchList: (params) => purchaseReportApi.getHargaTerakhir(params),
@@ -125,9 +131,9 @@ async function exportPdf() {
 
         <!-- Summary Card -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Total Produk</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.total_produk }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.total_produk }}</div>
             </div>
         </div>
 

@@ -226,25 +226,27 @@ export async function connectUsb(nav) {
 
 /**
  * @param {PrinterKind} kind
- * @param {Navigator} nav
+ * @param {Navigator} [nav]
  * @returns {Promise<PrinterConnection>}
  */
 export async function connectByKind(kind, nav) {
-    if (kind === 'bluetooth') return connectBluetooth(nav);
-    if (kind === 'serial') return connectSerial(nav);
-    return connectUsb(nav);
+    const n = navDevices(nav);
+    if (kind === 'bluetooth') return connectBluetooth(n);
+    if (kind === 'serial') return connectSerial(n);
+    return connectUsb(n);
 }
 
 /**
  * @param {PrinterKind | null} kind
- * @param {Navigator} nav
+ * @param {Navigator} [nav]
  * @returns {Promise<PrinterConnection | null>}
  */
 export async function trySilentReconnect(kind, nav) {
     if (active) return active;
+    const n = navDevices(nav);
     try {
-        if (kind === 'serial' && nav.serial?.getPorts) {
-            const ports = await nav.serial.getPorts();
+        if (kind === 'serial' && n.serial?.getPorts) {
+            const ports = await n.serial.getPorts();
             if (ports.length) {
                 try {
                     await ports[0].open({ baudRate: 9600 });
@@ -255,15 +257,15 @@ export async function trySilentReconnect(kind, nav) {
                 return active;
             }
         }
-        if (kind === 'bluetooth' && nav.bluetooth?.getDevices) {
-            const devices = await nav.bluetooth.getDevices();
+        if (kind === 'bluetooth' && n.bluetooth?.getDevices) {
+            const devices = await n.bluetooth.getDevices();
             if (devices.length) {
                 active = await bluetoothConnFromDevice(devices[0]);
                 return active;
             }
         }
-        if (kind === 'usb' && nav.usb?.getDevices) {
-            const devices = await nav.usb.getDevices();
+        if (kind === 'usb' && n.usb?.getDevices) {
+            const devices = await n.usb.getDevices();
             if (devices.length) {
                 active = await usbConnFromDevice(devices[0]);
                 return active;

@@ -321,4 +321,71 @@ class HppCorrectionCrudTest extends TestCase
             ->where('transaction_type', 'HPP_CORRECTION')->count());
         $this->assertEquals(15000, $this->product->fresh()->avg_cost);
     }
+
+    /**
+     * Approve noop (hpp_baru == current) → dokumen approved, tanpa kartu HPP_CORRECTION.
+     */
+    #[Test]
+    public function approve_noop_tidak_mencatat_stock_card()
+    {
+        $correction = $this->createAction->execute($this->baseData(10000)); // sama dengan current
+        $this->approveAction->execute($correction);
+
+        $this->assertSame('approved', $correction->fresh()->status);
+        $this->assertSame(0, StockCard::where('transaction_id', $correction->id)
+            ->where('transaction_type', 'HPP_CORRECTION')->count());
+        $this->assertEquals(10000, $this->product->fresh()->avg_cost);
+    }
+
+    /**
+     * Produk di-flip serial setelah draft → approve 422.
+     */
+    #[Test]
+    public function approve_tolak_jika_produk_jadi_serial_setelah_draft()
+    {
+        $correction = $this->createAction->execute($this->baseData(15000));
+        $this->product->update(['is_serial' => true]);
+
+        try {
+            $this->approveAction->execute($correction->fresh());
+            $this->fail('Approve produk serial seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('details', $e->errors());
+        }
+
+        $this->assertSame('draft', $correction->fresh()->status);
+        $this->assertEquals(10000, $this->product->fresh()->avg_cost);
+        $this->assertSame(0, StockCard::where('transaction_id', $correction->id)->count());
+    }
+
+    /**
+     * Update dengan product_id serial ditolak.
+     */
+    #[Test]
+    public function update_hpp_correction_menolak_produk_serial()
+    {
+        $correction = $this->createAction->execute($this->baseData(12000));
+        $serial = MasterProduk::factory()->create([
+            'nama_produk' => 'Serial Update',
+            'avg_cost' => 7000,
+            'is_serial' => true,
+            'status' => 'active',
+        ]);
+
+        $update = new \App\Actions\HppCorrection\UpdateHppCorrectionAction();
+
+        try {
+            $update->execute($correction, [
+                'tanggal_koreksi' => '2026-04-12 10:00:00',
+                'details' => [[
+                    'product_id' => $serial->id,
+                    'hpp_baru' => 9000,
+                    'alasan' => 'KOREKSI_DATA',
+                ]],
+            ]);
+            $this->fail('Update dengan produk serial seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('details', $e->errors());
+        }
+    }
 }

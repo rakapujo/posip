@@ -2,6 +2,8 @@
 
 namespace App\Actions\Sales;
 
+use App\Actions\Concerns\RequiresAuthenticatedUser;
+use App\Actions\Sales\Concerns\RevertsSerialUnits;
 use App\Models\DocSales;
 use App\Models\DocSalesReturn;
 use App\Models\DocSalesReturnDetail;
@@ -14,8 +16,6 @@ use App\Services\SettingService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use App\Actions\Concerns\RequiresAuthenticatedUser;
-use App\Actions\Sales\Concerns\RevertsSerialUnits;
 
 class ProcessSalesReturnAction
 {
@@ -25,8 +25,7 @@ class ProcessSalesReturnAction
     /**
      * Process a sales return.
      *
-     * @param array $data Validated return data
-     * @return DocSalesReturn
+     * @param  array  $data  Validated return data
      */
     public function execute(array $data): DocSalesReturn
     {
@@ -35,9 +34,9 @@ class ProcessSalesReturnAction
         $sales = DocSales::with('details.returnDetails')->findOrFail($data['sales_id']);
 
         // Validate: sales must be completed
-        if (!$sales->isCompleted()) {
+        if ($sales->source !== 'pos' || ! $sales->isCompleted()) {
             throw ValidationException::withMessages([
-                'sales_id' => ['Transaksi asal sudah di-void, tidak dapat diretur.'],
+                'sales_id' => ['Hanya transaksi POS completed yang dapat diretur.'],
             ]);
         }
 
@@ -46,7 +45,7 @@ class ProcessSalesReturnAction
         $errors = [];
 
         // Produk serial mana saja (untuk validasi SN)
-        $serialMap = MasterProduk::whereIn('id', array_column($returnItems, 'product_id'))
+        $serialMap = MasterProduk::whereIn('id', $sales->details->pluck('product_id'))
             ->pluck('is_serial', 'id');
 
         foreach ($returnItems as $i => $item) {
@@ -56,22 +55,25 @@ class ProcessSalesReturnAction
             }
 
             $salesDetail = $sales->details->firstWhere('id', $item['sales_detail_id']);
-            if (!$salesDetail) {
+            if (! $salesDetail) {
                 $errors[] = "Detail penjualan #{$item['sales_detail_id']} tidak ditemukan.";
+
                 continue;
             }
+
+            $returnItems[$i]['product_id'] = $salesDetail->product_id;
 
             // Calculate total already returned for this detail (in base unit)
             $totalReturnedBase = (float) $salesDetail->returnDetails->sum('qty_base');
             $maxReturnableBase = (float) $salesDetail->qty_base - $totalReturnedBase;
 
             if ($qty > $maxReturnableBase) {
-                $product = MasterProduk::find($item['product_id']);
+                $product = MasterProduk::find($salesDetail->product_id);
                 $errors[] = "Qty retur {$product->nama_produk} melebihi batas. Max: {$maxReturnableBase} PCS.";
             }
 
             // Produk serial: wajib pilih SN, jumlah SN harus sama dengan qty retur
-            if ($serialMap[$item['product_id']] ?? false) {
+            if ($serialMap[$salesDetail->product_id] ?? false) {
                 $snCount = is_array($item['serial_unit_ids'] ?? null) ? count($item['serial_unit_ids']) : 0;
                 if ($snCount < 1) {
                     $errors[] = 'Produk serial wajib memilih nomor seri (SN) yang diretur.';
@@ -81,7 +83,7 @@ class ProcessSalesReturnAction
             }
         }
 
-        if (!empty($errors)) {
+        if (! empty($errors)) {
             throw ValidationException::withMessages(['items' => $errors]);
         }
 
@@ -95,16 +97,40 @@ class ProcessSalesReturnAction
         }
 
         return DB::transaction(function () use ($data, $sales, $returnItems) {
-            $warehouseId = $data['warehouse_id'];
+            $sales = DocSales::whereKey($sales->id)->lockForUpdate()->firstOrFail();
+            $sales->load('details.returnDetails');
+            if ($sales->source !== 'pos' || ! $sales->isCompleted()) {
+                throw ValidationException::withMessages([
+                    'sales_id' => ['Hanya transaksi POS completed yang dapat diretur.'],
+                ]);
+            }
+            foreach ($returnItems as $item) {
+                $detail = $sales->details->firstWhere('id', $item['sales_detail_id']);
+                $available = $detail
+                    ? (float) $detail->qty_base - (float) $detail->returnDetails->sum('qty_base')
+                    : 0;
+                if (! $detail || (float) $item['qty'] > $available) {
+                    throw ValidationException::withMessages([
+                        'items' => ['Qty retur melebihi sisa yang dapat diretur.'],
+                    ]);
+                }
+            }
+
+            $warehouseId = $sales->warehouse_id;
             $productIds = array_column($returnItems, 'product_id');
 
             // Re-lock shift row untuk prevent race: admin force-release antara controller
             // cek isActive() dan commit di sini. Tanpa lock, retur bisa ter-commit ke shift
             // yang sudah ditutup (silent data drift di laporan shift + kas retur).
             $shift = PosTerminalShift::where('id', $data['shift_id'])->lockForUpdate()->first();
-            if (!$shift || $shift->ended_at !== null) {
+            if (! $shift || $shift->ended_at !== null) {
                 throw ValidationException::withMessages([
                     'shift' => ['Shift sudah ditutup. Silakan refresh halaman dan mulai shift baru.'],
+                ]);
+            }
+            if ($shift->user_id !== auth()->id()) {
+                throw ValidationException::withMessages([
+                    'shift' => ['Anda tidak memiliki akses ke shift ini.'],
                 ]);
             }
 
@@ -136,6 +162,7 @@ class ProcessSalesReturnAction
                     $qtyBase = (float) $detail->qty_base;
                     $item['harga_per_base'] = $qtyBase > 0 ? $totalPembelian / $qtyBase : 0;
                 }
+
                 return $item;
             }, $returnItems);
 
@@ -159,6 +186,7 @@ class ProcessSalesReturnAction
             // The subtotal here equals sum of prorated values (tax already included)
             $salesReturn = DocSalesReturn::create([
                 'nomor_dokumen' => $nomorDokumen,
+                'source' => 'pos',
                 'tanggal' => now(),
                 'sales_id' => $sales->id,
                 'terminal_id' => $data['terminal_id'],
@@ -172,6 +200,9 @@ class ProcessSalesReturnAction
                 'pembulatan' => $pembulatan,
                 'grand_total' => $grandTotal,
                 'refund_method' => $data['refund_method'],
+                'status' => 'approved',
+                'approved_at' => now(),
+                'approved_by' => Auth::id(),
                 'notes' => $data['notes'] ?? null,
                 'created_by' => Auth::id(),
             ]);
@@ -190,7 +221,7 @@ class ProcessSalesReturnAction
                     $product = $products[$item['product_id']];
                     $currentStock = $runningStocks[$item['product_id']] ?? 0;
                     $hppBefore = (float) $product->avg_cost;
-                    $isSerial = (bool) $product->is_serial && !empty($item['serial_unit_ids']);
+                    $isSerial = (bool) $product->is_serial && ! empty($item['serial_unit_ids']);
 
                     $baseUnit = $product->unit_1 ?? 'PCS';
                     $qty = (float) $item['qty'];
@@ -284,7 +315,7 @@ class ProcessSalesReturnAction
             PosCashTransaction::create([
                 'terminal_id' => $data['terminal_id'],
                 'shift_id' => $data['shift_id'],
-                'tipe' => 'kas_keluar',
+                'tipe' => 'refund_retur',
                 'nominal' => $grandTotal,
                 'keterangan' => "Refund retur {$nomorDokumen}",
                 'created_by' => Auth::id(),

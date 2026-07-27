@@ -220,6 +220,7 @@ class MasterDownstreamGuardTest extends TestCase
                     'grade' => 'A',
                     'battery_condition' => 'Original',
                     'battery_health' => 90,
+                    'battery_cycle_count' => 100,
                     'account_status' => 'unlocked',
                 ]],
             ])

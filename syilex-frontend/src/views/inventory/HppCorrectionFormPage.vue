@@ -16,6 +16,7 @@ const { formatCurrency, shouldUppercase, getPrimeDateFormatShort, toDateTimeStri
 
 // Permissions
 const canApprove = computed(() => authStore.can('hpp.approve'));
+const canViewHpp = computed(() => authStore.can('stok.view_hpp'));
 
 // Mode
 const isEdit = computed(() => !!route.params.ulid);
@@ -196,8 +197,8 @@ function validate() {
             errors.value[`details.${index}.product_id`] = 'Produk wajib dipilih';
             isValid = false;
         }
-        if (!detail.hpp_baru || detail.hpp_baru <= 0) {
-            errors.value[`details.${index}.hpp_baru`] = 'HPP Baru harus lebih dari 0';
+        if (detail.hpp_baru == null || detail.hpp_baru < 0) {
+            errors.value[`details.${index}.hpp_baru`] = 'HPP Baru tidak boleh negatif';
             isValid = false;
         }
         if (!detail.alasan) {
@@ -326,15 +327,13 @@ const summary = computed(() => {
 <template>
     <div class="card">
         <!-- Header -->
-        <div class="flex items-center justify-between mb-6">
-            <div class="flex items-center gap-3">
-                <Button icon="pi pi-arrow-left" text rounded @click="goBack" v-tooltip.top="'Kembali'" aria-label="Kembali" />
-                <span class="text-xl font-semibold">{{ pageTitle }}</span>
-                <Tag v-if="originalData" :value="originalData.nomor_dokumen" severity="info" />
-            </div>
-            <div class="flex gap-2">
-                <Button v-if="isEdit && canApprove" label="Approve" icon="pi pi-check" severity="success" :loading="approving" @click="confirmApprove" />
-                <Button label="Simpan" icon="pi pi-save" :loading="saving" @click="save" />
+        <div class="flex items-center gap-4 mb-6">
+            <Button icon="pi pi-arrow-left" severity="secondary" text rounded @click="goBack" />
+            <div>
+                <h2 class="text-2xl font-semibold m-0">{{ pageTitle }}</h2>
+                <div v-if="originalData" class="flex flex-wrap items-center gap-2 mt-1">
+                    <Tag :value="originalData.nomor_dokumen" severity="info" />
+                </div>
             </div>
         </div>
 
@@ -343,6 +342,10 @@ const summary = computed(() => {
         </div>
 
         <div v-else>
+            <Message severity="info" :closable="false" class="mb-4">
+                Saat <b>approve</b>, HPP master (<code>avg_cost</code>) diganti ke nilai HPP Baru dan disinkron ke semua gudang. Pastikan angka sudah final sebelum menyetujui.
+            </Message>
+
             <!-- Form Header -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div class="flex flex-col gap-2">
@@ -367,7 +370,7 @@ const summary = computed(() => {
                 <small v-if="errors.details" class="text-red-500 block mb-4">{{ errors.details }}</small>
 
                 <!-- Summary -->
-                <div v-if="form.details.length > 0" class="flex flex-wrap gap-4 mb-4 text-sm">
+                <div v-if="canViewHpp && form.details.length > 0" class="flex flex-wrap gap-4 mb-4 text-sm">
                     <span
                         >Total: <strong>{{ summary.total }}</strong> produk</span
                     >
@@ -404,7 +407,7 @@ const summary = computed(() => {
                                     <div class="flex flex-col">
                                         <span class="font-medium">{{ option.kode_produk }}</span>
                                         <span class="text-sm text-surface-500">{{ option.nama_produk }}</span>
-                                        <span class="text-xs text-surface-400">HPP: {{ formatCurrency(option.avg_cost) }}</span>
+                                        <span class="text-xs text-surface-400" v-if="canViewHpp">HPP: {{ formatCurrency(option.avg_cost) }}</span>
                                     </div>
                                 </template>
                             </AutoComplete>
@@ -414,7 +417,7 @@ const summary = computed(() => {
                         </template>
                     </Column>
 
-                    <Column header="HPP Lama" style="width: 130px" bodyClass="text-right">
+                    <Column v-if="canViewHpp" header="HPP Lama" style="width: 130px" bodyClass="text-right">
                         <template #body="{ data }">
                             <span class="text-surface-600">{{ formatCurrency(data.hpp_lama) }}</span>
                         </template>
@@ -425,7 +428,7 @@ const summary = computed(() => {
                             <InputNumber
                                 v-select-on-focus
                                 v-model="data.hpp_baru"
-                                :min="0.0001"
+                                :min="0"
                                 :prefix="currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
                                 :suffix="currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
                                 :locale="getLocale"
@@ -437,7 +440,7 @@ const summary = computed(() => {
                         </template>
                     </Column>
 
-                    <Column header="Selisih" style="width: 120px" bodyClass="text-right">
+                    <Column v-if="canViewHpp" header="Selisih" style="width: 120px" bodyClass="text-right">
                         <template #body="{ data }">
                             <span :class="getDifferenceClass(calculateDifference(data))">
                                 {{ formatDifference(calculateDifference(data)) }}
@@ -469,6 +472,12 @@ const summary = computed(() => {
                         </template>
                     </Column>
                 </DataTable>
+            </div>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <Button label="Batal" severity="secondary" outlined @click="goBack" :disabled="saving || approving" />
+                <Button v-if="isEdit && canApprove" label="Approve" icon="pi pi-check" severity="success" :loading="approving" @click="confirmApprove" />
+                <Button label="Simpan" icon="pi pi-save" :loading="saving" @click="save" />
             </div>
         </div>
     </div>

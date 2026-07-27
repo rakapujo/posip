@@ -62,7 +62,7 @@ const props = defineProps({
      */
     searchWidth: {
         type: String,
-        default: 'w-72'
+        default: 'w-full max-w-full sm:w-72'
     }
 });
 
@@ -105,16 +105,20 @@ function onClear() {
 </script>
 
 <template>
-    <div class="flex flex-wrap gap-2 items-center justify-between">
-        <h4 class="m-0">{{ title }}</h4>
+    <!-- Title left; search + actions grouped right (justify-between on 3 siblings was spreading them) -->
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between w-full">
+        <h4 class="m-0 shrink-0">{{ title }}</h4>
 
-        <IconField v-if="showSearch">
-            <InputIcon class="pi pi-search" />
-            <InputText :modelValue="modelValue" :placeholder="placeholder" :class="searchWidth" autocomplete="off" @update:modelValue="onInput" @keyup.enter="onSearch" />
-            <InputIcon v-if="modelValue" class="pi pi-times cursor-pointer hover:!text-surface-600" @click="onClear" />
-        </IconField>
+        <div class="flex flex-wrap gap-2 items-center min-w-0 w-full sm:w-auto sm:justify-end">
+            <IconField v-if="showSearch" class="w-full sm:w-auto min-w-0 grow sm:grow-0">
+                <InputIcon class="pi pi-search" />
+                <InputText :modelValue="modelValue" :placeholder="placeholder" :class="searchWidth" autocomplete="off" @update:modelValue="onInput" @keyup.enter="onSearch" />
+                <InputIcon v-if="modelValue" class="pi pi-times cursor-pointer hover:!text-surface-600" @click="onClear" />
+            </IconField>
 
-        <!-- Slot for additional content (e.g., extra buttons) -->
-        <slot name="extra"></slot>
+            <div v-if="$slots.extra" class="flex gap-2 shrink-0">
+                <slot name="extra"></slot>
+            </div>
+        </div>
     </div>
 </template>

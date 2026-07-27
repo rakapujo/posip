@@ -258,12 +258,13 @@ export function useNotification() {
 
     /**
      * Show form invalid error
+     * @param {string} [detail]
      */
-    function formInvalid() {
+    function formInvalid(detail = 'Periksa kembali form Anda') {
         toast.add({
             severity: 'error',
             summary: 'Validasi Gagal',
-            detail: 'Periksa kembali form Anda',
+            detail,
             life: LIFE.DEFAULT
         });
     }

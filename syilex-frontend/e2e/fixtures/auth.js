@@ -1,4 +1,5 @@
 import { test as base, expect } from '@playwright/test';
+import { getAuthData, injectAuth } from '../helpers/auth.js';
 
 /**
  * Extended test fixture with authenticated page.
@@ -7,38 +8,15 @@ import { test as base, expect } from '@playwright/test';
  *   import { test, expect } from './fixtures/auth';
  *   test('something', async ({ authedPage }) => { ... });
  *
- * `authedPage` is a Playwright Page that already has:
- *   - localStorage token, user, permissions set
- *   - Ready to navigate to any authenticated route
+ * Reuses shared login cache — tidak login ulang per test.
  */
 export const test = base.extend({
-    authedPage: async ({ page, baseURL }, use) => {
-        // Login via API to get token
-        const apiURL = baseURL + '/api/v1';
-        const response = await page.request.post(`${apiURL}/auth/login`, {
-            data: {
-                email: 'admin@posip.com',
-                password: 'password'
-            }
-        });
-
-        expect(response.ok()).toBeTruthy();
-        const body = await response.json();
-        const { token, user, permissions } = body.data || body;
-
-        // Inject auth state into browser localStorage BEFORE navigating
-        await page.goto(baseURL);
-        await page.evaluate(
-            ({ token, user, permissions }) => {
-                localStorage.setItem('token', token);
-                localStorage.setItem('user', JSON.stringify(user));
-                localStorage.setItem('permissions', JSON.stringify(permissions || []));
-            },
-            { token, user, permissions }
-        );
-
+    authedPage: async ({ page, request }, use) => {
+        const auth = await getAuthData(request);
+        await injectAuth(page, auth);
         await use(page);
     }
 });
 
 export { expect } from '@playwright/test';
+export { getAuthData, injectAuth, authHeaders, laravelApiBase, clearAuthCache } from '../helpers/auth.js';

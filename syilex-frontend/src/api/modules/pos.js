@@ -61,7 +61,7 @@ export const posApi = {
      * @param {Array} data.payments - Payment methods
      * @returns {Promise}
      */
-    checkout: (data) => client.post('/pos/checkout', data),
+    checkout: (data, config = {}) => client.post('/pos/checkout', data, config),
 
     /**
      * Get sales history for current shift
@@ -78,6 +78,16 @@ export const posApi = {
      * @returns {Promise}
      */
     getSales: (ulid) => client.get(`/pos/sales/${ulid}`),
+
+    /**
+     * Email a POS receipt PDF.
+     * @param {string} ulid
+     * @param {FormData} formData
+     * @returns {Promise}
+     */
+    emailReceipt: (ulid, formData) => client.post(`/pos/sales/${ulid}/email-receipt`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    }),
 
     /**
      * Void a sales transaction

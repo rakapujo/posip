@@ -35,12 +35,19 @@ class IdempotencyKey
     /** Header name untuk idempotency key. */
     public const HEADER_NAME = 'Idempotency-Key';
 
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, ?string $mode = null): Response
     {
         $key = $request->header(self::HEADER_NAME);
 
-        // Tidak ada header → skip middleware (backward compatible untuk legacy client).
+        // Tidak ada header → skip (legacy) kecuali mode=required (POS checkout).
         if (!$key) {
+            if ($mode === 'required') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Header Idempotency-Key wajib untuk mencegah double submit.',
+                ], 400);
+            }
+
             return $next($request);
         }
 

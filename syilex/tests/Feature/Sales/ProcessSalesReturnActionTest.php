@@ -13,30 +13,38 @@ use App\Models\MasterMetodePembayaran;
 use App\Models\MasterPosTerminal;
 use App\Models\MasterProduk;
 use App\Models\MasterWarehouse;
+use App\Models\PosCashTransaction;
 use App\Models\PosTerminalShift;
 use App\Models\StockCard;
 use App\Models\User;
 use App\Services\SettingService;
-use App\Models\PosCashTransaction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class ProcessSalesReturnActionTest extends TestCase
 {
     use RefreshDatabase;
 
     protected User $user;
+
     protected MasterWarehouse $warehouse;
+
     protected MasterPosTerminal $terminal;
+
     protected PosTerminalShift $shift;
+
     protected MasterCustomer $customer;
+
     protected MasterMetodePembayaran $cashPayment;
+
     protected MasterProduk $product;
+
     protected CheckoutSalesAction $checkoutAction;
+
     protected ProcessSalesReturnAction $returnAction;
 
     protected function setUp(): void
@@ -84,6 +92,7 @@ class ProcessSalesReturnActionTest extends TestCase
             'status' => 'active',
             'created_by' => $this->user->id,
         ]);
+        $this->terminal->allowedPaymentMethods()->attach([$this->cashPayment->id]);
 
         $this->shift = PosTerminalShift::create([
             'ulid' => (string) Str::ulid(),
@@ -96,7 +105,6 @@ class ProcessSalesReturnActionTest extends TestCase
             'nama_produk' => 'Test Product',
             'avg_cost' => 5000,
             'harga_4' => 10000,
-            'unit_1' => 'PCS',
             'unit_4' => 'PCS',
             'konversi_4' => 1,
             'status' => 'active',
@@ -115,8 +123,8 @@ class ProcessSalesReturnActionTest extends TestCase
         ]);
         StockCard::$skipObserver = false;
 
-        $this->checkoutAction = new CheckoutSalesAction();
-        $this->returnAction = new ProcessSalesReturnAction();
+        $this->checkoutAction = new CheckoutSalesAction;
+        $this->returnAction = new ProcessSalesReturnAction;
     }
 
     private function doCheckout(int $qty = 5, float $harga = 10000): DocSales
@@ -160,6 +168,7 @@ class ProcessSalesReturnActionTest extends TestCase
             ]],
         ];
     }
+
     #[Test]
     public function process_return_creates_sales_return_document()
     {
@@ -172,7 +181,10 @@ class ProcessSalesReturnActionTest extends TestCase
         $this->assertStringStartsWith('RPJ-', $salesReturn->nomor_dokumen);
         $this->assertEquals(20000, $salesReturn->grand_total, '2 × 10000 = 20000');
         $this->assertEquals('cash', $salesReturn->refund_method);
+        $this->assertSame('pos', $salesReturn->source);
+        $this->assertSame('approved', $salesReturn->status);
     }
+
     #[Test]
     public function process_return_restores_stock()
     {
@@ -185,6 +197,7 @@ class ProcessSalesReturnActionTest extends TestCase
         $stock = InventoryStock::where('product_id', $this->product->id)->first();
         $this->assertEquals(97, $stock->qty);
     }
+
     #[Test]
     public function process_return_creates_sales_return_stock_card()
     {
@@ -200,6 +213,7 @@ class ProcessSalesReturnActionTest extends TestCase
         $this->assertEquals(3, $returnEntry->qty_in);
         $this->assertEquals(0, $returnEntry->qty_out);
     }
+
     #[Test]
     public function process_return_throws_when_qty_exceeds_max_returnable()
     {
@@ -209,17 +223,19 @@ class ProcessSalesReturnActionTest extends TestCase
         $this->expectException(ValidationException::class);
         $this->returnAction->execute($this->buildReturnData($sales, 10));
     }
+
     #[Test]
     public function process_return_throws_when_sales_already_voided()
     {
         $sales = $this->doCheckout(5);
 
         // Void first
-        (new VoidSalesAction())->execute($sales->fresh(), 'cancelled');
+        (new VoidSalesAction)->execute($sales->fresh(), 'cancelled');
 
         $this->expectException(ValidationException::class);
         $this->returnAction->execute($this->buildReturnData($sales, 2));
     }
+
     #[Test]
     public function process_return_allows_partial_return_then_tracks_remainder()
     {
@@ -324,11 +340,8 @@ class ProcessSalesReturnActionTest extends TestCase
     }
 
     /**
-
-     * Retur membuat refund kas (PosCashTransaction kas_keluar) sebesar grand_total
-
+     * Retur membuat refund kas (PosCashTransaction tipe=refund_retur) sebesar grand_total
      */
-
     #[Test]
     public function retur_membuat_refund_kas_keluar_eksak()
     {
@@ -337,25 +350,22 @@ class ProcessSalesReturnActionTest extends TestCase
         $salesReturn = $this->returnAction->execute($this->buildReturnData($sales, 3));
 
         $kas = PosCashTransaction::where('shift_id', $this->shift->id)
-            ->where('tipe', 'kas_keluar')->get();
+            ->where('tipe', 'refund_retur')->get();
 
-        $this->assertEquals(1, $kas->count(), 'Harus ada satu transaksi kas_keluar');
+        $this->assertEquals(1, $kas->count(), 'Harus ada satu transaksi refund_retur');
         $this->assertEquals(30000, (float) $kas->first()->nominal, 'Refund = grand_total retur (3 × 10000)');
         $this->assertEquals(30000, $salesReturn->grand_total);
         $this->assertStringContainsString($salesReturn->nomor_dokumen, $kas->first()->keterangan);
     }
 
     /**
-
      * Retur dari nota voided ditolak dengan error key sales_id + tak ada dokumen retur
-
      */
-
     #[Test]
     public function retur_dari_nota_voided_ditolak()
     {
         $sales = $this->doCheckout(5);
-        (new VoidSalesAction())->execute($sales->fresh(), 'Void dulu');
+        (new VoidSalesAction)->execute($sales->fresh(), 'Void dulu');
 
         try {
             $this->returnAction->execute($this->buildReturnData($sales, 2));
@@ -366,15 +376,12 @@ class ProcessSalesReturnActionTest extends TestCase
 
         $this->assertEquals(0, DocSalesReturn::count(), 'Tidak ada dokumen retur tersimpan');
         // Tidak ada refund kas
-        $this->assertEquals(0, PosCashTransaction::where('tipe', 'kas_keluar')->count());
+        $this->assertEquals(0, PosCashTransaction::where('tipe', 'refund_retur')->count());
     }
 
     /**
-
      * Qty retur melebihi max → ditolak + stok & dokumen tidak berubah
-
      */
-
     #[Test]
     public function retur_qty_berlebih_ditolak_tanpa_efek_samping()
     {
@@ -391,22 +398,19 @@ class ProcessSalesReturnActionTest extends TestCase
         // Tidak ada dokumen retur, stok tetap 95, tak ada refund
         $this->assertEquals(0, DocSalesReturn::count());
         $this->assertEquals(95, InventoryStock::where('product_id', $this->product->id)->first()->qty);
-        $this->assertEquals(0, PosCashTransaction::where('tipe', 'kas_keluar')->count());
+        $this->assertEquals(0, PosCashTransaction::where('tipe', 'refund_retur')->count());
     }
 
     /**
-
      * Retur multi-line (dua produk) → stok masing-masing pulih + invarian konsisten
-
      */
-
     #[Test]
     public function retur_multi_line_dua_produk_stok_pulih()
     {
         // Produk kedua
         $product2 = MasterProduk::factory()->create([
             'nama_produk' => 'Produk Dua', 'avg_cost' => 3000,
-            'harga_4' => 8000, 'unit_1' => 'PCS', 'unit_4' => 'PCS', 'konversi_4' => 1, 'status' => 'active',
+            'harga_4' => 8000, 'unit_4' => 'PCS', 'konversi_4' => 1, 'status' => 'active',
         ]);
         StockCard::$skipObserver = true;
         InventoryStock::updateOrCreate(
@@ -479,11 +483,8 @@ class ProcessSalesReturnActionTest extends TestCase
     }
 
     /**
-
      * Retur menyimpan hpp_at_time dari sales (untuk valuasi) + stock_card SALES_RETURN konsisten
-
      */
-
     #[Test]
     public function retur_menyimpan_hpp_dan_invarian_konsisten()
     {

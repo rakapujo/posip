@@ -2,6 +2,7 @@
 
 namespace App\Exports;
 
+use App\Services\ReportHelperService;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -19,6 +20,7 @@ class PurchaseDiskonExport implements FromQuery, WithHeadings, WithMapping, With
     protected ?int $supplierId;
     protected ?string $search;
     protected string $source;
+    protected string $mode;
     protected int $rowNumber = 0;
 
     public function __construct(
@@ -26,30 +28,44 @@ class PurchaseDiskonExport implements FromQuery, WithHeadings, WithMapping, With
         string $dateTo,
         ?int $supplierId = null,
         ?string $search = null,
-        ?string $source = null
+        ?string $source = null,
+        ?string $mode = null
     ) {
         $this->dateFrom = $dateFrom;
         $this->dateTo = $dateTo . ' 23:59:59';
         $this->supplierId = $supplierId;
         $this->search = $search;
         $this->source = $source ?? 'all';
+        $this->mode = $mode === 'net' ? 'net' : 'bruto';
     }
 
     public function query()
     {
+        $applyNet = $this->mode === 'net' && $this->source !== 'serial';
+
         $query = DB::query()
             ->fromSub(\App\Services\PurchaseReportSource::documents($this->dateFrom, $this->dateTo, $this->source), 'dpo')
             ->join('master_supplier as ms', 'ms.id', '=', 'dpo.supplier_id')
-            ->where('dpo.total_diskon_header', '>', 0)
-            ->select(
-                'dpo.sumber',
-                'dpo.tanggal_po', 'dpo.nomor_dokumen', 'ms.nama_supplier',
-                'dpo.subtotal',
-                'dpo.diskon_1_tipe', 'dpo.diskon_1_nilai', 'dpo.diskon_1_hasil',
-                'dpo.diskon_2_tipe', 'dpo.diskon_2_nilai', 'dpo.diskon_2_hasil',
-                'dpo.diskon_3_tipe', 'dpo.diskon_3_nilai', 'dpo.diskon_3_hasil',
-                'dpo.total_diskon_header', 'dpo.total_setelah_diskon'
+            ->where('dpo.total_diskon_header', '>', 0);
+
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnByPoSubquery($this->dateFrom, $this->dateTo),
+                'pret',
+                fn ($join) => $join->on('pret.po_id', '=', 'dpo.id')->whereRaw("dpo.sumber = 'po'")
             );
+        }
+
+        $query->select([
+            'dpo.sumber',
+            'dpo.tanggal_po', 'dpo.nomor_dokumen', 'ms.nama_supplier',
+            $applyNet ? DB::raw('GREATEST(dpo.subtotal - COALESCE(pret.ret_money, 0), 0) as subtotal') : 'dpo.subtotal',
+            'dpo.diskon_1_tipe', 'dpo.diskon_1_nilai', 'dpo.diskon_1_hasil',
+            'dpo.diskon_2_tipe', 'dpo.diskon_2_nilai', 'dpo.diskon_2_hasil',
+            'dpo.diskon_3_tipe', 'dpo.diskon_3_nilai', 'dpo.diskon_3_hasil',
+            $applyNet ? DB::raw('GREATEST(dpo.total_diskon_header - COALESCE(pret.ret_disc, 0), 0) as total_diskon_header') : 'dpo.total_diskon_header',
+            $applyNet ? DB::raw('GREATEST(dpo.total_setelah_diskon - COALESCE(pret.ret_money, 0), 0) as total_setelah_diskon') : 'dpo.total_setelah_diskon',
+        ]);
 
         if ($this->supplierId) {
             $query->where('dpo.supplier_id', $this->supplierId);

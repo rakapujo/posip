@@ -1,10 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {
-    loginViaApi,
-    snap,
-    waitForDataTable,
-    waitForDetailDialog,
-} from './docs-helpers.js';
+import { loginViaApi, snap, waitForDataTable, waitForDetailDialog } from './docs-helpers.js';
 
 test.describe('CRUD documentation screenshots', () => {
     test('capture create, edit, detail, delete dialogs', async ({ page, baseURL }) => {

@@ -8,6 +8,9 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import ImageUpload from '@/components/common/ImageUpload.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
@@ -29,7 +32,7 @@ const { exporting, exportListPdf, exportDocumentPdf } = useExportPdf();
 const canCreate = computed(() => authStore.can('produk.create'));
 const canUpdate = computed(() => authStore.can('produk.update'));
 const canDelete = computed(() => authStore.can('produk.delete'));
-const canExport = computed(() => authStore.can('laporan.export'));
+const canExport = computed(() => authStore.can('produk.view'));
 const canViewHpp = computed(() => authStore.can('stok.view_hpp'));
 
 // Unit/Price detail table columns
@@ -105,11 +108,6 @@ const isLoadingEdit = ref(false);
 const produk = ref({});
 const detailData = ref({});
 
-// Image handling
-const imageInput = ref(null);
-const imagePreview = ref(null);
-
-// Computed
 const isEdit = computed(() => !!produk.value.ulid);
 const dialogTitle = computed(() => (isEdit.value ? 'Edit Produk' : 'Tambah Produk'));
 
@@ -134,6 +132,15 @@ const statusOptions = [
 ];
 
 // Status helpers
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedBrand.value) n++;
+    if (selectedTipe.value) n++;
+    if (selectedKategori.value) n++;
+    if (selectedStatus.value) n++;
+    return n;
+});
+
 function getStatusLabel(status) {
     return status === 'active' ? 'Aktif' : 'Nonaktif';
 }
@@ -1005,14 +1012,14 @@ function initForm() {
         ulid: null,
         kode_produk: '',
         barcode: '',
-        // Modul Serial (A+): default centang (Syilex toko elektronik). Hilangkan untuk aksesoris.
-        is_serial: true,
+        // Modul Serial (A+): default centang hanya bila Modul Elektronik aktif
+        is_serial: serialEnabled.value,
         nama_produk: '',
         brand_id: null,
         tipe_id: null,
         kategori_id: null,
         grup_id: null,
-        gambar: null,
+        gambar: '',
         gambar_url: null,
         minimum_stok: 0,
         unit_1: '',
@@ -1036,7 +1043,6 @@ async function openNew() {
     produk.value = initForm();
     kategoriFormOptions.value = [];
     grupFormOptions.value = [];
-    imagePreview.value = null;
     submitted.value = false;
     produkDialog.value = true;
 
@@ -1073,11 +1079,9 @@ async function editProduk(data) {
             tipe_id: fullData.tipe?.id || null,
             kategori_id: null,
             grup_id: null,
-            gambar: null // Reset file, keep gambar_url
+            // ImageUpload eager: v-model = URL preview (atau path)
+            gambar: fullData.gambar_url || fullData.gambar || ''
         };
-
-        // Set image preview
-        imagePreview.value = fullData.gambar_url;
 
         // Load cascading dropdowns
         if (fullData.tipe?.ulid) {
@@ -1104,7 +1108,6 @@ async function editProduk(data) {
 function hideDialog() {
     produkDialog.value = false;
     submitted.value = false;
-    imagePreview.value = null;
 }
 
 // Save produk
@@ -1119,48 +1122,40 @@ async function saveProduk() {
 
     saving.value = true;
     try {
-        const formData = new FormData();
         const isSerial = !!produk.value.is_serial;
-        formData.append('kode_produk', produk.value.kode_produk);
-        formData.append('is_serial', isSerial ? '1' : '0');
-        // Barcode: produk serial discan via SN per-unit (bukan barcode produk) → tak dikirim utk serial
-        if (!isSerial) {
-            formData.append('barcode', produk.value.barcode || '');
-        }
-        formData.append('nama_produk', produk.value.nama_produk);
-        formData.append('brand_id', produk.value.brand_id || '');
-        formData.append('tipe_id', produk.value.tipe_id || '');
-        formData.append('kategori_id', produk.value.kategori_id || '');
-        formData.append('grup_id', produk.value.grup_id || '');
-        // Satuan/harga/min-stok: serial → scaffold UNIT/1/0 (tak dipakai; harga riil per-unit di register)
         const unitVal = (n) => (isSerial ? 'UNIT' : (produk.value[`unit_${n}`] || '').toUpperCase().trim());
         const konvVal = (n) => (isSerial ? 1 : produk.value[`konversi_${n}`]);
         const hargaVal = (n) => (isSerial ? 0 : produk.value[`harga_${n}`] || 0);
-        formData.append('minimum_stok', isSerial ? 0 : produk.value.minimum_stok || 0);
-        formData.append('unit_1', unitVal(1));
-        formData.append('konversi_1', konvVal(1));
-        formData.append('harga_1', hargaVal(1));
-        formData.append('unit_2', unitVal(2));
-        formData.append('konversi_2', konvVal(2));
-        formData.append('harga_2', hargaVal(2));
-        formData.append('unit_3', unitVal(3));
-        formData.append('konversi_3', konvVal(3));
-        formData.append('harga_3', hargaVal(3));
-        formData.append('unit_4', unitVal(4));
-        formData.append('konversi_4', 1);
-        formData.append('harga_4', hargaVal(4));
-        formData.append('status', produk.value.status);
 
-        if (produk.value.gambar instanceof File) {
-            formData.append('gambar', produk.value.gambar);
-        }
+        const payload = {
+            kode_produk: produk.value.kode_produk,
+            is_serial: isSerial,
+            barcode: isSerial ? null : produk.value.barcode || null,
+            nama_produk: produk.value.nama_produk,
+            brand_id: produk.value.brand_id || null,
+            tipe_id: produk.value.tipe_id || null,
+            kategori_id: produk.value.kategori_id || null,
+            grup_id: produk.value.grup_id || null,
+            gambar: produk.value.gambar || null,
+            minimum_stok: isSerial ? 0 : produk.value.minimum_stok || 0,
+            unit_1: unitVal(1),
+            konversi_1: konvVal(1),
+            harga_1: hargaVal(1),
+            unit_2: unitVal(2),
+            konversi_2: konvVal(2),
+            harga_2: hargaVal(2),
+            unit_3: unitVal(3),
+            konversi_3: konvVal(3),
+            harga_3: hargaVal(3),
+            unit_4: unitVal(4),
+            konversi_4: 1,
+            harga_4: hargaVal(4),
+            status: produk.value.status
+        };
 
-        let response;
-        if (isEdit.value) {
-            response = await produksApi.update(produk.value.ulid, formData);
-        } else {
-            response = await produksApi.create(formData);
-        }
+        const response = isEdit.value
+            ? await produksApi.update(produk.value.ulid, payload)
+            : await produksApi.create(payload);
 
         if (response.data.success) {
             notify.success(response.data.message);
@@ -1280,56 +1275,6 @@ function viewStockCard(warehouseId) {
     });
 }
 
-// ============================================
-// IMAGE HANDLING
-// ============================================
-
-function triggerImageInput() {
-    imageInput.value?.click();
-}
-
-function handleImageSelect(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-        notify.error('Format file harus JPG, PNG, atau WebP');
-        return;
-    }
-
-    // Validate file size (max 2MB)
-    const maxSizeBytes = 2 * 1024 * 1024;
-    if (file.size > maxSizeBytes) {
-        notify.fileTooLarge('2MB');
-        return;
-    }
-
-    // Set file and create preview
-    produk.value.gambar = file;
-    imagePreview.value = URL.createObjectURL(file);
-
-    // Reset input
-    event.target.value = '';
-}
-
-async function removeImage() {
-    if (isEdit.value && produk.value.gambar_url) {
-        try {
-            await produksApi.deleteImage(produk.value.ulid);
-            notify.success('Gambar berhasil dihapus');
-        } catch (error) {
-            notify.error('Gagal menghapus gambar dari server');
-            return;
-        }
-    }
-
-    produk.value.gambar = null;
-    produk.value.gambar_url = null;
-    imagePreview.value = null;
-}
-
 // On mounted - load table dulu, dropdown filter setelahnya (non-blocking)
 onMounted(async () => {
     // Load table data terlebih dahulu (prioritas)
@@ -1349,13 +1294,13 @@ onMounted(async () => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="selectedBrand" :options="brandOptions" optionLabel="label" optionValue="value" placeholder="Brand" class="w-32" filter showClear @change="onSearch" />
-                    <Select v-model="selectedTipe" :options="tipeOptions" optionLabel="label" optionValue="value" placeholder="Tipe" class="w-32" filter showClear @change="onSearch" />
-                    <Select v-model="selectedKategori" :options="kategoriOptions" optionLabel="label" optionValue="value" placeholder="Kategori" class="w-36" filter showClear @change="onSearch" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onSearch" />
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedBrand" :options="brandOptions" optionLabel="label" optionValue="value" placeholder="Brand" filter showClear @change="onSearch" />
+                    <Select v-model="selectedTipe" :options="tipeOptions" optionLabel="label" optionValue="value" placeholder="Tipe" filter showClear @change="onSearch" />
+                    <Select v-model="selectedKategori" :options="kategoriOptions" optionLabel="label" optionValue="value" placeholder="Kategori" filter showClear @change="onSearch" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onSearch" />
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -1384,7 +1329,7 @@ onMounted(async () => {
                     <template #extra>
                         <div class="flex gap-2">
                             <Button v-if="canExport" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                            <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                            <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  outlined />
                         </div>
                     </template>
                 </DataTableHeader>
@@ -1436,21 +1381,13 @@ onMounted(async () => {
             </Column>
             <Column :exportable="false" style="min-width: 260px" alignFrozen="right" frozen>
                 <template #body="slotProps">
-                    <Button icon="pi pi-eye" outlined rounded class="mr-2" severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
-                    <Button icon="pi pi-file-pdf" outlined rounded class="mr-2" severity="help" @click="downloadDetailPdf(slotProps.data)" v-tooltip.top="'Download PDF'" aria-label="Download PDF" />
-                    <Button v-if="canUpdate" icon="pi pi-pencil" outlined rounded class="mr-2" @click="editProduk(slotProps.data)" v-tooltip.top="'Edit'" aria-label="Edit" />
-                    <Button
-                        v-if="canUpdate"
-                        icon="pi pi-power-off"
-                        outlined
-                        rounded
-                        class="mr-2"
-                        :severity="getToggleSeverity(slotProps.data.status)"
-                        @click="confirmToggleStatus(slotProps.data)"
-                        v-tooltip.top="getToggleLabel(slotProps.data.status)"
-                        :aria-label="getToggleLabel(slotProps.data.status)"
-                    />
-                    <Button v-if="canDelete" icon="pi pi-trash" outlined rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" aria-label="Hapus" />
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" rounded severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" text />
+                        <Button icon="pi pi-file-pdf" rounded severity="help" @click="downloadDetailPdf(slotProps.data)" v-tooltip.top="'Download PDF'" aria-label="Download PDF" text />
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editProduk(slotProps.data)" v-tooltip.top="'Edit'" aria-label="Edit" text />
+                        <Button v-if="canUpdate" icon="pi pi-power-off" rounded :severity="getToggleSeverity(slotProps.data.status)" @click="confirmToggleStatus(slotProps.data)" v-tooltip.top="getToggleLabel(slotProps.data.status)" :aria-label="getToggleLabel(slotProps.data.status)" text />
+                        <Button v-if="canDelete" icon="pi pi-trash" rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" aria-label="Hapus" text />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -1495,27 +1432,8 @@ onMounted(async () => {
                     </div>
                     <div class="flex flex-col gap-2 mt-4">
                         <label class="font-medium">Gambar Produk</label>
-                        <input ref="imageInput" type="file" accept="image/jpeg,image/png,image/webp" class="hidden" @change="handleImageSelect" />
-                        <div class="flex items-start gap-4">
-                            <!-- Image Preview -->
-                            <div
-                                class="w-32 h-32 border-2 border-dashed rounded-lg flex items-center justify-center cursor-pointer hover:border-primary transition-colors overflow-hidden"
-                                :class="imagePreview ? 'border-solid border-surface-200' : 'border-surface-300'"
-                                @click="triggerImageInput"
-                            >
-                                <img v-if="imagePreview" :src="imagePreview" alt="Preview" class="w-full h-full object-contain" />
-                                <div v-else class="flex flex-col items-center text-surface-400">
-                                    <i class="pi pi-image text-3xl mb-2"></i>
-                                    <span class="text-xs">Klik untuk upload</span>
-                                </div>
-                            </div>
-                            <!-- Actions -->
-                            <div class="flex flex-col gap-2">
-                                <Button label="Pilih Gambar" icon="pi pi-upload" size="small" outlined @click="triggerImageInput" />
-                                <Button v-if="imagePreview" label="Hapus" icon="pi pi-trash" size="small" severity="danger" text @click="removeImage" />
-                                <small class="text-surface-500">JPG, PNG, WebP. Maks 2MB</small>
-                            </div>
-                        </div>
+                        <ImageUpload v-model="produk.gambar" folder="products" label="Upload Gambar" previewWidth="128px" previewHeight="128px" />
+                        <small class="text-surface-500">JPG, PNG, WebP — dikonversi WebP di server. Maks 2MB</small>
                     </div>
                 </Fieldset>
 
@@ -1756,7 +1674,7 @@ onMounted(async () => {
                 </template>
             </template>
             <template #footer-extra>
-                <Button label="Download PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exportingDetail" @click="downloadDetailPdf(detailData)" />
+                <Button label="Download PDF" icon="pi pi-file-pdf" severity="help" :loading="exportingDetail" @click="downloadDetailPdf(detailData)"  outlined  />
             </template>
         </DetailDialog>
     </div>

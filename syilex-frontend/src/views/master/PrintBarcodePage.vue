@@ -4,9 +4,12 @@ import { produksApi } from '@/api';
 import { useNotification } from '@/composables/useNotification';
 import { useFormatters } from '@/composables/useFormatters';
 import { useBarcodePrint } from '@/composables/useBarcodePrint';
+import { useSettingsStore } from '@/stores/settings';
 
 const { formatCurrency } = useFormatters();
 const notify = useNotification();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const { generating, loadSettings, saveSettings, resetSettings, generateBarcodeDataURL, calcGrid, buildBarcodePdf, PAPER_PRESETS } = useBarcodePrint();
 
 // ── Product Search ──
@@ -86,10 +89,15 @@ const getProductUnits = (product) => {
 
 const addToPrintList = () => {
     let added = 0;
+    let missingBarcode = 0;
     for (const entry of unitDialogForm.value) {
         if (!entry.selectedUnit || entry.qty < 1) continue;
         const unit = entry.units.find((u) => u.value === entry.selectedUnit);
         if (!unit) continue;
+
+        if (!entry.product.barcode) {
+            missingBarcode++;
+        }
 
         const existing = printList.value.find((item) => item.produkUlid === entry.product.ulid && item.unitIndex === entry.selectedUnit);
 
@@ -116,6 +124,9 @@ const addToPrintList = () => {
     selectedProducts.value = [];
     if (added > 0) {
         notify.success(`${added} produk ditambahkan ke daftar cetak`);
+        if (missingBarcode > 0) {
+            notify.warn(`${missingBarcode} produk tanpa barcode — label akan memakai kode produk (POS scan mendukung keduanya).`);
+        }
     }
 };
 
@@ -325,7 +336,7 @@ const onDownload = async () => {
                     </IconField>
                     <Button icon="pi pi-search" @click="searchProducts" :loading="loadingProducts" />
                 </div>
-                <p class="text-xs text-surface-400 mb-3 -mt-1"><i class="pi pi-info-circle mr-1"></i>Produk serial tidak ditampilkan — cetak labelnya via <span class="font-medium">Register Unit Serial → Cetak Label</span>.</p>
+                <p v-if="serialEnabled" class="text-xs text-surface-400 mb-3 -mt-1"><i class="pi pi-info-circle mr-1"></i>Produk serial tidak ditampilkan — cetak labelnya via <span class="font-medium">Register Unit Serial → Cetak Label</span>.</p>
 
                 <DataTable v-model:selection="selectedProducts" :value="products" :loading="loadingProducts" dataKey="ulid" scrollable scrollHeight="350px" size="small" :paginator="false">
                     <Column selectionMode="multiple" headerStyle="width: 3rem" />

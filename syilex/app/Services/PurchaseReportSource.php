@@ -22,9 +22,10 @@ class PurchaseReportSource
 {
     /**
      * UNION level DOKUMEN — 1 baris per dokumen pembelian (PO / intake serial).
-     * Kolom: ulid, sumber, tanggal_po, nomor_dokumen, supplier_id, warehouse_id,
+     * Kolom: id, ulid, sumber, tanggal_po, nomor_dokumen, supplier_id, warehouse_id,
      * tempo_hari, tanggal_jatuh_tempo, subtotal, total_diskon_header,
      * total_setelah_diskon, total_biaya_tambahan, grand_total, diskon_1..3_*, details_count.
+     * `id` = PK dpo/dsi asli — dipakai untuk LEFT JOIN retur beli per dokumen (ACC-3 mode=net).
      */
     public static function documents(string $dateFrom, string $dateToEnd, string $source = 'all'): Builder
     {
@@ -33,6 +34,7 @@ class PurchaseReportSource
             ->where('dpo.tanggal_po', '>=', $dateFrom)
             ->where('dpo.tanggal_po', '<=', $dateToEnd)
             ->select([
+                'dpo.id',
                 'dpo.ulid',
                 DB::raw("'po' as sumber"),
                 'dpo.tanggal_po as tanggal_po',
@@ -57,6 +59,7 @@ class PurchaseReportSource
             ->where('dsi.tanggal', '>=', $dateFrom)
             ->where('dsi.tanggal', '<=', $dateToEnd)
             ->select([
+                'dsi.id',
                 'dsi.ulid',
                 DB::raw("'serial' as sumber"),
                 'dsi.tanggal as tanggal_po',
@@ -142,6 +145,15 @@ class PurchaseReportSource
 
     private static function combine(Builder $po, Builder $serial, string $source): Builder
     {
+        // Gate Modul Elektronik: saat nonaktif, sumber 'serial' tak tersedia — request
+        // eksplisit source=serial dipaksa kosong (bukan error), source lain jatuh ke PO saja.
+        if (! SettingService::isElektronikEnabled()) {
+            if ($source === 'serial') {
+                return $serial->whereRaw('1 = 0');
+            }
+            $source = 'po';
+        }
+
         return match ($source) {
             'po' => $po,
             'serial' => $serial,

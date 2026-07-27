@@ -54,34 +54,61 @@ class ResetSerialTest extends TestCase
 
     private function approveIntake(): void
     {
-        $ulid = $this->postJson('/api/v1/serial-intakes', [
+        $create = $this->postJson('/api/v1/serial-intakes', [
             'product_id' => $this->produk->ulid,
             'warehouse_id' => $this->wh->ulid,
             'supplier_id' => $this->supplier->ulid,
             'units' => [
-                ['serial_number' => 'SN-A', 'harga_modal' => 10000000, 'harga_jual' => 12000000, 'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'account_status' => 'unlocked'],
+                ['serial_number' => 'SN-A', 'harga_modal' => 10000000, 'harga_jual' => 12000000, 'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'battery_cycle_count' => 100, 'account_status' => 'unlocked'],
             ],
-        ])->json('data.serial_intake.ulid');
+        ]);
+        $create->assertCreated();
+        $ulid = $create->json('data.serial_intake.ulid');
+        $this->assertNotEmpty($ulid);
         $this->postJson("/api/v1/serial-intakes/{$ulid}/approve")->assertOk();
     }
 
     private function reset(string $target)
     {
-        return $this->postJson('/api/v1/reset', ['target' => $target, 'password' => 'secret123']);
+        return $this->postJson('/api/v1/reset', [
+            'target' => $target,
+            'password' => 'secret123',
+            'backup_acknowledged' => true,
+        ]);
     }
     #[Test]
-    public function reset_serial_intake_clears_serial_tables_and_serial_hutang()
+    public function reset_serial_intake_refuses_after_approve(): void
     {
         $this->approveIntake();
         $this->assertGreaterThan(0, DB::table('serial_units')->count());
         $this->assertGreaterThan(0, DB::table('doc_serial_intake')->count());
-        $this->assertGreaterThan(0, DB::table('supplier_hutang')->whereNotNull('serial_intake_id')->count());
+
+        $this->reset('serial_intake')
+            ->assertStatus(422)
+            ->assertJsonFragment(['message' => "Reset 'serial_intake' ditolak karena dapat merusak konsistensi stok/serial/piutang-hutang. Gunakan Reset Transaksi (atau Reset Semua)."]);
+
+        $this->assertGreaterThan(0, DB::table('serial_units')->count());
+        $this->assertGreaterThan(0, DB::table('doc_serial_intake')->count());
+    }
+
+    #[Test]
+    public function reset_serial_intake_draft_only_clears_without_stock(): void
+    {
+        $create = $this->postJson('/api/v1/serial-intakes', [
+            'product_id' => $this->produk->ulid,
+            'warehouse_id' => $this->wh->ulid,
+            'supplier_id' => $this->supplier->ulid,
+            'units' => [
+                ['serial_number' => 'SN-DRAFT', 'harga_modal' => 10000000, 'harga_jual' => 12000000, 'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'battery_cycle_count' => 100, 'account_status' => 'unlocked'],
+            ],
+        ]);
+        $create->assertCreated();
+        $this->assertSame(0, (int) DB::table('inventory_stock')->where('qty', '!=', 0)->count());
+        $this->assertSame(0, DB::table('stock_card')->count());
 
         $this->reset('serial_intake')->assertOk();
-
-        $this->assertEquals(0, DB::table('serial_units')->count());
         $this->assertEquals(0, DB::table('doc_serial_intake')->count());
-        $this->assertEquals(0, DB::table('supplier_hutang')->whereNotNull('serial_intake_id')->count());
+        $this->assertEquals(0, DB::table('serial_units')->count());
     }
     #[Test]
     public function reset_transaksi_group_clears_serial()
@@ -107,7 +134,7 @@ class ResetSerialTest extends TestCase
     #[Test]
     public function intake_yang_disetujui_lolos_data_verify_sebelum_reset(): void
     {
-        // Pre-kondisi (CLAUDE.md): skenario menyentuh stok → invariant harus konsisten.
+        // Pre-kondisi (AI-AGENT.md): skenario menyentuh stok → invariant harus konsisten.
         $this->approveIntake();
 
         \Artisan::call('data:verify', ['--json' => true]);
@@ -123,7 +150,7 @@ class ResetSerialTest extends TestCase
     {
         $this->approveIntake();
 
-        $res = $this->postJson('/api/v1/reset', ['target' => 'serial_intake', 'password' => 'salah-banget']);
+        $res = $this->postJson('/api/v1/reset', ['target' => 'serial_intake', 'password' => 'salah-banget', 'backup_acknowledged' => true]);
         $res->assertStatus(422)->assertJson(['success' => false, 'message' => 'Password salah']);
 
         // Data TIDAK boleh tersentuh saat password salah.
@@ -138,7 +165,7 @@ class ResetSerialTest extends TestCase
         // User baru tanpa settings.reset.
         $noPerm = User::factory()->create(['password' => bcrypt('secret123')]);
         $res = $this->actingAs($noPerm)
-            ->postJson('/api/v1/reset', ['target' => 'serial_intake', 'password' => 'secret123']);
+            ->postJson('/api/v1/reset', ['target' => 'serial_intake', 'password' => 'secret123', 'backup_acknowledged' => true]);
         $res->assertStatus(403);
 
         // Data tetap utuh.
@@ -152,11 +179,10 @@ class ResetSerialTest extends TestCase
             ->assertJson(['success' => false, 'message' => "Target reset 'target-ngaco-xyz' tidak valid"]);
     }
     #[Test]
-    public function reset_serial_intake_juga_menghapus_serial_unit_movements()
+    public function reset_transaksi_membersihkan_serial_unit_movements_setelah_approve()
     {
         $this->approveIntake();
 
-        // Sisipkan movement manual (flow app belum mengisinya; verifikasi reset tetap bersihkan tabel).
         $unitId = DB::table('serial_units')->value('id');
         DB::table('serial_unit_movements')->insert([
             'ulid' => (string) \Illuminate\Support\Str::ulid(),
@@ -170,7 +196,7 @@ class ResetSerialTest extends TestCase
         ]);
         $this->assertGreaterThan(0, DB::table('serial_unit_movements')->count());
 
-        $this->reset('serial_intake')->assertOk();
+        $this->reset('transaksi')->assertOk();
 
         $this->assertEquals(0, DB::table('serial_unit_movements')->count());
         $this->assertEquals(0, DB::table('serial_units')->count());
@@ -277,17 +303,16 @@ class ResetSerialTest extends TestCase
         $this->assertEquals($unitsBefore, DB::table('serial_units')->count());
     }
     #[Test]
-    public function reset_supplier_membersihkan_serial_dan_hutang_serial()
+    public function reset_supplier_refuses_when_serial_stock_exists()
     {
-        // Supplier reset harus turut menghapus intake serial + unit + hutang sumber serial.
         $this->approveIntake();
         $this->assertGreaterThan(0, DB::table('serial_units')->count());
 
-        $this->reset('supplier')->assertOk();
+        $this->reset('supplier')
+            ->assertStatus(422)
+            ->assertJsonFragment(['message' => "Reset 'supplier' ditolak karena masih ada data terkait. Gunakan Reset Master (atau Reset Semua)."]);
 
-        $this->assertEquals(0, DB::table('serial_units')->count());
-        $this->assertEquals(0, DB::table('doc_serial_intake')->count());
-        $this->assertEquals(0, DB::table('master_supplier')->count());
-        $this->assertEquals(0, DB::table('supplier_hutang')->whereNotNull('serial_intake_id')->count());
+        $this->assertGreaterThan(0, DB::table('serial_units')->count());
+        $this->assertGreaterThan(0, DB::table('master_supplier')->count());
     }
 }

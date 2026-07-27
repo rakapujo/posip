@@ -1,0 +1,70 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    name: PHPUnit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: syilex
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: posip_db_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo_mysql, bcmath, gd, fileinfo
+          coverage: none
+
+      - name: Install Composer deps
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Run PHPUnit
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: posip_db_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: php artisan test
+
+  frontend-unit:
+    name: Frontend unit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: syilex-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: syilex-frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run test:unit

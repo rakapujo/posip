@@ -4,11 +4,20 @@ import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch, nextTick } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useSettingsStore } from '@/stores/settings';
+import { useAuthStore } from '@/stores/auth';
 import SerialUnitPicker from '@/components/common/SerialUnitPicker.vue';
+import ProductUnitPickerDrawer from '@/components/common/ProductUnitPickerDrawer.vue';
+import { buildTakenKeys, findDuplicateProductUnitErrors, productUnitRowHighlight } from '@/utils/productUnitLineHelpers';
 
 const notify = useNotification();
 const router = useRouter();
 const route = useRoute();
+const settingsStore = useSettingsStore();
+const authStore = useAuthStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
+const canViewHarga = computed(() => authStore.can('po.view_harga'));
+const purchaseAllowFree = computed(() => settingsStore.returns.purchaseAllowFree);
 const {
     formatCurrency,
     formatQty,
@@ -31,12 +40,15 @@ const {
 // Mode
 const isEdit = computed(() => !!route.params.ulid);
 const pageTitle = computed(() => (isEdit.value ? 'Edit Retur Pembelian' : 'Buat Retur Pembelian'));
+const isDocLinked = computed(() => !!form.value.po_id || !!form.value.serial_intake_id);
 
 // Data
 const suppliers = ref([]);
 const warehouses = ref([]);
 const purchaseOrders = ref([]);
 const loadingPOs = ref(false);
+const serialIntakes = ref([]);
+const loadingPbs = ref(false);
 const loading = ref(false);
 const saving = ref(false);
 const taxSettings = ref({ name: 'PPN', percent: 11, included_in_hpp: false });
@@ -47,6 +59,7 @@ const form = ref({
     supplier_id: null,
     warehouse_id: null,
     po_id: null,
+    serial_intake_id: null,
     notes: '',
     // Header discounts
     diskon_1_tipe: 'none',
@@ -59,6 +72,8 @@ const form = ref({
     details: []
 });
 
+const canAddLines = computed(() => !!form.value.supplier_id && !!form.value.warehouse_id);
+
 // Calculated totals (from backend)
 const calculated = ref({
     subtotal: 0,
@@ -69,10 +84,6 @@ const calculated = ref({
     pembulatan: 0,
     nilai_kalkulasi: 0
 });
-
-// Product search
-const productSuggestions = ref([]);
-const loadingProducts = ref(false);
 
 // Discount dialog
 const discountDialog = ref(false);
@@ -103,16 +114,27 @@ function syncExpandedSerial() {
     for (const d of form.value.details) {
         if (d.is_serial && d._uid) map[d._uid] = true;
     }
-    expandedRows.value = map;
+    const prev = Object.keys(expandedRows.value || {})
+        .sort()
+        .join('|');
+    const next = Object.keys(map).sort().join('|');
+    if (prev !== next) expandedRows.value = map;
 }
 watch(() => form.value.details.map((d) => `${d._uid}:${d.is_serial ? 1 : 0}`).join('|'), syncExpandedSerial);
 
 // Unit serial dipilih → qty = jumlah unit; harga = rata-rata harga_modal (preview total)
 function onSerialReturnChange(detail, units) {
-    detail.serial_unit_ids = units.map((u) => u.ulid);
-    detail.qty_in_unit = units.length;
-    detail.harga_per_unit = units.length ? units.reduce((s, u) => s + (Number(u.harga_modal) || 0), 0) / units.length : 0;
-    calculateTotals();
+    const ids = units.map((u) => u.ulid);
+    const prev = detail.serial_unit_ids || [];
+    const sameIds =
+        ids.length === prev.length &&
+        [...ids].map(String).sort().join('|') === [...prev].map(String).sort().join('|');
+    if (sameIds && Number(detail.qty_in_unit) === ids.length) return;
+
+    detail.serial_unit_ids = ids;
+    detail.qty_in_unit = ids.length;
+    detail.harga_per_unit = ids.length ? units.reduce((s, u) => s + (Number(u.harga_modal) || 0), 0) / ids.length : 0;
+    if (ids.length) calculateTotals();
 }
 
 onMounted(async () => {
@@ -159,15 +181,15 @@ async function loadTaxSettings() {
     }
 }
 
-async function loadPurchaseOrders(supplierId) {
-    if (!supplierId) {
+async function loadPurchaseOrders(supplierId, warehouseId) {
+    if (!supplierId || !warehouseId) {
         purchaseOrders.value = [];
         return;
     }
 
     loadingPOs.value = true;
     try {
-        const response = await purchaseOrdersApi.getList({ supplier_id: supplierId });
+        const response = await purchaseOrdersApi.getList({ supplier_id: supplierId, warehouse_id: warehouseId });
         if (response.data.success) {
             purchaseOrders.value = response.data.data.items;
         }
@@ -179,52 +201,192 @@ async function loadPurchaseOrders(supplierId) {
     }
 }
 
-// Watch for supplier change to load POs (only when not loading edit data)
+async function loadSerialIntakes(supplierId, warehouseId) {
+    if (!serialEnabled.value || !supplierId || !warehouseId) {
+        serialIntakes.value = [];
+        return;
+    }
+
+    loadingPbs.value = true;
+    try {
+        const response = await purchaseReturnsApi.listSerialIntakes({
+            supplier_id: supplierId,
+            warehouse_id: warehouseId
+        });
+        if (response.data.success) {
+            serialIntakes.value = response.data.data.items;
+        }
+    } catch (error) {
+        console.error('Failed to load serial intakes:', error);
+        serialIntakes.value = [];
+    } finally {
+        loadingPbs.value = false;
+    }
+}
+
+/** Satu dropdown: PO + PBS (value = po:ID | pbs:ID). Backend tetap XOR po_id / serial_intake_id. */
+const docRefKey = ref(null);
+const loadingDocs = computed(() => loadingPOs.value || loadingPbs.value);
+const docRefOptions = computed(() => {
+    const poOpts = (purchaseOrders.value || []).map((p) => ({
+        key: `po:${p.id}`,
+        jenis: 'PO',
+        nomor_dokumen: p.nomor_dokumen,
+        label: `PO · ${p.nomor_dokumen}`,
+        subtitle: p.tanggal_po || ''
+    }));
+    const pbsOpts = (serialIntakes.value || []).map((p) => ({
+        key: `pbs:${p.id}`,
+        jenis: 'PBS',
+        nomor_dokumen: p.nomor_dokumen,
+        label: `PBS · ${p.nomor_dokumen}`,
+                subtitle: [
+                    p.product?.kode_produk,
+                    (p.returnable_unit_count ?? p.total_unit) != null
+                        ? `${p.returnable_unit_count ?? p.total_unit} tersedia`
+                        : null
+                ]
+                    .filter(Boolean)
+                    .join(' · ')
+    }));
+    return [...poOpts, ...pbsOpts];
+});
+
+function syncDocRefFromForm() {
+    if (form.value.po_id) {
+        docRefKey.value = `po:${form.value.po_id}`;
+    } else if (form.value.serial_intake_id) {
+        docRefKey.value = `pbs:${form.value.serial_intake_id}`;
+    } else {
+        docRefKey.value = null;
+    }
+}
+
+function clearLinkedDetails() {
+    form.value.details = form.value.details.filter((d) => !d.po_detail_id && !d.from_serial_intake);
+    poReturnableMessage.value = '';
+    pbsReturnableMessage.value = '';
+    calculateTotals();
+}
+
+// Watch for supplier/warehouse change to load POs + PBS (only when not loading edit data)
 watch(
-    () => form.value.supplier_id,
-    async (newSupplierId) => {
-        // Skip if we're loading edit data
+    () => [form.value.supplier_id, form.value.warehouse_id],
+    async ([newSupplierId, newWarehouseId], [oldSupplierId, oldWarehouseId]) => {
         if (loading.value) return;
 
-        // Clear PO options and selection
         purchaseOrders.value = [];
-        form.value.po_id = null;
+        serialIntakes.value = [];
+        if (newSupplierId !== oldSupplierId || newWarehouseId !== oldWarehouseId) {
+            form.value.po_id = null;
+            form.value.serial_intake_id = null;
+            docRefKey.value = null;
+        }
 
-        // Load new POs for selected supplier
-        if (newSupplierId) {
-            await loadPurchaseOrders(newSupplierId);
+        if (newSupplierId && newWarehouseId) {
+            const loads = [loadPurchaseOrders(newSupplierId, newWarehouseId)];
+            if (serialEnabled.value) loads.push(loadSerialIntakes(newSupplierId, newWarehouseId));
+            else serialIntakes.value = [];
+            await Promise.all(loads);
         }
     }
 );
 
-// State for PO returnable details
+// State for returnable details
 const loadingPoDetails = ref(false);
 const poReturnableMessage = ref('');
+const pbsReturnableMessage = ref('');
 
-// Watch for PO change to load returnable details
-watch(
-    () => form.value.po_id,
-    async (newPoId, oldPoId) => {
-        // Skip if we're loading edit data
-        if (loading.value) return;
+watch(docRefKey, async (newKey, oldKey) => {
+    if (loading.value) return;
 
-        // Clear message
-        poReturnableMessage.value = '';
+    poReturnableMessage.value = '';
+    pbsReturnableMessage.value = '';
 
-        // If PO is cleared, clear details that came from PO
-        if (!newPoId && oldPoId) {
-            // Remove all items that have po_detail_id (from PO)
-            form.value.details = form.value.details.filter((d) => !d.po_detail_id);
-            calculateTotals();
+    if (!newKey) {
+        form.value.po_id = null;
+        form.value.serial_intake_id = null;
+        if (oldKey) clearLinkedDetails();
+        return;
+    }
+
+    const [jenis, idStr] = String(newKey).split(':');
+    const id = Number(idStr);
+    if (!id) return;
+
+    if (jenis === 'po') {
+        form.value.serial_intake_id = null;
+        form.value.po_id = id;
+        await loadReturnableDetails(id);
+        return;
+    }
+
+    if (jenis === 'pbs') {
+        form.value.po_id = null;
+        form.value.serial_intake_id = id;
+        await loadSerialIntakeReturnable(id);
+    }
+});
+
+async function loadSerialIntakeReturnable(intakeId) {
+    const intake = serialIntakes.value.find((p) => p.id === intakeId);
+    if (!intake?.ulid) {
+        console.error('PBS not found or missing ulid');
+        return;
+    }
+
+    loadingPoDetails.value = true;
+    try {
+        const response = await purchaseReturnsApi.getSerialIntakeReturnable(intake.ulid);
+        if (!response.data.success) return;
+
+        const data = response.data.data;
+        if (data.message && (!data.units || data.units.length === 0)) {
+            pbsReturnableMessage.value = data.message;
+            form.value.details = [];
+            notify.warn('Info', data.message);
             return;
         }
 
-        // Load returnable details if PO is selected
-        if (newPoId) {
-            await loadReturnableDetails(newPoId);
-        }
+        const product = data.product;
+        const unitUlids = (data.units || []).map((u) => u.ulid);
+        form.value.details = [
+            {
+                _uid: nextUid(),
+                from_serial_intake: true,
+                is_serial: true,
+                serial_unit_ids: unitUlids,
+                product_id: data.serial_intake.product_id || product?.id,
+                po_detail_id: null,
+                product,
+                units: getProductUnits(product),
+                unit_used: 'UNIT',
+                unit_konversi: 1,
+                qty_in_unit: unitUlids.length,
+                qty_max: unitUlids.length,
+                harga_per_unit: data.harga_per_unit ?? 0,
+                diskon_1_tipe: 'none',
+                diskon_1_nilai: 0,
+                diskon_2_tipe: 'none',
+                diskon_2_nilai: 0,
+                diskon_3_tipe: 'none',
+                diskon_3_nilai: 0,
+                diskon_4_tipe: 'none',
+                diskon_4_nilai: 0,
+                diskon_5_tipe: 'none',
+                diskon_5_nilai: 0
+            }
+        ];
+        expandedRows.value = { [form.value.details[0]._uid]: true };
+        await calculateTotals();
+        notify.itemsLoaded(unitUlids.length, 'unit', 'PBS');
+    } catch (error) {
+        console.error('Failed to load PBS returnable:', error);
+        notify.loadDetailError('data PBS');
+    } finally {
+        loadingPoDetails.value = false;
     }
-);
+}
 
 async function loadReturnableDetails(poId) {
     // Find the PO ulid from the purchaseOrders list
@@ -250,6 +412,8 @@ async function loadReturnableDetails(poId) {
 
             // Populate form.details with returnable items
             form.value.details = data.details.map((d) => ({
+                _uid: nextUid(),
+                is_serial: false,
                 po_detail_id: d.po_detail_id,
                 product_id: d.product_id,
                 product: d.product,
@@ -299,9 +463,12 @@ async function loadPurchaseReturn() {
                 return;
             }
 
-            // Load POs for the supplier first (without triggering watcher to clear po_id)
-            if (retur.supplier_id) {
-                await loadPurchaseOrders(retur.supplier_id);
+            // Load POs + PBS for the supplier + warehouse first (without triggering watcher to clear refs)
+            if (retur.supplier_id && retur.warehouse_id) {
+                const loads = [loadPurchaseOrders(retur.supplier_id, retur.warehouse_id)];
+                if (serialEnabled.value) loads.push(loadSerialIntakes(retur.supplier_id, retur.warehouse_id));
+                else serialIntakes.value = [];
+                await Promise.all(loads);
             }
 
             form.value = {
@@ -309,6 +476,7 @@ async function loadPurchaseReturn() {
                 supplier_id: retur.supplier_id,
                 warehouse_id: retur.warehouse_id,
                 po_id: retur.po_id || null,
+                serial_intake_id: retur.serial_intake_id || null,
                 notes: retur.notes || '',
                 diskon_1_tipe: retur.diskon_1_tipe || 'none',
                 diskon_1_nilai: retur.diskon_1_nilai || 0,
@@ -318,8 +486,9 @@ async function loadPurchaseReturn() {
                 diskon_3_nilai: retur.diskon_3_nilai || 0,
                 details: retur.details.map((d) => ({
                     _uid: nextUid(),
-                    is_serial: !!d.product?.is_serial,
-                    serial_unit_ids: d.serial_unit_ids || (d.product?.is_serial ? [] : null),
+                    from_serial_intake: !!retur.serial_intake_id,
+                    is_serial: serialEnabled.value && !!d.product?.is_serial,
+                    serial_unit_ids: d.serial_unit_ids || (serialEnabled.value && d.product?.is_serial ? [] : null),
                     product_id: d.product_id,
                     po_detail_id: d.po_detail_id || null,
                     product: d.product,
@@ -342,6 +511,7 @@ async function loadPurchaseReturn() {
                 }))
             };
 
+            syncDocRefFromForm();
             await calculateTotals();
         }
     } catch (error) {
@@ -371,68 +541,106 @@ function getProductUnits(product) {
     return units;
 }
 
-// Product autocomplete
-async function searchProducts(event) {
-    loadingProducts.value = true;
-    try {
-        const response = await purchaseReturnsApi.getProducts({
-            search: event.query
-        });
-        if (response.data.success) {
-            productSuggestions.value = response.data.data.items;
-        }
-    } catch (error) {
-        console.error('Failed to search products:', error);
-        notify.apiError(error, 'Gagal search products');
-    } finally {
-        loadingProducts.value = false;
+function isSerialDetail(d) {
+    if (!serialEnabled.value) return false;
+    return !!(d?.is_serial || d?.product?.is_serial || (d?.serial_unit_ids || []).length);
+}
+
+// Product picker drawer (free mode only — PO/PBS-linked lines keep product as text)
+const pickerVisible = ref(false);
+const pickerQuery = ref('');
+const pickerTargetIndex = ref(-1);
+
+const pickerTakenKeys = computed(() =>
+    buildTakenKeys(form.value.details, {
+        exceptIndex: pickerTargetIndex.value >= 0 ? pickerTargetIndex.value : undefined,
+        unitField: 'unit_used',
+        isSerial: isSerialDetail
+    })
+);
+
+function openProductPicker(index) {
+    const row = form.value.details[index];
+    pickerTargetIndex.value = index;
+    pickerQuery.value = row?._searchQuery || row?.product?.kode_produk || row?.product?.nama_produk || '';
+    pickerVisible.value = true;
+}
+
+async function fetchPickerProducts(q) {
+    const response = await purchaseReturnsApi.getProducts({ search: q });
+    if (!response.data.success) return [];
+    return response.data.data.items || [];
+}
+
+function getPickerUnitPrice(product, unitObj) {
+    return Number(unitObj?.harga_jual ?? 0);
+}
+
+function onPickerTakenClick(row) {
+    if (row.is_serial) {
+        notify.info('Produk serial sudah ada di form — ubah SN di baris tersebut');
+    } else {
+        notify.info('Produk + satuan sudah ada di form — ubah qty di baris tersebut');
     }
 }
 
-function onProductSelect(event, index) {
-    const product = event.value || event;
-    if (product && typeof product === 'object' && product.id) {
-        // Produk serial: kunci satuan 'UNIT', qty & harga diturunkan dari unit dipilih
-        if (product.is_serial) {
-            form.value.details[index] = {
-                ...form.value.details[index],
-                product_id: product.id,
-                product: product,
-                is_serial: true,
-                serial_unit_ids: [],
-                units: [{ unit: 'UNIT', konversi: 1 }],
-                unit_used: 'UNIT',
-                unit_konversi: 1,
-                qty_in_unit: 0,
-                harga_per_unit: 0
-            };
-            return;
-        }
+function applyPickerSelect({ product, unit, konversi, is_serial, price }) {
+    const index = pickerTargetIndex.value;
+    if (index < 0 || !product?.id) return;
 
-        const rawUnits = product.units || [];
-        const seenUnits = new Set();
-        const units = rawUnits.filter((u) => {
-            if (seenUnits.has(u.unit)) return false;
-            seenUnits.add(u.unit);
-            return true;
-        });
-
-        const defaultUnit = units[0] || { unit: '', konversi: 1 };
-
+    // Produk serial: kunci satuan 'UNIT', qty & harga diturunkan dari unit dipilih
+    if (serialEnabled.value && is_serial) {
         form.value.details[index] = {
             ...form.value.details[index],
+            _searchQuery: '',
             product_id: product.id,
             product: product,
-            units: units,
-            unit_used: defaultUnit.unit,
-            unit_konversi: defaultUnit.konversi,
-            qty_in_unit: 1,
+            is_serial: true,
+            serial_unit_ids: [],
+            units: [{ unit: 'UNIT', konversi: 1 }],
+            unit_used: 'UNIT',
+            unit_konversi: 1,
+            qty_in_unit: 0,
             harga_per_unit: 0
         };
-
-        // Try to get last price
-        getLastPrice(index, product.id, form.value.supplier_id, defaultUnit.unit);
+        syncExpandedSerial();
+        return;
     }
+
+    const rawUnits = product.units || [];
+    const seenUnits = new Set();
+    const units = rawUnits.filter((u) => {
+        if (seenUnits.has(u.unit)) return false;
+        seenUnits.add(u.unit);
+        return true;
+    });
+
+    form.value.details[index] = {
+        ...form.value.details[index],
+        _searchQuery: '',
+        product_id: product.id,
+        product: product,
+        is_serial: false,
+        serial_unit_ids: null,
+        units: units.length ? units : [{ unit, konversi, harga_jual: price }],
+        unit_used: unit,
+        unit_konversi: konversi || 1,
+        qty_in_unit: 1,
+        harga_per_unit: 0
+    };
+
+    // Try to get last price
+    getLastPrice(index, product.id, form.value.supplier_id, unit);
+}
+
+function detailRowClass(data) {
+    const kind = productUnitRowHighlight(data, form.value.details, {
+        unitField: 'unit_used',
+        isSerial: isSerialDetail
+    });
+    if (kind === 'dup-unit') return 'row-dup-unit';
+    if (kind === 'dup-product') return 'row-dup-product';
+    return '';
 }
 
 async function getLastPrice(index, productId, supplierId, unit) {
@@ -464,8 +672,14 @@ function onUnitChange(index) {
 }
 
 function addDetail() {
+    if (isDocLinked.value) return;
+    if (!canAddLines.value) {
+        notify.selectFirst('supplier & gudang');
+        return;
+    }
     form.value.details.push({
         _uid: nextUid(),
+        _searchQuery: '',
         is_serial: false,
         serial_unit_ids: null,
         product_id: null,
@@ -531,6 +745,7 @@ function buildPayload() {
         supplier_id: form.value.supplier_id,
         warehouse_id: form.value.warehouse_id,
         po_id: form.value.po_id || null,
+        serial_intake_id: form.value.serial_intake_id || null,
         notes: form.value.notes || null,
         diskon_1_tipe: form.value.diskon_1_tipe,
         diskon_1_nilai: form.value.diskon_1_nilai,
@@ -572,22 +787,12 @@ function validate() {
     if (!form.value.tanggal) {
         errors.value.tanggal = 'Tanggal wajib diisi';
     }
+    if (!purchaseAllowFree.value && !form.value.po_id && !form.value.serial_intake_id) {
+        errors.value.doc_ref = 'Dokumen referensi wajib (mode bebas dimatikan)';
+    }
     if (form.value.details.length === 0) {
         errors.value.details = 'Minimal harus ada 1 detail produk';
     }
-
-    // Check for duplicate product + unit combinations
-    const seenProductUnits = new Set();
-    form.value.details.forEach((detail, index) => {
-        if (detail.product_id && detail.unit_used) {
-            const key = `${detail.product_id}-${detail.unit_used}`;
-            if (seenProductUnits.has(key)) {
-                errors.value[`details.${index}.product_id`] = 'Produk dengan satuan yang sama sudah ada';
-            } else {
-                seenProductUnits.add(key);
-            }
-        }
-    });
 
     // Validate each detail
     form.value.details.forEach((detail, index) => {
@@ -612,6 +817,10 @@ function validate() {
             errors.value[`details.${index}.harga_per_unit`] = 'Harga tidak boleh negatif';
         }
     });
+
+    for (const dup of findDuplicateProductUnitErrors(form.value.details, { unitField: 'unit_used', isSerial: isSerialDetail })) {
+        errors.value[`details.${dup.index}.product_id`] = dup.message;
+    }
 
     return Object.keys(errors.value).length === 0;
 }
@@ -651,11 +860,6 @@ async function save() {
 
 function cancel() {
     router.push({ name: 'pembelian-retur' });
-}
-
-function getProductLabel(product) {
-    if (!product) return '';
-    return `${product.kode_produk} - ${product.nama_produk}`;
 }
 
 // Calculate item subtotal for display
@@ -866,18 +1070,40 @@ function onDiscountValueChange(discIndex, newValue) {
                     <small v-if="errors.tanggal" class="text-red-500">{{ errors.tanggal }}</small>
                 </div>
 
-                <!-- No. Referensi PO -->
+                <!-- No. Referensi (PO + PBS digabung) -->
                 <div class="flex flex-col gap-2">
-                    <label for="po_id" class="font-medium">No. Referensi PO</label>
-                    <Select id="po_id" v-model="form.po_id" :options="purchaseOrders" optionLabel="nomor_dokumen" optionValue="id" placeholder="Pilih PO (opsional)" filter showClear class="w-full" :loading="loadingPOs" :disabled="!form.supplier_id">
+                    <label for="doc_ref" class="font-medium">No. Referensi <span v-if="!purchaseAllowFree" class="text-red-500">*</span></label>
+                    <Select
+                        id="doc_ref"
+                        v-model="docRefKey"
+                        :options="docRefOptions"
+                        optionLabel="label"
+                        optionValue="key"
+                        :placeholder="purchaseAllowFree ? (serialEnabled ? 'Pilih PO / PBS (opsional)' : 'Pilih PO (opsional)') : serialEnabled ? 'Pilih PO / PBS (wajib)' : 'Pilih PO (wajib)'"
+                        filter
+                        :showClear="purchaseAllowFree"
+                        class="w-full"
+                        :loading="loadingDocs"
+                        :disabled="!form.supplier_id || !form.warehouse_id"
+                        :class="{ 'p-invalid': errors.doc_ref }"
+                        filterBy="label,nomor_dokumen,jenis,subtitle"
+                    >
                         <template #option="{ option }">
-                            <div class="flex flex-col">
-                                <span class="font-medium">{{ option.nomor_dokumen }}</span>
-                                <span class="text-sm text-surface-500">{{ option.tanggal_po }}</span>
+                            <div class="flex items-start gap-2">
+                                <Tag :value="option.jenis" :severity="option.jenis === 'PO' ? 'info' : 'help'" class="text-xs shrink-0 mt-0.5" />
+                                <div class="flex flex-col min-w-0">
+                                    <span class="font-medium">{{ option.nomor_dokumen }}</span>
+                                    <span v-if="option.subtitle" class="text-sm text-surface-500 truncate">{{ option.subtitle }}</span>
+                                </div>
                             </div>
                         </template>
+                        <template #value="{ value, placeholder }">
+                            <span v-if="value">{{ docRefOptions.find((o) => o.key === value)?.label || value }}</span>
+                            <span v-else class="text-surface-400">{{ placeholder }}</span>
+                        </template>
                     </Select>
-                    <small class="text-surface-500">Pilih supplier terlebih dahulu</small>
+                    <small v-if="errors.doc_ref" class="text-red-500">{{ errors.doc_ref }}</small>
+                    <small v-else class="text-surface-500">{{ purchaseAllowFree ? 'Kosongkan = mode bebas (FIFO hutang). Isi = net hutang dokumen itu.' : 'Wajib pilih dokumen referensi (mode bebas dimatikan).' }}</small>
                 </div>
             </div>
 
@@ -887,7 +1113,23 @@ function onDiscountValueChange(discIndex, newValue) {
                     <h3 class="text-lg font-medium m-0">Detail Produk</h3>
                     <div class="flex items-center gap-2">
                         <ProgressSpinner v-if="loadingPoDetails" style="width: 24px; height: 24px" />
-                        <Button label="Tambah Produk" icon="pi pi-plus" size="small" @click="addDetail" :disabled="!!form.po_id" v-tooltip.top="form.po_id ? 'Item sudah diisi dari PO' : ''" />
+                        <Button
+                            v-if="purchaseAllowFree || isDocLinked"
+                            label="Tambah Produk"
+                            icon="pi pi-plus"
+                            size="small"
+                            @click="addDetail"
+                            :disabled="isDocLinked || !canAddLines"
+                            v-tooltip.top="
+                                isDocLinked
+                                    ? 'Item sudah diisi dari dokumen referensi'
+                                    : !canAddLines
+                                      ? 'Pilih supplier & gudang dulu'
+                                      : !purchaseAllowFree
+                                        ? 'Mode bebas dimatikan'
+                                        : null
+                            "
+                        />
                     </div>
                 </div>
 
@@ -895,18 +1137,36 @@ function onDiscountValueChange(discIndex, newValue) {
                 <Message v-if="form.po_id && form.details.length > 0" severity="info" :closable="false" class="mb-4">
                     <div class="flex items-center gap-2">
                         <i class="pi pi-info-circle"></i>
-                        <span>Item diambil dari PO. Qty maksimal adalah sisa yang belum diretur.</span>
+                        <span>Item dari PO. Qty maksimal = sisa yang belum diretur. Approve men-net hutang PO ini.</span>
                     </div>
+                </Message>
+
+                <Message v-else-if="form.serial_intake_id && form.details.length > 0" severity="info" :closable="false" class="mb-4">
+                    <div class="flex items-center gap-2">
+                        <i class="pi pi-info-circle"></i>
+                        <span>Unit dari PBS. Pilih SN yang diretur; approve men-net hutang PBS ini.</span>
+                    </div>
+                </Message>
+
+                <Message v-else-if="form.supplier_id && form.warehouse_id && !isDocLinked && purchaseAllowFree" severity="secondary" :closable="false" class="mb-4">
+                    Mode bebas: tambah produk manual. Approve men-net hutang supplier secara FIFO.
+                </Message>
+
+                <Message v-else-if="form.supplier_id && form.warehouse_id && !isDocLinked && !purchaseAllowFree" severity="warn" :closable="false" class="mb-4">
+                    Mode bebas dimatikan — pilih dokumen referensi terlebih dahulu.
                 </Message>
 
                 <!-- PO All Returned Warning -->
                 <Message v-if="poReturnableMessage" severity="warn" :closable="false" class="mb-4">
                     {{ poReturnableMessage }}
                 </Message>
+                <Message v-if="pbsReturnableMessage" severity="warn" :closable="false" class="mb-4">
+                    {{ pbsReturnableMessage }}
+                </Message>
 
                 <small v-if="errors.details" class="text-red-500 block mb-4">{{ errors.details }}</small>
 
-                <DataTable :value="form.details" class="p-datatable-sm" responsiveLayout="scroll" v-if="form.details.length > 0" dataKey="_uid" v-model:expandedRows="expandedRows">
+                <DataTable :value="form.details" class="p-datatable-sm purchase-return-detail-table" responsiveLayout="scroll" v-if="form.details.length > 0" dataKey="_uid" v-model:expandedRows="expandedRows" :rowClass="detailRowClass">
                     <Column expander style="width: 3rem" />
                     <Column header="#" style="width: 40px">
                         <template #body="{ index }">{{ index + 1 }}</template>
@@ -914,32 +1174,37 @@ function onDiscountValueChange(discIndex, newValue) {
 
                     <Column header="Produk" style="min-width: 220px">
                         <template #body="{ data, index }">
-                            <!-- Read-only when from PO -->
-                            <div v-if="data.po_detail_id" class="flex flex-col">
+                            <!-- Dari PO / PBS: teks saja, tidak bisa diganti -->
+                            <div v-if="data.po_detail_id || data.from_serial_intake" class="flex flex-col">
                                 <span class="font-medium">{{ data.product?.kode_produk }}</span>
                                 <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
+                                <span v-if="serialEnabled && data.is_serial" class="text-xs text-primary">Serial</span>
                             </div>
-                            <!-- Editable when manual -->
-                            <AutoComplete
-                                v-else
-                                v-model="data.product"
-                                :suggestions="productSuggestions"
-                                @complete="searchProducts"
-                                @item-select="(e) => onProductSelect(e, index)"
-                                :optionLabel="getProductLabel"
-                                placeholder="Cari produk..."
-                                :loading="loadingProducts"
-                                class="w-full"
-                                :class="{ 'p-invalid': errors[`details.${index}.product_id`] }"
-                                dropdown
-                            >
-                                <template #option="{ option }">
-                                    <div class="flex flex-col">
-                                        <span class="font-medium">{{ option.kode_produk }}</span>
-                                        <span class="text-sm text-surface-500">{{ option.nama_produk }}</span>
-                                    </div>
-                                </template>
-                            </AutoComplete>
+                            <div v-else-if="data.product_id && data.product" class="flex flex-col gap-1">
+                                <span class="font-medium">{{ data.product?.kode_produk }}</span>
+                                <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
+                                <span v-if="serialEnabled && data.is_serial" class="text-xs text-primary">Serial</span>
+                                <Button
+                                    v-if="!(serialEnabled && data.is_serial)"
+                                    label="Ganti"
+                                    icon="pi pi-search"
+                                    size="small"
+                                    text
+                                    class="!p-0 !w-auto self-start"
+                                    @click="openProductPicker(index)"
+                                />
+                            </div>
+                            <div v-else class="flex gap-1">
+                                <InputText
+                                    v-model="data._searchQuery"
+                                    class="w-full product-search-input"
+                                    placeholder="Ketik lalu Enter…"
+                                    :class="{ 'p-invalid': errors[`details.${index}.product_id`] }"
+                                    @keydown.enter.prevent="openProductPicker(index)"
+                                />
+                                <Button icon="pi pi-search" size="small" @click="openProductPicker(index)" aria-label="Cari produk" />
+                            </div>
+                            <small v-if="errors[`details.${index}.product_id`]" class="text-red-500">{{ errors[`details.${index}.product_id`] }}</small>
                         </template>
                     </Column>
 
@@ -960,7 +1225,7 @@ function onDiscountValueChange(discIndex, newValue) {
 
                     <Column header="Qty" style="width: 120px">
                         <template #body="{ data, index }">
-                            <div v-if="data.is_serial" class="flex flex-col gap-1">
+                            <div v-if="serialEnabled && data.is_serial" class="flex flex-col gap-1">
                                 <Tag :value="`${data.serial_unit_ids?.length || 0} unit`" severity="info" />
                                 <div class="text-xs text-surface-500">dari pilih unit ↓</div>
                                 <small v-if="errors[`details.${index}.qty_in_unit`]" class="text-red-500 text-xs">
@@ -988,10 +1253,10 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column header="Harga/Unit" style="width: 140px">
+                    <Column v-if="canViewHarga" header="Harga/Unit" style="width: 140px">
                         <template #body="{ data }">
                             <!-- Serial: harga = rata-rata modal unit (read-only) -->
-                            <div v-if="data.is_serial">
+                            <div v-if="serialEnabled && data.is_serial">
                                 <span class="font-medium">{{ formatCurrency(data.harga_per_unit) }}</span>
                                 <div class="text-xs text-surface-500">rata-rata modal</div>
                             </div>
@@ -1016,9 +1281,9 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column header="Diskon" style="width: 150px">
+                    <Column v-if="canViewHarga" header="Diskon" style="width: 150px">
                         <template #body="{ data, index }">
-                            <span v-if="data.is_serial" class="text-surface-400 text-xs">—</span>
+                            <span v-if="serialEnabled && data.is_serial" class="text-surface-400 text-xs">—</span>
                             <div v-else-if="hasDiscount(data)" class="flex items-center gap-1">
                                 <div
                                     :class="['flex-1 rounded p-2 -m-2 transition-colors text-center', canEditDiscount(data) ? 'cursor-pointer hover:bg-surface-100' : 'opacity-40 cursor-not-allowed']"
@@ -1046,7 +1311,7 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column header="Subtotal" style="width: 120px" bodyClass="text-right">
+                    <Column v-if="canViewHarga" header="Subtotal" style="width: 120px" bodyClass="text-right">
                         <template #body="{ data }">
                             <span class="font-medium">{{ formatCurrency(getItemSubtotal(data)) }}</span>
                         </template>
@@ -1054,18 +1319,25 @@ function onDiscountValueChange(discIndex, newValue) {
 
                     <Column header="" style="width: 50px">
                         <template #body="{ data, index }">
-                            <Button icon="pi pi-trash" severity="danger" text rounded @click="removeDetail(index)" :disabled="!!data.po_detail_id" v-tooltip.top="data.po_detail_id ? 'Item dari PO tidak bisa dihapus' : ''" />
+                            <Button icon="pi pi-trash" severity="danger" text rounded @click="removeDetail(index)" :disabled="!!data.po_detail_id || !!data.from_serial_intake" v-tooltip.top="data.po_detail_id || data.from_serial_intake ? 'Item dari dokumen referensi tidak bisa dihapus' : ''" />
                         </template>
                     </Column>
 
                     <!-- Pemilih unit serial yang diretur (tepat di bawah baris produknya) -->
                     <template #expansion="{ data }">
-                        <div v-if="data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
+                        <div v-if="serialEnabled && data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
                             <div class="flex items-center gap-2 mb-2">
                                 <i class="pi pi-qrcode text-primary"></i>
                                 <span class="font-medium text-sm"> Pilih Unit Serial yang Diretur — {{ data.product?.kode_produk }} {{ data.product?.nama_produk }} </span>
                             </div>
-                            <SerialUnitPicker :productId="data.product?.ulid" :warehouseId="form.warehouse_id" :modelValue="data.serial_unit_ids || []" @change="(units) => onSerialReturnChange(data, units)" />
+                            <SerialUnitPicker
+                                :key="data._uid"
+                                :productId="data.product?.ulid"
+                                :warehouseId="form.warehouse_id"
+                                :intakeId="form.serial_intake_id || undefined"
+                                :modelValue="data.serial_unit_ids"
+                                @change="(units) => onSerialReturnChange(data, units)"
+                            />
                             <div class="text-xs text-surface-500 mt-1">Harga retur memakai harga modal tiap unit (rata-rata ditampilkan di kolom Harga).</div>
                         </div>
                         <div v-else class="px-4 py-2 text-xs text-surface-400">Produk non-serial — isi qty & harga di kolom.</div>
@@ -1079,7 +1351,7 @@ function onDiscountValueChange(discIndex, newValue) {
             </div>
 
             <!-- Bottom Section: Discounts & Totals -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div v-if="canViewHarga" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <!-- Left: Header Discounts & Notes -->
                 <div class="space-y-4">
                     <!-- Header Discounts -->
@@ -1155,7 +1427,7 @@ function onDiscountValueChange(discIndex, newValue) {
         </form>
 
         <!-- Discount Dialog -->
-        <Dialog v-model:visible="discountDialog" header="Diskon Item" modal :style="{ width: '400px' }" :closable="true" @hide="closeDiscountDialog">
+        <Dialog v-if="canViewHarga" v-model:visible="discountDialog" header="Diskon Item" modal :style="{ width: '400px' }" :closable="true" @hide="closeDiscountDialog">
             <template v-if="editingDiscountIndex !== null && form.details[editingDiscountIndex]">
                 <div class="space-y-4">
                     <div class="flex items-center gap-2 text-sm">
@@ -1218,5 +1490,33 @@ function onDiscountValueChange(discIndex, newValue) {
                 <Button label="Tutup" severity="secondary" @click="closeDiscountDialog" />
             </template>
         </Dialog>
+
+        <ProductUnitPickerDrawer
+            v-model:visible="pickerVisible"
+            :query="pickerQuery"
+            title="Pilih Produk"
+            :fetch-products="fetchPickerProducts"
+            :get-unit-price="getPickerUnitPrice"
+            :taken-keys="pickerTakenKeys"
+            :include-serial="serialEnabled"
+            :format-price="formatCurrency"
+            @select="applyPickerSelect"
+            @taken-click="onPickerTakenClick"
+        />
     </div>
 </template>
+
+<style scoped>
+:deep(.row-dup-product) {
+    background: color-mix(in srgb, var(--p-orange-100, #ffedd5) 55%, transparent) !important;
+}
+:deep(.row-dup-unit) {
+    background: color-mix(in srgb, var(--p-red-100, #fee2e2) 65%, transparent) !important;
+}
+.app-dark :deep(.row-dup-product) {
+    background: color-mix(in srgb, var(--p-orange-900, #7c2d12) 35%, transparent) !important;
+}
+.app-dark :deep(.row-dup-unit) {
+    background: color-mix(in srgb, var(--p-red-900, #7f1d1d) 40%, transparent) !important;
+}
+</style>

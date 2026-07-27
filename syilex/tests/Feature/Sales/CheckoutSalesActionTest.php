@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -44,8 +45,10 @@ class CheckoutSalesActionTest extends TestCase
         SettingService::set('rounding.sales_method', 'none', 'string');
         SettingService::set('stock.negative_mode', 'block', 'string');
 
-        // Create user and act as them
+        // Create user and act as them (default: may apply POS manual discount)
         $this->user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'pos.discount', 'guard_name' => 'web']);
+        $this->user->givePermissionTo('pos.discount');
         $this->actingAs($this->user);
 
         // Create warehouse
@@ -97,6 +100,11 @@ class CheckoutSalesActionTest extends TestCase
             'active_user_id' => $this->user->id,
             'status' => 'active',
             'created_by' => $this->user->id,
+        ]);
+
+        $this->terminal->allowedPaymentMethods()->attach([
+            $this->cashPayment->id,
+            $this->transferPayment->id,
         ]);
 
         // Create active shift
@@ -167,6 +175,42 @@ class CheckoutSalesActionTest extends TestCase
                 ['metode_pembayaran_id' => $this->cashPayment->id, 'nominal' => 10000],
             ],
         ], $overrides);
+    }
+    #[Test]
+    public function checkout_rebuilds_forged_qty_base_from_master_konversi(): void
+    {
+        // FE spoof: qty=2, konversi=1, qty_base=200 → stok harus −2 saja
+        $sales = $this->action->execute($this->baseCheckoutData([
+            'items' => [$this->buildItem([
+                'qty' => 2,
+                'konversi' => 1,
+                'qty_base' => 200,
+                'jumlah' => 20000,
+            ])],
+            'payments' => [
+                ['metode_pembayaran_id' => $this->cashPayment->id, 'nominal' => 20000],
+            ],
+        ]));
+
+        $detail = $sales->details->first();
+        $this->assertEquals(2, (float) $detail->qty_base);
+        $this->assertEquals(1, (int) $detail->konversi);
+        $this->assertEquals(10000, (float) $detail->harga_satuan);
+
+        $stock = InventoryStock::where('product_id', $this->product->id)
+            ->where('warehouse_id', $this->warehouse->id)
+            ->value('qty');
+        $this->assertEquals(98, (float) $stock);
+    }
+    #[Test]
+    public function checkout_rejects_warehouse_not_matching_terminal(): void
+    {
+        $otherWh = MasterWarehouse::factory()->create(['status' => 'active']);
+
+        $this->expectException(ValidationException::class);
+        $this->action->execute($this->baseCheckoutData([
+            'warehouse_id' => $otherWh->id,
+        ]));
     }
     #[Test]
     public function checkout_rejects_inactive_customer_via_defense_in_depth(): void
@@ -505,6 +549,84 @@ class CheckoutSalesActionTest extends TestCase
         $this->assertEquals(0, $detail->diskon_1_hasil);
         $this->assertNull($detail->promo_id, 'promo_id cleared for overridden line');
     }
+
+    #[Test]
+    public function checkout_zeros_forged_promo_slots_when_override_promo_true(): void
+    {
+        SettingService::set('promo.enabled', true, 'boolean');
+
+        $promo = \App\Models\DocPromo::create([
+            'ulid' => (string) Str::ulid(),
+            'kode_promo' => 'TEST-FORGE',
+            'nama_promo' => 'Fake Forge',
+            'tanggal_mulai' => now()->subDay()->toDateString(),
+            'tanggal_selesai' => now()->addDay()->toDateString(),
+            'status' => 'approved',
+            'created_by' => $this->user->id,
+        ]);
+        \DB::table('doc_promo_details')->insert([
+            'promo_id' => $promo->id,
+            'target_type' => 'produk',
+            'target_id' => $this->product->id,
+            'min_qty' => 1,
+            'diskon_1_tipe' => 'percent',
+            'diskon_1_nilai' => 10,
+            'diskon_2_tipe' => 'none',
+            'diskon_2_nilai' => 0,
+            'diskon_3_tipe' => 'none',
+            'diskon_3_nilai' => 0,
+            'diskon_4_tipe' => 'none',
+            'diskon_4_nilai' => 0,
+        ]);
+
+        $data = $this->baseCheckoutData();
+        $data['items'][0]['override_promo'] = true;
+        // Attacker forges promo slots while override is on
+        $data['items'][0]['diskon_1_tipe'] = 'percent';
+        $data['items'][0]['diskon_1_nilai'] = 50;
+        $data['items'][0]['diskon_2_tipe'] = 'nominal';
+        $data['items'][0]['diskon_2_nilai'] = 1000;
+
+        $sales = $this->action->execute($data);
+        $detail = $sales->details->first();
+
+        $this->assertEquals('none', $detail->diskon_1_tipe);
+        $this->assertEquals(0, (float) $detail->diskon_1_hasil);
+        $this->assertEquals('none', $detail->diskon_2_tipe);
+        $this->assertEquals(0, (float) $detail->diskon_2_hasil);
+        $this->assertEquals(10000, (float) $sales->grand_total);
+    }
+
+    #[Test]
+    public function checkout_zeros_manual_discounts_without_pos_discount_permission(): void
+    {
+        $this->user->revokePermissionTo('pos.discount');
+
+        SettingService::set('promo.enabled', true, 'boolean');
+        SettingService::set('promo.allow_manual_discount', true, 'boolean');
+
+        $data = $this->baseCheckoutData([
+            'discounts' => [
+                ['tipe' => 'none', 'nilai' => 0],
+                ['tipe' => 'none', 'nilai' => 0],
+                ['tipe' => 'percent', 'nilai' => 10],
+            ],
+            'payments' => [['metode_pembayaran_id' => $this->cashPayment->id, 'nominal' => 10000]],
+        ]);
+        $data['items'][0]['diskon_5_tipe'] = 'percent';
+        $data['items'][0]['diskon_5_nilai'] = 20;
+
+        $sales = $this->action->execute($data);
+        $detail = $sales->details->first();
+
+        $this->assertEquals(0, (float) $sales->diskon_nota_3_hasil);
+        $this->assertEquals('none', $detail->diskon_5_tipe);
+        $this->assertEquals(0, (float) $detail->diskon_5_hasil);
+        $this->assertEquals(10000, (float) $sales->grand_total);
+
+        $this->user->givePermissionTo('pos.discount');
+    }
+
     #[Test]
     public function checkout_rejects_manual_discount_when_promo_disabled()
     {

@@ -3,8 +3,8 @@
 namespace Database\Seeders;
 
 use App\Models\Setting;
-use Illuminate\Database\Seeder;
 use App\Services\SettingService;
+use Illuminate\Database\Seeder;
 
 class SettingSeeder extends Seeder
 {
@@ -24,6 +24,9 @@ class SettingSeeder extends Seeder
             ['group' => 'store', 'key' => 'logo', 'value' => null, 'type' => 'string'],
             ['group' => 'store', 'key' => 'icon', 'value' => null, 'type' => 'string'],
             ['group' => 'store', 'key' => 'npwp', 'value' => '', 'type' => 'string'],
+            ['group' => 'store', 'key' => 'url', 'value' => '', 'type' => 'string'],
+            ['group' => 'store', 'key' => 'receipt_footer', 'value' => 'Terima Kasih!', 'type' => 'string'],
+            ['group' => 'store', 'key' => 'login_background', 'value' => null, 'type' => 'string'],
 
             // =====================================================================
             // REGIONAL
@@ -74,7 +77,6 @@ class SettingSeeder extends Seeder
             // CALCULATION
             // =====================================================================
             ['group' => 'calculation', 'key' => 'discount_mode', 'value' => 'recursive', 'type' => 'string'],
-            ['group' => 'calculation', 'key' => 'cost_allocation_mode', 'value' => 'by_value', 'type' => 'string'],
 
             // =====================================================================
             // PROMO
@@ -83,8 +85,6 @@ class SettingSeeder extends Seeder
             ['group' => 'promo', 'key' => 'allow_manual_discount', 'value' => 'true', 'type' => 'boolean'],
             ['group' => 'promo', 'key' => 'max_manual_discount_percent', 'value' => '100', 'type' => 'decimal'],
             ['group' => 'promo', 'key' => 'max_manual_discount_nominal', 'value' => null, 'type' => 'decimal'],
-            ['group' => 'promo', 'key' => 'auto_apply', 'value' => 'true', 'type' => 'boolean'],
-            ['group' => 'promo', 'key' => 'show_label', 'value' => 'true', 'type' => 'boolean'],
 
             // =====================================================================
             // PRODUCT
@@ -102,8 +102,10 @@ class SettingSeeder extends Seeder
             ['group' => 'prefix', 'key' => 'purchase_order', 'value' => 'POR', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'purchase_return', 'value' => 'RPB', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'sales', 'value' => 'INV', 'type' => 'string'],
+            ['group' => 'prefix', 'key' => 'manual_sales', 'value' => 'SOM', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'sales_return', 'value' => 'RPJ', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'payment_hutang', 'value' => 'PBH', 'type' => 'string'],
+            ['group' => 'prefix', 'key' => 'payment_piutang', 'value' => 'PPI', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'stock_opname', 'value' => 'OPN', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'adjustment', 'value' => 'ADJ', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'transfer', 'value' => 'TRF', 'type' => 'string'],
@@ -111,20 +113,29 @@ class SettingSeeder extends Seeder
             ['group' => 'prefix', 'key' => 'price_change', 'value' => 'PCH', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'hpp_correction', 'value' => 'HPC', 'type' => 'string'],
             ['group' => 'prefix', 'key' => 'promo', 'value' => 'PRM', 'type' => 'string'],
+            ['group' => 'prefix', 'key' => 'serial_intake', 'value' => 'PBS', 'type' => 'string'],
+            ['group' => 'prefix', 'key' => 'serial_change', 'value' => 'PDS', 'type' => 'string'],
+            ['group' => 'prefix', 'key' => 'serial_hpp_correction', 'value' => 'HPS', 'type' => 'string'],
 
             // =====================================================================
             // SCHEDULER (untuk auto-apply scheduled documents)
             // =====================================================================
             ['group' => 'scheduler', 'key' => 'price_change_enabled', 'value' => 'true', 'type' => 'boolean'],
-            ['group' => 'scheduler', 'key' => 'price_change_cooldown', 'value' => '5', 'type' => 'integer'],
             ['group' => 'scheduler', 'key' => 'price_change_max_batch', 'value' => '50', 'type' => 'integer'],
             ['group' => 'scheduler', 'key' => 'activity_log_enabled', 'value' => 'true', 'type' => 'boolean'],
             ['group' => 'scheduler', 'key' => 'activity_log_cooldown', 'value' => '10080', 'type' => 'integer'],
+            ['group' => 'scheduler', 'key' => 'activity_log_retention_days', 'value' => '365', 'type' => 'integer'],
 
             // =====================================================================
             // MODUL (toggle fitur opsional) — retail selalu aktif, elektronik bisa on/off
             // =====================================================================
             ['group' => 'modules', 'key' => 'elektronik_enabled', 'value' => 'true', 'type' => 'boolean'],
+
+            // =====================================================================
+            // RETUR — mode bebas (tanpa dokumen referensi) on/off
+            // =====================================================================
+            ['group' => 'returns', 'key' => 'sales_allow_free', 'value' => 'true', 'type' => 'boolean'],
+            ['group' => 'returns', 'key' => 'purchase_allow_free', 'value' => 'true', 'type' => 'boolean'],
         ];
 
         foreach ($settings as $setting) {
@@ -138,6 +149,6 @@ class SettingSeeder extends Seeder
         SettingService::clearCache();
 
         $this->command->info('Settings seeded successfully!');
-        $this->command->info('Total settings: ' . count($settings));
+        $this->command->info('Total settings: '.count($settings));
     }
 }

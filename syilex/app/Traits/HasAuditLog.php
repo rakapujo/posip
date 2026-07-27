@@ -46,6 +46,11 @@ trait HasAuditLog
             $options->logFillable();
         }
 
+        // Exclude secrets / noisy fields (e.g. User password/pin)
+        if (property_exists($this, 'auditLogExcept') && is_array($this->auditLogExcept) && $this->auditLogExcept !== []) {
+            $options->logExcept($this->auditLogExcept);
+        }
+
         return $options;
     }
 }

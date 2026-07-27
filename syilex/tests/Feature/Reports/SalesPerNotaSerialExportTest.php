@@ -28,9 +28,10 @@ class SalesPerNotaSerialExportTest extends TestCase
 {
     use RefreshDatabase;
 
-    /** Index kolom "Kode Internal" lalu "Nomor Seri" pada map() (15 kolom sebelumnya: 0..14). */
+    /** Index kolom "Kode Internal", "Nomor Seri", "Catatan Serial" pada map() (15 kolom sebelumnya: 0..14). */
     private const KODE_COL = 15;
     private const SN_COL = 16;
+    private const CATATAN_COL = 17;
 
     protected User $user;
     protected MasterWarehouse $warehouse;
@@ -72,6 +73,7 @@ class SalesPerNotaSerialExportTest extends TestCase
             'default_metode_pembayaran_id' => $this->cash->id, 'active_user_id' => $this->user->id,
             'status' => 'active', 'created_by' => $this->user->id,
         ]);
+        $this->terminal->allowedPaymentMethods()->attach([$this->cash->id]);
 
         $this->shift = PosTerminalShift::create([
             'ulid' => (string) Str::ulid(), 'terminal_id' => $this->terminal->id,
@@ -125,7 +127,8 @@ class SalesPerNotaSerialExportTest extends TestCase
         foreach ($serialNumbers as $sn) {
             $units[] = SerialUnit::create([
                 'product_id' => $this->serial->id, 'warehouse_id' => $this->warehouse->id,
-                'serial_number' => $sn, 'harga_modal' => $cost, 'cost_per_unit' => $cost, 'status' => 'tersedia',
+                'serial_number' => $sn, 'harga_modal' => $cost, 'cost_per_unit' => $cost,
+                'harga_jual' => max((float) $cost, 1), 'status' => 'tersedia',
             ]);
         }
         return $units;
@@ -178,7 +181,8 @@ class SalesPerNotaSerialExportTest extends TestCase
 
         $this->assertSame('Kode Internal', $headings[self::KODE_COL]);
         $this->assertSame('Nomor Seri', $headings[self::SN_COL]);
-        $this->assertSame('Nomor Seri', end($headings));
+        $this->assertSame('Catatan Serial', $headings[self::CATATAN_COL]);
+        $this->assertSame('Catatan Serial', end($headings));
     }
     #[Test]
     public function serial_note_lists_all_serial_numbers_comma_separated()

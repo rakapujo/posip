@@ -9,6 +9,8 @@ import { useExportPdf } from '@/composables/useExportPdf';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const notify = useNotification();
 const authStore = useAuthStore();
@@ -18,7 +20,7 @@ const { shouldUppercase, todayString } = useFormatters();
 const canCreate = computed(() => authStore.can('supplier.create'));
 const canUpdate = computed(() => authStore.can('supplier.update'));
 const canDelete = computed(() => authStore.can('supplier.delete'));
-const canExport = computed(() => authStore.can('laporan.export'));
+const canExport = computed(() => authStore.can('supplier.view'));
 const { exporting, exportListPdf } = useExportPdf();
 const exportingExcel = ref(false);
 
@@ -113,6 +115,12 @@ const {
 });
 
 // Export PDF
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    return n;
+});
+
 async function exportPdf() {
     const filterParts = [];
     const params = {
@@ -209,10 +217,10 @@ async function saveSupplier() {
                 </template>
 
                 <template #end>
-                    <div class="flex gap-2">
-                        <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" class="w-40" filter @change="onFilter" />
-                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                    </div>
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" filter @change="onFilter" />
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                </ListFiltersSheet>
                 </template>
             </Toolbar>
 
@@ -238,7 +246,7 @@ async function saveSupplier() {
                         <template #extra>
                             <div class="flex gap-2">
                                 <Button v-if="canExport" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                                <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                                <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  outlined />
                             </div>
                         </template>
                     </DataTableHeader>
@@ -265,21 +273,13 @@ async function saveSupplier() {
                 </Column>
                 <Column :exportable="false" style="min-width: 220px" alignFrozen="right" frozen>
                     <template #body="slotProps">
-                        <Button icon="pi pi-eye" outlined rounded class="mr-2" severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
-                        <Button v-if="canUpdate" icon="pi pi-pencil" outlined rounded class="mr-2" @click="editSupplier(slotProps.data)" v-tooltip.top="'Edit'" aria-label="Edit" />
-                        <Button
-                            v-if="canUpdate"
-                            icon="pi pi-power-off"
-                            outlined
-                            rounded
-                            class="mr-2"
-                            :severity="getToggleSeverity(slotProps.data.status)"
-                            @click="confirmToggleStatus(slotProps.data)"
-                            v-tooltip.top="getToggleLabel(slotProps.data.status)"
-                            :aria-label="getToggleLabel(slotProps.data.status)"
-                        />
-                        <Button v-if="canDelete" icon="pi pi-trash" outlined rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" aria-label="Hapus" />
-                    </template>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" rounded severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" text />
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editSupplier(slotProps.data)" v-tooltip.top="'Edit'" aria-label="Edit" text />
+                        <Button v-if="canUpdate" icon="pi pi-power-off" rounded :severity="getToggleSeverity(slotProps.data.status)" @click="confirmToggleStatus(slotProps.data)" v-tooltip.top="getToggleLabel(slotProps.data.status)" :aria-label="getToggleLabel(slotProps.data.status)" text />
+                        <Button v-if="canDelete" icon="pi pi-trash" rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" aria-label="Hapus" text />
+                    </RowActionButtons>
+                </template>
                 </Column>
             </DataTable>
         </div>

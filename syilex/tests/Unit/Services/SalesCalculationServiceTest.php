@@ -5,8 +5,8 @@ namespace Tests\Unit\Services;
 use App\Services\SalesCalculationService;
 use App\Services\SettingService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 /**
  * Catatan: sebagian besar method adalah pure function (tidak butuh DB),
@@ -18,6 +18,7 @@ use PHPUnit\Framework\Attributes\Test;
 class SalesCalculationServiceTest extends TestCase
 {
     use RefreshDatabase;
+
     #[Test]
     public function calculate_line_item_without_discount()
     {
@@ -26,6 +27,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(0, $result['diskon_nominal']);
         $this->assertEquals(20000, $result['jumlah']);
     }
+
     #[Test]
     public function calculate_line_item_with_percent_discount()
     {
@@ -34,6 +36,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(2000, $result['diskon_nominal']);
         $this->assertEquals(18000, $result['jumlah']);
     }
+
     #[Test]
     public function calculate_line_item_with_decimal_qty()
     {
@@ -42,66 +45,77 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(0, $result['diskon_nominal']);
         $this->assertEquals(25000, $result['jumlah']);
     }
+
     #[Test]
     public function calculate_discount_level_percent()
     {
         $hasil = SalesCalculationService::calculateDiscountLevel('percent', 10, 100000);
         $this->assertEquals(10000, $hasil);
     }
+
     #[Test]
     public function calculate_discount_level_nominal()
     {
         $hasil = SalesCalculationService::calculateDiscountLevel('nominal', 5000, 100000);
         $this->assertEquals(5000, $hasil);
     }
+
     #[Test]
     public function calculate_discount_level_nominal_capped_at_base()
     {
         $hasil = SalesCalculationService::calculateDiscountLevel('nominal', 200000, 100000);
         $this->assertEquals(100000, $hasil, 'Discount nominal should be capped at base amount');
     }
+
     #[Test]
     public function calculate_discount_level_none_returns_zero()
     {
         $hasil = SalesCalculationService::calculateDiscountLevel('none', 10, 100000);
         $this->assertEquals(0, $hasil);
     }
+
     #[Test]
     public function calculate_biaya_level_percent()
     {
         $hasil = SalesCalculationService::calculateBiayaLevel('percent', 5, 100000);
         $this->assertEquals(5000, $hasil);
     }
+
     #[Test]
     public function calculate_biaya_level_nominal_not_capped()
     {
         $hasil = SalesCalculationService::calculateBiayaLevel('nominal', 200000, 100000);
         $this->assertEquals(200000, $hasil, 'Biaya nominal should NOT be capped (unlike discount)');
     }
+
     #[Test]
     public function calculate_biaya_level_none()
     {
         $hasil = SalesCalculationService::calculateBiayaLevel('none', 5, 100000);
         $this->assertEquals(0, $hasil);
     }
+
     #[Test]
     public function calculate_payment_fee_percent()
     {
         $fee = SalesCalculationService::calculatePaymentFee(100000, 'percent', 2);
         $this->assertEquals(2000, $fee);
     }
+
     #[Test]
     public function calculate_payment_fee_nominal()
     {
         $fee = SalesCalculationService::calculatePaymentFee(100000, 'nominal', 5000);
         $this->assertEquals(5000, $fee);
     }
+
     #[Test]
     public function calculate_payment_fee_none()
     {
         $fee = SalesCalculationService::calculatePaymentFee(100000, 'none', 5);
         $this->assertEquals(0, $fee);
     }
+
     #[Test]
     public function discount_level_percent_rounds_to_two_decimals()
     {
@@ -123,6 +137,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertSame(332.97, $result['diskon_nominal']);
         $this->assertSame(666.03, round($result['jumlah'], 2));
     }
+
     #[Test]
     public function line_item_diskon_persen_nol_dianggap_tanpa_diskon()
     {
@@ -132,6 +147,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertSame(0, $result['diskon_nominal']);
         $this->assertEquals(10000, $result['jumlah']);
     }
+
     #[Test]
     public function line_item_diskon_persen_negatif_diabaikan_karena_guard_lebih_dari_nol()
     {
@@ -141,6 +157,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertSame(0, $result['diskon_nominal']);
         $this->assertEquals(20000, $result['jumlah']);
     }
+
     #[Test]
     public function line_item_diskon_seratus_persen_jumlah_nol()
     {
@@ -149,6 +166,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(20000, $result['diskon_nominal']);
         $this->assertEquals(0, $result['jumlah']);
     }
+
     #[Test]
     public function line_item_qty_pecahan_dengan_diskon_persen_eksak()
     {
@@ -169,6 +187,7 @@ class SalesCalculationServiceTest extends TestCase
         $hasil = SalesCalculationService::calculateDiscountLevel('nominal', 100000, 100000);
         $this->assertEquals(100000, $hasil);
     }
+
     #[Test]
     public function discount_level_tipe_tidak_dikenal_mengembalikan_nol()
     {
@@ -176,6 +195,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(0, SalesCalculationService::calculateDiscountLevel('unknown_type', 50, 100000));
         $this->assertEquals(0, SalesCalculationService::calculateDiscountLevel('', 50, 100000));
     }
+
     #[Test]
     public function discount_level_percent_half_up_membulatkan_ke_atas()
     {
@@ -195,6 +215,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(2500, SalesCalculationService::calculateBiayaLevel('percent', 2.5, 100000));
         $this->assertEquals(110.99, SalesCalculationService::calculateBiayaLevel('percent', 33.33, 333));
     }
+
     #[Test]
     public function biaya_level_tipe_tidak_dikenal_mengembalikan_nol()
     {
@@ -210,12 +231,14 @@ class SalesCalculationServiceTest extends TestCase
         // 99999 * 2.5% = 2499.975 → round 2 = 2499.98
         $this->assertEquals(2499.98, SalesCalculationService::calculatePaymentFee(99999, 'percent', 2.5));
     }
+
     #[Test]
     public function payment_fee_nominal_tidak_di_cap_oleh_base()
     {
         // nominal fee bisa melebihi nominal transaksi (mis. biaya admin flat besar)
         $this->assertEquals(500000, SalesCalculationService::calculatePaymentFee(100000, 'nominal', 500000));
     }
+
     #[Test]
     public function payment_fee_tipe_tidak_dikenal_mengembalikan_nol()
     {
@@ -237,6 +260,7 @@ class SalesCalculationServiceTest extends TestCase
         SettingService::set('rounding.sales_method', 'none', 'string');
         SettingService::set('rounding.sales_precision', 0, 'integer');
     }
+
     #[Test]
     public function totals_diskon_recursive_memakai_running_value_tiap_level()
     {
@@ -260,6 +284,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(85500, $result['total_setelah_diskon']);
         $this->assertEquals(85500, $result['grand_total'], 'Tanpa biaya & pajak grand total = setelah diskon');
     }
+
     #[Test]
     public function totals_diskon_sum_memakai_subtotal_asli_tiap_level()
     {
@@ -281,6 +306,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(15000, $result['total_diskon']);
         $this->assertEquals(85000, $result['total_setelah_diskon']);
     }
+
     #[Test]
     public function totals_biaya_kirim_dan_lain_ditambah_sebelum_pajak()
     {
@@ -297,6 +323,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(2000, $result['biaya_lain_hasil']);
         $this->assertEquals(112000, $result['grand_total'], '100000 + 10000 + 2000, pajak 0%');
     }
+
     #[Test]
     public function totals_pajak_exclusive_default_ditambah_di_atas()
     {
@@ -311,6 +338,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(11000, $result['pajak_nominal']);
         $this->assertEquals(111000, $result['grand_total']);
     }
+
     #[Test]
     public function totals_pembulatan_dihitung_sebagai_selisih_grand_minus_before_rounding()
     {
@@ -327,6 +355,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(111000, $result['grand_total']);
         $this->assertEquals(1.11, round($result['pembulatan'], 2));
     }
+
     #[Test]
     public function totals_diskon_nominal_di_cap_pada_base_running()
     {
@@ -346,6 +375,7 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals(100000, $result['total_diskon']);
         $this->assertEquals(0, $result['total_setelah_diskon']);
     }
+
     #[Test]
     public function totals_menjumlahkan_biaya_tambahan_pembayaran()
     {
@@ -364,6 +394,7 @@ class SalesCalculationServiceTest extends TestCase
 
         $this->assertEquals(4000, $result['total_biaya_pembayaran']);
     }
+
     #[Test]
     public function totals_default_tipe_diskon_none_ketika_array_kosong()
     {
@@ -375,5 +406,70 @@ class SalesCalculationServiceTest extends TestCase
         $this->assertEquals('none', $result['diskon_nota_3_tipe']);
         $this->assertEquals(0, $result['total_diskon']);
         $this->assertEquals(100000, $result['subtotal']);
+    }
+
+    #[Test]
+    public function apply_line_discounts_recursive_menumpuk_pada_running_value()
+    {
+        // bruto 100000; d1 10% = 10000 → running 90000; d2 10% = 9000 → total 19000
+        $item = [
+            'qty' => 2, 'harga_satuan' => 50000,
+            'diskon_1_tipe' => 'percent', 'diskon_1_nilai' => 10,
+            'diskon_2_tipe' => 'percent', 'diskon_2_nilai' => 10,
+        ];
+
+        $result = SalesCalculationService::applyLineDiscounts($item, 'recursive');
+
+        $this->assertEquals(10000, $result['diskon_1_hasil']);
+        $this->assertEquals(9000, $result['diskon_2_hasil']);
+        $this->assertEquals(19000, $result['diskon_total']);
+        $this->assertEquals(81000, $result['jumlah']);
+    }
+
+    #[Test]
+    public function apply_line_discounts_sum_memakai_bruto_tiap_level()
+    {
+        // bruto 100000; sum mode: d1 10% = 10000, d2 10% = 10000 (dari bruto) → total 20000
+        $item = [
+            'qty' => 2, 'harga_satuan' => 50000,
+            'diskon_1_tipe' => 'percent', 'diskon_1_nilai' => 10,
+            'diskon_2_tipe' => 'percent', 'diskon_2_nilai' => 10,
+        ];
+
+        $result = SalesCalculationService::applyLineDiscounts($item, 'sum');
+
+        $this->assertEquals(10000, $result['diskon_1_hasil']);
+        $this->assertEquals(10000, $result['diskon_2_hasil']);
+        $this->assertEquals(20000, $result['diskon_total']);
+        $this->assertEquals(80000, $result['jumlah']);
+    }
+
+    #[Test]
+    public function apply_line_discounts_slot_kosong_default_none_dan_semua_lima_slot_terisi()
+    {
+        $result = SalesCalculationService::applyLineDiscounts(
+            ['qty' => 1, 'harga_satuan' => 100000],
+            'recursive'
+        );
+
+        for ($slot = 1; $slot <= 5; $slot++) {
+            $this->assertEquals('none', $result["diskon_{$slot}_tipe"]);
+            $this->assertEquals(0, $result["diskon_{$slot}_nilai"]);
+            $this->assertEquals(0, $result["diskon_{$slot}_hasil"]);
+        }
+        $this->assertEquals(0, $result['diskon_total']);
+        $this->assertEquals(100000, $result['jumlah']);
+    }
+
+    #[Test]
+    public function apply_line_discounts_mempertahankan_field_lain_pada_item()
+    {
+        $result = SalesCalculationService::applyLineDiscounts(
+            ['product_id' => 7, 'qty' => 1, 'harga_satuan' => 100000, 'promo_id' => 3],
+            'recursive'
+        );
+
+        $this->assertEquals(7, $result['product_id']);
+        $this->assertEquals(3, $result['promo_id']);
     }
 }

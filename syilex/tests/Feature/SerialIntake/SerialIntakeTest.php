@@ -66,7 +66,7 @@ class SerialIntakeTest extends TestCase
     {
         return array_map(fn ($u) => array_merge([
             'harga_jual' => 1000, 'grade' => 'A', 'battery_condition' => 'Original',
-            'battery_health' => 90, 'account_status' => 'unlocked',
+            'battery_health' => 90, 'battery_cycle_count' => 100, 'account_status' => 'unlocked',
         ], $u), $units);
     }
 
@@ -222,7 +222,7 @@ class SerialIntakeTest extends TestCase
         $this->createDraft([
             [
                 'serial_number' => 'SN-COND', 'harga_modal' => 5000000,
-                'grade' => 'B', 'battery_condition' => 'Replacement', 'battery_health' => 87, 'account_status' => 'unlocked',
+                'grade' => 'B', 'battery_condition' => 'Replacement', 'battery_health' => 87, 'battery_cycle_count' => 210, 'account_status' => 'unlocked',
             ],
         ])->assertStatus(201);
 
@@ -230,6 +230,7 @@ class SerialIntakeTest extends TestCase
         $this->assertSame('B', $u->grade);
         $this->assertSame('Replacement', $u->battery_condition);
         $this->assertEquals(87, (float) $u->battery_health);
+        $this->assertEquals(210, (int) $u->battery_cycle_count);
         $this->assertSame('unlocked', $u->account_status);
     }
     #[Test]
@@ -247,6 +248,17 @@ class SerialIntakeTest extends TestCase
     {
         $this->createDraft([['serial_number' => 'SN-G', 'harga_modal' => 1000, 'grade' => 'Z']])->assertStatus(422);
         $this->createDraft([['serial_number' => 'SN-H', 'harga_modal' => 1000, 'battery_health' => 150]])->assertStatus(422);
+    }
+
+    #[Test]
+    public function battery_cycle_count_must_be_non_negative_integer()
+    {
+        $this->createDraft([['serial_number' => 'SN-CYC-NEG', 'harga_modal' => 1000, 'battery_cycle_count' => -1]])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('units.0.battery_cycle_count');
+
+        $this->createDraft([['serial_number' => 'SN-CYC-OK', 'harga_modal' => 1000, 'battery_cycle_count' => 0]])
+            ->assertStatus(201);
     }
     #[Test]
     public function duplicate_sn_within_payload_is_allowed()
@@ -538,6 +550,7 @@ class SerialIntakeTest extends TestCase
     public function calculate_endpoint_returns_breakdown()
     {
         $res = $this->postJson('/api/v1/serial-intakes/calculate', [
+            'product_id' => $this->produk->ulid,
             'units' => [['harga_modal' => 10000000], ['harga_modal' => 10000000]],
             'diskon_1_tipe' => 'percent', 'diskon_1_nilai' => 10,
             'biaya_kirim_tipe' => 'nominal', 'biaya_kirim_nilai' => 1000000,

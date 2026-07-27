@@ -2,10 +2,14 @@
 
 namespace Tests\Feature\Pos;
 
+use App\Models\MasterCustomer;
+use App\Models\MasterMetodePembayaran;
+use App\Models\MasterPosTerminal;
 use App\Models\MasterProduk;
 use App\Models\MasterWarehouse;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
@@ -21,6 +25,7 @@ class PosProductsSerialFlagTest extends TestCase
 
     protected User $user;
     protected MasterWarehouse $wh;
+    protected MasterPosTerminal $terminal;
 
     protected function setUp(): void
     {
@@ -31,7 +36,38 @@ class PosProductsSerialFlagTest extends TestCase
         $this->user->givePermissionTo('pos.access');
         $this->actingAs($this->user);
 
-        $this->wh = MasterWarehouse::factory()->create(['status' => 'active']);
+        $this->wh = MasterWarehouse::factory()->create(['status' => 'active', 'is_saleable' => true]);
+
+        $customer = MasterCustomer::create([
+            'ulid' => (string) Str::ulid(),
+            'kode_customer' => 'WALK',
+            'nama' => 'Walk-in',
+            'telepon' => '0800000000',
+            'jenis' => 'walk_in',
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
+        $cash = MasterMetodePembayaran::create([
+            'ulid' => (string) Str::ulid(),
+            'kode_pembayaran' => 'CASH',
+            'nama_pembayaran' => 'Tunai',
+            'metode' => 'tunai',
+            'biaya_tambahan_tipe' => 'none',
+            'biaya_tambahan_nilai' => 0,
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
+        $this->terminal = MasterPosTerminal::create([
+            'ulid' => (string) Str::ulid(),
+            'kode_terminal' => 'TRM-P',
+            'nama_terminal' => 'Kasir Test',
+            'warehouse_id' => $this->wh->id,
+            'default_customer_id' => $customer->id,
+            'default_metode_pembayaran_id' => $cash->id,
+            'active_user_id' => $this->user->id,
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
     }
 
     private function makeProduk(string $kode, bool $serial): MasterProduk
@@ -73,5 +109,48 @@ class PosProductsSerialFlagTest extends TestCase
 
         $this->assertArrayHasKey('is_serial', $product);
         $this->assertFalse((bool) $product['is_serial']);
+    }
+
+    #[Test]
+    public function products_endpoint_omits_avg_cost_without_view_hpp()
+    {
+        $this->makeProduk('RTL', false);
+
+        $product = collect(
+            $this->getJson("/api/v1/pos/products?warehouse_id={$this->wh->id}")
+                ->assertOk()
+                ->json('data.products')
+        )->firstWhere('kode_produk', 'RTL');
+
+        $this->assertNotNull($product);
+        $this->assertArrayNotHasKey('avg_cost', $product);
+    }
+
+    #[Test]
+    public function products_endpoint_includes_avg_cost_with_view_hpp()
+    {
+        Permission::firstOrCreate(['name' => 'stok.view_hpp', 'guard_name' => 'web']);
+        $this->user->givePermissionTo('stok.view_hpp');
+        $this->makeProduk('RTL', false);
+
+        $product = collect(
+            $this->getJson("/api/v1/pos/products?warehouse_id={$this->wh->id}")
+                ->assertOk()
+                ->json('data.products')
+        )->firstWhere('kode_produk', 'RTL');
+
+        $this->assertArrayHasKey('avg_cost', $product);
+    }
+
+    #[Test]
+    public function barcode_endpoint_omits_avg_cost_without_view_hpp()
+    {
+        $this->makeProduk('RTL', false);
+
+        $product = $this->getJson("/api/v1/pos/products/barcode/BC-RTL?warehouse_id={$this->wh->id}")
+            ->assertOk()
+            ->json('data.product');
+
+        $this->assertArrayNotHasKey('avg_cost', $product);
     }
 }

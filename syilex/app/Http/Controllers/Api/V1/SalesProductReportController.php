@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\BaseApiController;
 use App\Models\MasterBrand;
 use App\Models\MasterKategori;
 use App\Models\MasterPosTerminal;
+use App\Models\MasterWarehouse;
 use App\Services\ReportHelperService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,19 +17,12 @@ use Maatwebsite\Excel\Facades\Excel;
 class SalesProductReportController extends BaseApiController
 {
     /**
-     * Nett pendapatan formula: jumlah × (total_setelah_diskon / subtotal)
-     * This allocates nota-level discounts proportionally to each line item.
-     * Excludes: biaya kirim/lain, PPN (tax), pembulatan.
-     */
-    private const NETT_EXPR = 'dsd.jumlah * CASE WHEN ds.subtotal > 0 THEN ds.total_setelah_diskon / ds.subtotal ELSE 1 END';
-
-    /**
      * List sales aggregated by product (paginated, with filters).
      * Only includes completed sales (excludes voided).
      */
     public function index(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
@@ -38,16 +32,29 @@ class SalesProductReportController extends BaseApiController
 
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
 
-        // Retur subquery: pre-aggregate per product (avoids binding issues with paginate)
+        // Retur subquery: linked (by sales tanggal) + free (by return tanggal)
         $returAgg = DB::table('doc_sales_return_detail as dsrd')
             ->join('doc_sales_returns as dsr', 'dsr.id', '=', 'dsrd.return_id')
-            ->join('doc_sales as ds2', 'ds2.id', '=', 'dsr.sales_id')
-            ->where('ds2.status', 'completed')
-            ->where('ds2.tanggal', '>=', $dateFrom)
-            ->where('ds2.tanggal', '<=', $dateToEnd);
+            ->leftJoin('doc_sales as ds2', 'ds2.id', '=', 'dsr.sales_id')
+            ->whereIn('dsr.status', ['lock', 'approved'])
+            ->where(function ($q) use ($dateFrom, $dateToEnd) {
+                $q->where(function ($linked) use ($dateFrom, $dateToEnd) {
+                    $linked->whereNotNull('dsr.sales_id')
+                        ->where('ds2.status', 'completed')
+                        ->where('ds2.tanggal', '>=', $dateFrom)
+                        ->where('ds2.tanggal', '<=', $dateToEnd);
+                })->orWhere(function ($free) use ($dateFrom, $dateToEnd) {
+                    $free->whereNull('dsr.sales_id')
+                        ->where('dsr.tanggal', '>=', $dateFrom)
+                        ->where('dsr.tanggal', '<=', $dateToEnd);
+                });
+            });
 
         if ($request->filled('terminal_id')) {
             $returAgg->where('ds2.terminal_id', $request->terminal_id);
+        }
+        if ($request->filled('warehouse_id')) {
+            $returAgg->where('dsr.warehouse_id', $request->warehouse_id);
         }
 
         $returAgg->select('dsrd.product_id', DB::raw('SUM(dsrd.qty_base) as qty_retur'))
@@ -70,6 +77,9 @@ class SalesProductReportController extends BaseApiController
         if ($request->filled('terminal_id')) {
             $query->where('ds.terminal_id', $request->terminal_id);
         }
+        if ($request->filled('warehouse_id')) {
+            $query->where('ds.warehouse_id', $request->warehouse_id);
+        }
         if ($request->filled('brand_id')) {
             $query->where('mp.brand_id', $request->brand_id);
         }
@@ -80,12 +90,12 @@ class SalesProductReportController extends BaseApiController
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('mp.kode_produk', 'like', "%{$search}%")
-                  ->orWhere('mp.nama_produk', 'like', "%{$search}%");
+                    ->orWhere('mp.nama_produk', 'like', "%{$search}%");
             });
         }
 
         // Select columns — pendapatan uses nett formula (after nota discount allocation)
-        $nett = self::NETT_EXPR;
+        $nett = ReportHelperService::salesLineNettExpr('dsd', 'ds');
         $selectColumns = [
             'mp.ulid',
             'mp.kode_produk',
@@ -140,6 +150,7 @@ class SalesProductReportController extends BaseApiController
                     ? round(($row['laba_kotor'] / $row['pendapatan']) * 100, 2)
                     : 0;
             }
+
             return $row;
         });
 
@@ -154,6 +165,9 @@ class SalesProductReportController extends BaseApiController
         if ($request->filled('terminal_id')) {
             $summaryQuery->where('ds.terminal_id', $request->terminal_id);
         }
+        if ($request->filled('warehouse_id')) {
+            $summaryQuery->where('ds.warehouse_id', $request->warehouse_id);
+        }
         if ($request->filled('brand_id')) {
             $summaryQuery->where('mp.brand_id', $request->brand_id);
         }
@@ -164,10 +178,11 @@ class SalesProductReportController extends BaseApiController
             $search = $request->search;
             $summaryQuery->where(function ($q) use ($search) {
                 $q->where('mp.kode_produk', 'like', "%{$search}%")
-                  ->orWhere('mp.nama_produk', 'like', "%{$search}%");
+                    ->orWhere('mp.nama_produk', 'like', "%{$search}%");
             });
         }
 
+        $hpp = ReportHelperService::salesLineHppExpr('dsd');
         $summarySelect = [
             DB::raw('COUNT(DISTINCT dsd.product_id) as total_produk'),
             DB::raw('COALESCE(SUM(dsd.qty_base), 0) as total_qty'),
@@ -175,21 +190,25 @@ class SalesProductReportController extends BaseApiController
         ];
 
         if ($canViewHpp) {
-            $summarySelect[] = DB::raw('COALESCE(SUM(dsd.qty_base * dsd.hpp_at_time), 0) as total_hpp');
+            $summarySelect[] = DB::raw("COALESCE(SUM({$hpp}), 0) as total_hpp");
         }
 
         $summaryRaw = $summaryQuery->select($summarySelect)->first();
 
-        // Retur summary
+        // Retur summary (T1): tanggal dokumen retur — selaras Gross Profit; terminal/WH on return
+        $returRev = ReportHelperService::returnLineRevenueExpr('dsrd');
+        $returHpp = ReportHelperService::returnLineHppExpr('dsrd');
         $returSummaryQuery = DB::table('doc_sales_return_detail as dsrd')
             ->join('doc_sales_returns as dsr', 'dsr.id', '=', 'dsrd.return_id')
-            ->join('doc_sales as ds', 'ds.id', '=', 'dsr.sales_id')
-            ->where('ds.status', 'completed')
-            ->where('ds.tanggal', '>=', $dateFrom)
-            ->where('ds.tanggal', '<=', $dateToEnd);
+            ->whereIn('dsr.status', ['lock', 'approved'])
+            ->where('dsr.tanggal', '>=', $dateFrom)
+            ->where('dsr.tanggal', '<=', $dateToEnd);
 
         if ($request->filled('terminal_id')) {
-            $returSummaryQuery->where('ds.terminal_id', $request->terminal_id);
+            $returSummaryQuery->where('dsr.terminal_id', $request->terminal_id);
+        }
+        if ($request->filled('warehouse_id')) {
+            $returSummaryQuery->where('dsr.warehouse_id', $request->warehouse_id);
         }
         if ($request->filled('brand_id') || $request->filled('kategori_id') || $request->filled('search')) {
             $returSummaryQuery->join('master_produk as mp', 'mp.id', '=', 'dsrd.product_id');
@@ -203,27 +222,42 @@ class SalesProductReportController extends BaseApiController
                 $search = $request->search;
                 $returSummaryQuery->where(function ($q) use ($search) {
                     $q->where('mp.kode_produk', 'like', "%{$search}%")
-                      ->orWhere('mp.nama_produk', 'like', "%{$search}%");
+                        ->orWhere('mp.nama_produk', 'like', "%{$search}%");
                 });
             }
         }
 
-        $totalQtyRetur = $returSummaryQuery->sum('dsrd.qty_base');
+        $returRaw = $returSummaryQuery->select([
+            DB::raw('COALESCE(SUM(COALESCE(dsrd.qty_base, dsrd.qty)), 0) as total_qty_retur'),
+            DB::raw("COALESCE(SUM({$returRev}), 0) as total_pendapatan_retur"),
+            DB::raw("COALESCE(SUM({$returHpp}), 0) as total_hpp_retur"),
+        ])->first();
+
+        $totalPendapatan = round($summaryRaw->total_pendapatan ?? 0, 2);
+        $totalPendapatanRetur = round($returRaw->total_pendapatan_retur ?? 0, 2);
+        $totalPendapatanNet = round($totalPendapatan - $totalPendapatanRetur, 2);
 
         $summary = [
             'total_produk' => $summaryRaw->total_produk ?? 0,
             'total_qty' => $summaryRaw->total_qty ?? 0,
-            'total_qty_retur' => $totalQtyRetur,
-            'total_pendapatan' => round($summaryRaw->total_pendapatan ?? 0, 2),
+            'total_qty_retur' => $returRaw->total_qty_retur ?? 0,
+            'total_pendapatan' => $totalPendapatan,
+            'total_pendapatan_retur' => $totalPendapatanRetur,
+            'total_pendapatan_net' => $totalPendapatanNet,
         ];
 
         if ($canViewHpp) {
-            $totalHpp = $summaryRaw->total_hpp ?? 0;
-            $totalLaba = round($summary['total_pendapatan'] - $totalHpp, 2);
-            $summary['total_hpp'] = $totalHpp;
-            $summary['total_laba'] = $totalLaba;
-            $summary['avg_margin'] = $summary['total_pendapatan'] > 0
-                ? round(($totalLaba / $summary['total_pendapatan']) * 100, 2)
+            $totalHppGross = round($summaryRaw->total_hpp ?? 0, 2);
+            $totalHppRetur = round($returRaw->total_hpp_retur ?? 0, 2);
+            $totalHppNet = round($totalHppGross - $totalHppRetur, 2);
+            $totalLabaNet = round($totalPendapatanNet - $totalHppNet, 2);
+            // Card HPP/Laba/margin = net (setelah retur); _net aliases for explicit consumers
+            $summary['total_hpp'] = $totalHppNet;
+            $summary['total_hpp_net'] = $totalHppNet;
+            $summary['total_laba'] = $totalLabaNet;
+            $summary['total_laba_net'] = $totalLabaNet;
+            $summary['avg_margin'] = $totalPendapatanNet > 0
+                ? round(($totalLabaNet / $totalPendapatanNet) * 100, 2)
                 : 0;
         }
 
@@ -245,7 +279,7 @@ class SalesProductReportController extends BaseApiController
      */
     public function show(Request $request, string $productUlid): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
@@ -263,12 +297,12 @@ class SalesProductReportController extends BaseApiController
             ->select('mp.id', 'mp.ulid', 'mp.kode_produk', 'mp.nama_produk', 'mb.nama_brand as brand', 'mk.nama_kategori as kategori')
             ->first();
 
-        if (!$product) {
+        if (! $product) {
             return $this->notFound('Produk tidak ditemukan.');
         }
 
         // Nett pendapatan per line
-        $nett = self::NETT_EXPR;
+        $nett = ReportHelperService::salesLineNettExpr('dsd', 'ds');
 
         // Query individual transactions
         $selectColumns = [
@@ -300,6 +334,9 @@ class SalesProductReportController extends BaseApiController
         if ($request->filled('terminal_id')) {
             $query->where('ds.terminal_id', $request->terminal_id);
         }
+        if ($request->filled('warehouse_id')) {
+            $query->where('ds.warehouse_id', $request->warehouse_id);
+        }
 
         // Sort
         $sortField = $request->input('sort_field', 'tanggal');
@@ -326,6 +363,9 @@ class SalesProductReportController extends BaseApiController
 
         if ($request->filled('terminal_id')) {
             $summaryQuery->where('ds.terminal_id', $request->terminal_id);
+        }
+        if ($request->filled('warehouse_id')) {
+            $summaryQuery->where('ds.warehouse_id', $request->warehouse_id);
         }
 
         $summarySelect = [
@@ -369,13 +409,13 @@ class SalesProductReportController extends BaseApiController
      */
     public function export(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
+        if (! auth()->user()->can('laporan.export')) {
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
         $request->validate(ReportHelperService::dateRangeRules());
 
-        $filename = 'laporan_penjualan_per_barang_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'laporan_penjualan_per_barang_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(new SalesPerBarangExport(
             $request->date_from,
@@ -385,6 +425,7 @@ class SalesProductReportController extends BaseApiController
             $request->filled('brand_id') ? (int) $request->brand_id : null,
             $request->filled('kategori_id') ? (int) $request->kategori_id : null,
             $request->input('search'),
+            $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
         ), $filename);
     }
 
@@ -393,7 +434,7 @@ class SalesProductReportController extends BaseApiController
      */
     public function dropdowns(): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -415,10 +456,17 @@ class SalesProductReportController extends BaseApiController
             ->get()
             ->makeVisible('id');
 
+        $warehouses = MasterWarehouse::select('id', 'kode_warehouse', 'nama_warehouse')
+            ->whereIn('id', DB::table('doc_sales')->distinct()->pluck('warehouse_id'))
+            ->orderBy('nama_warehouse')
+            ->get()
+            ->makeVisible('id');
+
         return $this->success([
             'terminals' => $terminals,
             'brands' => $brands,
             'kategoris' => $kategoris,
+            'warehouses' => $warehouses,
         ]);
     }
 }

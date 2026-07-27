@@ -30,10 +30,10 @@ class RepackController extends BaseApiController
             'notes' => 'nullable|string|max:1000',
             'inputs' => 'required|array|min:1',
             'inputs.*.product_id' => 'required|exists:master_produk,id',
-            'inputs.*.qty' => 'required|numeric|min:0.0001',
+            'inputs.*.qty' => 'required|integer|min:1',
             'outputs' => 'required|array|min:1',
             'outputs.*.product_id' => 'required|exists:master_produk,id',
-            'outputs.*.qty' => 'required|numeric|min:0.0001',
+            'outputs.*.qty' => 'required|integer|min:1',
         ];
     }
 
@@ -399,7 +399,7 @@ class RepackController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('repack.create')) {
+        if (!auth()->user()->canAny(['repack.create', 'repack.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -410,6 +410,7 @@ class RepackController extends BaseApiController
 
         $warehouseId = $request->warehouse_id;
         $search = $request->search;
+        $canHpp = auth()->user()->can('stok.view_hpp');
 
         $query = MasterProduk::active()
             ->where('is_serial', false) // produk serial tidak bisa di-repack (unit lahir via Pembelian Serial)
@@ -425,21 +426,25 @@ class RepackController extends BaseApiController
 
         $products = $query->limit(20)->get();
 
-        // Add stock info for each product and transform to array
-        $items = $products->map(function ($product) use ($warehouseId) {
-            $stock = InventoryStock::where('product_id', $product->id)
-                ->where('warehouse_id', $warehouseId)
-                ->first();
+        $stocks = InventoryStock::where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $products->pluck('id'))
+            ->get()
+            ->keyBy('product_id');
 
-            return [
+        $items = $products->map(function ($product) use ($stocks, $canHpp) {
+            $row = [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'avg_cost' => (float) $product->avg_cost,
-                'stok' => $stock ? (int) $stock->qty : 0,
+                'stok' => (int) ($stocks[$product->id]->qty ?? 0),
             ];
+            if ($canHpp) {
+                $row['avg_cost'] = (float) $product->avg_cost;
+            }
+
+            return $row;
         });
 
         return $this->success([
@@ -452,6 +457,10 @@ class RepackController extends BaseApiController
      */
     public function getStockSetting(): JsonResponse
     {
+        if (!auth()->user()->can('repack.view')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'negative_stock_allowed' => SettingService::isNegativeStockAllowed(),
         ]);

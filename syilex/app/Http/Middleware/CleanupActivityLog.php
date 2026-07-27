@@ -53,11 +53,15 @@ class CleanupActivityLog
         }
 
         try {
+            $retentionDays = (int) SettingService::get('scheduler.activity_log_retention_days', 365);
+            $retentionDays = max(30, min(3650, $retentionDays));
+            config(['activitylog.delete_records_older_than_days' => $retentionDays]);
+
             Artisan::call('activitylog:clean');
 
             Log::info('Activity log cleaned via middleware trigger', [
                 'user_id' => auth()->id(),
-                'retention_days' => config('activitylog.delete_records_older_than_days'),
+                'retention_days' => $retentionDays,
             ]);
         } catch (\Exception $e) {
             Log::error('Error in activity log cleanup', [

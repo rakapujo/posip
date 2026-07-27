@@ -4,6 +4,8 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { useConfirm } from 'primevue/useconfirm';
 import { useRouter } from 'vue-router';
 import { onMounted, ref, computed } from 'vue';
@@ -84,6 +86,16 @@ const detailColumns = [
 onMounted(async () => {
     await Promise.all([loadSuppliers(), loadWarehouses()]);
     await loadData();
+});
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedSupplier.value) n++;
+    if (selectedWarehouse.value) n++;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
 });
 
 async function loadSuppliers() {
@@ -358,6 +370,9 @@ async function exportDocPdf(item) {
     if (data.purchase_order) {
         info.push({ label: 'Ref. PO', value: data.purchase_order?.nomor_dokumen || '-' });
     }
+    if (data.serial_intake) {
+        info.push({ label: 'Ref. PBS', value: data.serial_intake?.nomor_dokumen || '-' });
+    }
 
     const columns = [
         { header: '#', field: '#', width: 8, align: 'center' },
@@ -439,18 +454,18 @@ const selisihClass = computed(() => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilterChange" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilterChange" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -539,14 +554,14 @@ const selisihClass = computed(() => {
 
             <Column header="Aksi" style="min-width: 250px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'" />
-                        <Button v-if="canUpdate && data.status === 'draft'" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDelete && data.status === 'draft'" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canLock && data.status === 'draft'" icon="pi pi-lock" severity="warning" text rounded @click="confirmLock(data)" v-tooltip.top="'Lock'" />
-                        <Button v-if="canApprove && data.status === 'lock'" icon="pi pi-check" severity="success" text rounded @click="openApproveDialog(data)" v-tooltip.top="'Approve'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canUpdate && data.status === 'draft'" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDelete && data.status === 'draft'" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canLock && data.status === 'draft'" icon="pi pi-lock" severity="warning" text rounded @click="confirmLock(data)" v-tooltip.top="'Lock'"  />
+                        <Button v-if="canApprove && data.status === 'lock'" icon="pi pi-check" severity="success" text rounded @click="openApproveDialog(data)" v-tooltip.top="'Approve'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -572,6 +587,7 @@ const selisihClass = computed(() => {
                         <DetailItem label="Warehouse" :value="detailData.warehouse?.nama_warehouse" />
                         <DetailItem label="Status" :value="getStatusLabel(detailData.status)" type="badge" :badge-severity="getStatusSeverity(detailData.status)" />
                         <DetailItem v-if="detailData.purchase_order" label="Ref. PO" :value="detailData.purchase_order?.nomor_dokumen" />
+                        <DetailItem v-if="detailData.serial_intake" label="Ref. PBS" :value="detailData.serial_intake?.nomor_dokumen" />
                     </div>
 
                     <!-- Details Table -->
@@ -671,7 +687,16 @@ const selisihClass = computed(() => {
 
                     <!-- Deposit info -->
                     <div v-if="detailData.deposit" class="mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                        <h5 class="font-medium text-green-700 dark:text-green-300 mb-2">Deposit Supplier Terbentuk</h5>
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h5 class="font-medium text-green-700 dark:text-green-300 m-0">Deposit Supplier Terbentuk</h5>
+                            <RouterLink
+                                v-if="detailData.deposit.ulid"
+                                :to="{ name: 'pembelian-deposit', query: { detail: detailData.deposit.ulid } }"
+                                class="text-sm text-primary hover:underline"
+                            >
+                                Lihat deposit
+                            </RouterLink>
+                        </div>
                         <div class="text-sm text-green-600 dark:text-green-400">
                             <div>Nominal: {{ formatCurrency(detailData.deposit.nominal_awal) }}</div>
                             <div>Sisa: {{ formatCurrency(detailData.deposit.sisa_deposit) }}</div>
@@ -683,27 +708,23 @@ const selisihClass = computed(() => {
 
             <template #footer-extra>
                 <div class="flex flex-wrap gap-2">
-                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportDocPdf(detailData)" />
-                    <Button
-                        v-if="canUpdate && detailData.status === 'draft'"
+                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" :loading="exporting" @click="exportDocPdf(detailData)"  outlined />
+                    <Button v-if="canUpdate && detailData.status === 'draft'"
                         label="Edit"
                         icon="pi pi-pencil"
                         severity="warning"
                         @click="
                             editItem(detailData);
                             detailDialog = false;
-                        "
-                    />
-                    <Button
-                        v-if="canDelete && detailData.status === 'draft'"
+                        " />
+                    <Button v-if="canDelete && detailData.status === 'draft'"
                         label="Hapus"
                         icon="pi pi-trash"
                         severity="danger"
                         @click="
                             confirmDelete(detailData);
                             detailDialog = false;
-                        "
-                    />
+                        " />
                     <Button v-if="canLock && detailData.status === 'draft'" label="Lock" icon="pi pi-lock" severity="warning" :loading="processingAction" @click="confirmLock(detailData)" />
                     <Button v-if="canApprove && detailData.status === 'lock'" label="Approve" icon="pi pi-check" severity="success" @click="openApproveDialog(detailData)" />
                 </div>
@@ -756,7 +777,7 @@ const selisihClass = computed(() => {
 
                 <!-- Warning -->
                 <Message severity="info" :closable="false">
-                    Setelah disetujui, deposit supplier sebesar <strong>{{ formatCurrency(approveForm.nilai_diakui) }}</strong> akan terbentuk.
+                    Setelah disetujui, hutang digesek dulu (jika ada); sisa nilai diakui menjadi deposit supplier.
                 </Message>
             </div>
 

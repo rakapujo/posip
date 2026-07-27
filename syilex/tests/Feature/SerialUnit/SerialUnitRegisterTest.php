@@ -64,7 +64,7 @@ class SerialUnitRegisterTest extends TestCase
     {
         $filled = array_map(fn ($u) => array_merge([
             'harga_jual' => 1000, 'grade' => 'A', 'battery_condition' => 'Original',
-            'battery_health' => 90, 'account_status' => 'unlocked',
+            'battery_health' => 90, 'battery_cycle_count' => 100, 'account_status' => 'unlocked',
         ], $u), $units);
 
         $ulid = $this->postJson('/api/v1/serial-intakes', [
@@ -222,6 +222,9 @@ class SerialUnitRegisterTest extends TestCase
     #[Test]
     public function sort_by_harga_modal_ascending_orders_units()
     {
+        Permission::firstOrCreate(['name' => 'stok.view_hpp', 'guard_name' => 'web']);
+        $this->admin->givePermissionTo('stok.view_hpp');
+
         $this->approvedIntakeWithUnits([
             ['serial_number' => 'SN-MAHAL', 'harga_modal' => 30000000],
             ['serial_number' => 'SN-MURAH', 'harga_modal' => 5000000],
@@ -232,6 +235,20 @@ class SerialUnitRegisterTest extends TestCase
         $this->assertSame('SN-MURAH', $res->json('data.items.0.serial_number'));
         $this->assertSame('SN-SEDANG', $res->json('data.items.1.serial_number'));
         $this->assertSame('SN-MAHAL', $res->json('data.items.2.serial_number'));
+    }
+
+    #[Test]
+    public function sort_by_harga_modal_ignored_without_view_hpp()
+    {
+        // Tanpa stok.view_hpp: sort harga_modal di-drop (fallback created_at desc) — anti side-channel.
+        $this->approvedIntakeWithUnits([
+            ['serial_number' => 'SN-MAHAL', 'harga_modal' => 30000000],
+            ['serial_number' => 'SN-MURAH', 'harga_modal' => 5000000],
+        ]);
+
+        $res = $this->getJson('/api/v1/serial-units?sort_field=harga_modal&sort_order=asc')->assertOk();
+        // Bukan urutan modal naik (MURAH dulu) — berarti sort cost tidak aktif.
+        $this->assertNotSame('SN-MURAH', $res->json('data.items.0.serial_number'));
     }
     #[Test]
     public function status_filter_with_unknown_value_returns_empty_list_but_global_summary()

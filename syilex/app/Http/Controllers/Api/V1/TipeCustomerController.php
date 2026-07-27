@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exports\MasterListExport;
 use App\Http\Controllers\Api\BaseApiController;
 use App\Http\Controllers\Concerns\HandlesSimpleMasterCrud;
+use App\Models\DocPromo;
 use App\Models\MasterTipeCustomer;
 
 class TipeCustomerController extends BaseApiController
@@ -53,6 +54,9 @@ class TipeCustomerController extends BaseApiController
             'can_delete' => function (MasterTipeCustomer $tipeCustomer) {
                 if ($tipeCustomer->customers()->exists()) {
                     return $this->error('Tidak dapat menghapus Tipe Customer karena masih digunakan oleh Customer', 422);
+                }
+                if (DocPromo::where('customer_type_id', $tipeCustomer->id)->exists()) {
+                    return $this->error('Tidak dapat menghapus Tipe Customer karena masih dipakai promo', 422);
                 }
 
                 return null;

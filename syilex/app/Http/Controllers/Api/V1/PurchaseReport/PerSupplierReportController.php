@@ -36,10 +36,12 @@ class PerSupplierReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
         $canViewHarga = auth()->user()->can('po.view_harga');
         $source = ReportHelperService::resolveSource($request);
+        $mode = ReportHelperService::resolveMode($request);
+        $applyNet = $canViewHarga && $mode === 'net' && $source !== 'serial';
 
         // Base query: aggregate by supplier (PO + Pembelian Serial via PurchaseReportSource)
         $query = DB::query()
@@ -58,6 +60,17 @@ class PerSupplierReportController extends BaseApiController
             });
         }
 
+        // ACC-3 Wave B: LEFT JOIN retur beli per supplier (pre-aggregated) so mode=net nets each row.
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnMoneyBySupplierSubquery($dateFrom, $dateToEnd, [
+                    'warehouse_id' => $request->input('warehouse_id'),
+                ]),
+                'pret',
+                fn ($join) => $join->on('pret.supplier_id', '=', 'ms.id')
+            );
+        }
+
         // Select columns
         $selectColumns = [
             'ms.id as supplier_id',
@@ -68,7 +81,11 @@ class PerSupplierReportController extends BaseApiController
         ];
 
         if ($canViewHarga) {
-            $selectColumns = array_merge($selectColumns, [
+            $selectColumns = array_merge($selectColumns, $applyNet ? [
+                DB::raw('GREATEST(COALESCE(SUM(dpo.subtotal), 0) - COALESCE(MAX(pret.ret_money), 0), 0) as total_subtotal'),
+                DB::raw('GREATEST(COALESCE(SUM(dpo.total_diskon_header), 0) - COALESCE(MAX(pret.ret_disc), 0), 0) as total_diskon'),
+                DB::raw('GREATEST(COALESCE(SUM(dpo.grand_total), 0) - COALESCE(MAX(pret.ret_money), 0), 0) as total_grand_total'),
+            ] : [
                 DB::raw('COALESCE(SUM(dpo.subtotal), 0) as total_subtotal'),
                 DB::raw('COALESCE(SUM(dpo.total_diskon_header), 0) as total_diskon'),
                 DB::raw('COALESCE(SUM(dpo.grand_total), 0) as total_grand_total'),
@@ -130,10 +147,19 @@ class PerSupplierReportController extends BaseApiController
             $summary['total_subtotal'] = round((float) ($summaryRaw->total_subtotal ?? 0), 2);
             $summary['total_diskon'] = round((float) ($summaryRaw->total_diskon ?? 0), 2);
             $summary['total_grand_total'] = round((float) ($summaryRaw->total_grand_total ?? 0), 2);
+
+            if ($mode === 'net' && $source !== 'serial') {
+                $retFilters = ['warehouse_id' => $request->input('warehouse_id')];
+                $retMoney = ReportHelperService::sumPurchaseReturnMoney($dateFrom, $dateToEnd, $retFilters);
+                $retDisc = ReportHelperService::sumPurchaseReturnDiskonHeader($dateFrom, $dateToEnd, $retFilters);
+                $summary['total_grand_total'] = round(max(0, $summary['total_grand_total'] - $retMoney), 2);
+                $summary['total_subtotal'] = round(max(0, $summary['total_subtotal'] - $retMoney), 2);
+                $summary['total_diskon'] = round(max(0, $summary['total_diskon'] - $retDisc), 2);
+            }
         }
 
         return $this->success(
-            ReportHelperService::buildPaginatedResponse($paginator, $summary, ['can_view_harga' => $canViewHarga, 'source' => $source])
+            ReportHelperService::buildPaginatedResponse($paginator, $summary, ['can_view_harga' => $canViewHarga, 'source' => $source, 'mode' => $mode])
         );
     }
 
@@ -252,7 +278,7 @@ class PerSupplierReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         $filename = 'laporan_pembelian_per_supplier_' . date('Y-m-d_His') . '.xlsx';
 
@@ -263,6 +289,7 @@ class PerSupplierReportController extends BaseApiController
             $request->filled('warehouse_id') ? (int) $request->warehouse_id : null,
             $request->input('search'),
             ReportHelperService::resolveSource($request),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 }

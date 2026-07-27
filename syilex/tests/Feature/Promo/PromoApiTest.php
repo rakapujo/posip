@@ -8,10 +8,10 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\Test;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
-use PHPUnit\Framework\Attributes\Test;
 
 /**
  * HTTP/API tests for PromoController.
@@ -59,24 +59,24 @@ class PromoApiTest extends TestCase
     private function makePromo(array $overrides = []): DocPromo
     {
         return DocPromo::create(array_merge([
-            'kode_promo'    => 'PM-' . Str::random(6),
-            'nama_promo'    => 'Test Promo',
+            'kode_promo' => 'PM-'.Str::random(6),
+            'nama_promo' => 'Test Promo',
             'tanggal_mulai' => today()->subDay()->toDateString(),
-            'status'        => 'draft',
-            'created_by'    => $this->user->id,
+            'status' => 'draft',
+            'created_by' => $this->user->id,
         ], $overrides));
     }
 
     private function addDetail(DocPromo $promo, array $overrides = []): DocPromoDetail
     {
         return $promo->details()->create(array_merge([
-            'target_type'    => 'semua',
-            'min_qty'        => 1,
-            'diskon_1_tipe'  => 'percent',
+            'target_type' => 'semua',
+            'min_qty' => 1,
+            'diskon_1_tipe' => 'percent',
             'diskon_1_nilai' => 10,
-            'diskon_2_tipe'  => 'none', 'diskon_2_nilai' => 0,
-            'diskon_3_tipe'  => 'none', 'diskon_3_nilai' => 0,
-            'diskon_4_tipe'  => 'none', 'diskon_4_nilai' => 0,
+            'diskon_2_tipe' => 'none', 'diskon_2_nilai' => 0,
+            'diskon_3_tipe' => 'none', 'diskon_3_nilai' => 0,
+            'diskon_4_tipe' => 'none', 'diskon_4_nilai' => 0,
         ], $overrides));
     }
 
@@ -84,16 +84,16 @@ class PromoApiTest extends TestCase
     private function validPayload(array $overrides = []): array
     {
         return array_merge([
-            'nama_promo'    => 'Promo Lebaran',
+            'nama_promo' => 'Promo Lebaran',
             'tanggal_mulai' => today()->toDateString(),
             'details' => [[
-                'target_type'    => 'semua',
-                'min_qty'        => 1,
-                'diskon_1_tipe'  => 'percent',
+                'target_type' => 'semua',
+                'min_qty' => 1,
+                'diskon_1_tipe' => 'percent',
                 'diskon_1_nilai' => 10,
-                'diskon_2_tipe'  => 'none', 'diskon_2_nilai' => 0,
-                'diskon_3_tipe'  => 'none', 'diskon_3_nilai' => 0,
-                'diskon_4_tipe'  => 'none', 'diskon_4_nilai' => 0,
+                'diskon_2_tipe' => 'none', 'diskon_2_nilai' => 0,
+                'diskon_3_tipe' => 'none', 'diskon_3_nilai' => 0,
+                'diskon_4_tipe' => 'none', 'diskon_4_nilai' => 0,
             ]],
         ], $overrides);
     }
@@ -112,12 +112,13 @@ class PromoApiTest extends TestCase
         $response->assertOk();
         $response->assertJsonStructure([
             'data' => [
-                'items'      => [['ulid', 'kode_promo', 'nama_promo', 'status']],
+                'items' => [['ulid', 'kode_promo', 'nama_promo', 'status']],
                 'pagination' => ['current_page', 'last_page', 'per_page', 'total'],
             ],
         ]);
         $response->assertJsonPath('data.pagination.total', 2);
     }
+
     #[Test]
     public function index_attaches_display_status_to_each_item(): void
     {
@@ -130,22 +131,47 @@ class PromoApiTest extends TestCase
         $this->assertArrayHasKey('display_status', $item);
         $this->assertEquals('draft', $item['display_status']);
     }
+
     #[Test]
     public function index_filters_by_display_status(): void
     {
         $this->makePromo(['status' => 'draft', 'nama_promo' => 'Draft Promo']);
         $approved = $this->makePromo([
-            'status'        => 'approved',
-            'nama_promo'    => 'Approved Promo',
+            'status' => 'approved',
+            'nama_promo' => 'Approved Promo',
             'tanggal_mulai' => today()->subDay()->toDateString(),
         ]);
 
-        $response = $this->getJson(self::BASE . '?status=draft');
+        $response = $this->getJson(self::BASE.'?status=draft');
 
         $response->assertOk();
         $response->assertJsonPath('data.pagination.total', 1);
         $response->assertJsonPath('data.items.0.nama_promo', 'Draft Promo');
     }
+
+    #[Test]
+    public function index_date_filter_uses_overlap_not_containment(): void
+    {
+        // Promo 1–30 Jul overlaps filter 1–20 Jul (containment would hide it)
+        $this->makePromo([
+            'nama_promo' => 'Overlap Jul',
+            'tanggal_mulai' => '2026-07-01',
+            'tanggal_selesai' => '2026-07-30',
+        ]);
+        $this->makePromo([
+            'nama_promo' => 'Outside Aug',
+            'tanggal_mulai' => '2026-08-01',
+            'tanggal_selesai' => '2026-08-15',
+        ]);
+
+        $response = $this->getJson(self::BASE.'?date_from=2026-07-01&date_to=2026-07-20');
+
+        $response->assertOk();
+        $names = collect($response->json('data.items'))->pluck('nama_promo')->all();
+        $this->assertContains('Overlap Jul', $names);
+        $this->assertNotContains('Outside Aug', $names);
+    }
+
     #[Test]
     public function index_requires_authentication(): void
     {
@@ -153,6 +179,7 @@ class PromoApiTest extends TestCase
 
         $this->getJson(self::BASE)->assertUnauthorized();
     }
+
     #[Test]
     public function index_requires_promo_view_permission(): void
     {
@@ -171,7 +198,7 @@ class PromoApiTest extends TestCase
         $promo = $this->makePromo();
         $this->addDetail($promo);
 
-        $response = $this->getJson(self::BASE . "/{$promo->ulid}");
+        $response = $this->getJson(self::BASE."/{$promo->ulid}");
 
         $response->assertOk();
         $response->assertJsonStructure([
@@ -182,11 +209,13 @@ class PromoApiTest extends TestCase
         $response->assertJsonPath('data.promo.ulid', $promo->ulid);
         $this->assertCount(1, $response->json('data.promo.details'));
     }
+
     #[Test]
     public function show_returns_404_for_unknown_ulid(): void
     {
-        $this->getJson(self::BASE . '/nonexistent-ulid')->assertNotFound();
+        $this->getJson(self::BASE.'/nonexistent-ulid')->assertNotFound();
     }
+
     #[Test]
     public function show_requires_promo_view_permission(): void
     {
@@ -194,7 +223,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->getJson(self::BASE . "/{$promo->ulid}")->assertForbidden();
+        $this->getJson(self::BASE."/{$promo->ulid}")->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -212,6 +241,7 @@ class PromoApiTest extends TestCase
         $kode = $response->json('data.promo.kode_promo');
         $this->assertStringStartsWith('PRM-', $kode);
     }
+
     #[Test]
     public function store_saves_details_in_database(): void
     {
@@ -220,6 +250,7 @@ class PromoApiTest extends TestCase
         $this->assertEquals(1, DocPromo::count());
         $this->assertEquals(1, DocPromoDetail::count());
     }
+
     #[Test]
     public function store_returns_422_when_nama_promo_missing(): void
     {
@@ -228,21 +259,24 @@ class PromoApiTest extends TestCase
 
         $this->postJson(self::BASE, $payload)->assertUnprocessable();
     }
+
     #[Test]
     public function store_returns_422_when_details_empty(): void
     {
         $this->postJson(self::BASE, $this->validPayload(['details' => []]))->assertUnprocessable();
     }
+
     #[Test]
     public function store_returns_422_when_tanggal_selesai_before_tanggal_mulai(): void
     {
         $payload = $this->validPayload([
-            'tanggal_mulai'   => today()->toDateString(),
+            'tanggal_mulai' => today()->toDateString(),
             'tanggal_selesai' => today()->subDay()->toDateString(),
         ]);
 
         $this->postJson(self::BASE, $payload)->assertUnprocessable();
     }
+
     #[Test]
     public function store_returns_422_when_detail_target_type_invalid(): void
     {
@@ -251,6 +285,7 @@ class PromoApiTest extends TestCase
 
         $this->postJson(self::BASE, $payload)->assertUnprocessable();
     }
+
     #[Test]
     public function store_requires_promo_create_permission(): void
     {
@@ -259,14 +294,15 @@ class PromoApiTest extends TestCase
 
         $this->postJson(self::BASE, $this->validPayload())->assertForbidden();
     }
+
     #[Test]
     public function store_persists_customer_category_id(): void
     {
         $kategori = \App\Models\MasterKategoriCustomer::create([
-            'ulid'          => (string) Str::ulid(),
+            'ulid' => (string) Str::ulid(),
             'kode_kategori' => 'GOLD',
             'nama_kategori' => 'Gold Member',
-            'status'        => 'active',
+            'status' => 'active',
         ]);
 
         $payload = $this->validPayload(['customer_category_id' => $kategori->id]);
@@ -279,6 +315,7 @@ class PromoApiTest extends TestCase
         $this->assertEquals($kategori->id, $promo->customer_category_id);
         $response->assertJsonPath('data.promo.customer_category.kode_kategori', 'GOLD');
     }
+
     #[Test]
     public function store_returns_422_when_customer_category_id_does_not_exist(): void
     {
@@ -297,7 +334,7 @@ class PromoApiTest extends TestCase
         $this->addDetail($promo);
 
         $response = $this->putJson(
-            self::BASE . "/{$promo->ulid}",
+            self::BASE."/{$promo->ulid}",
             $this->validPayload(['nama_promo' => 'Promo Updated'])
         );
 
@@ -306,6 +343,7 @@ class PromoApiTest extends TestCase
 
         $this->assertEquals('Promo Updated', $promo->fresh()->nama_promo);
     }
+
     #[Test]
     public function update_replaces_all_details(): void
     {
@@ -315,26 +353,28 @@ class PromoApiTest extends TestCase
 
         $payload = $this->validPayload(); // 1 detail in payload
 
-        $this->putJson(self::BASE . "/{$promo->ulid}", $payload)->assertOk();
+        $this->putJson(self::BASE."/{$promo->ulid}", $payload)->assertOk();
 
         $this->assertEquals(1, $promo->fresh()->details()->count(), 'Old details replaced by new ones');
     }
+
     #[Test]
     public function update_returns_422_when_promo_is_approved(): void
     {
         $promo = $this->makePromo(['status' => 'approved']);
 
-        $this->putJson(self::BASE . "/{$promo->ulid}", $this->validPayload())
+        $this->putJson(self::BASE."/{$promo->ulid}", $this->validPayload())
             ->assertUnprocessable();
     }
+
     #[Test]
     public function update_persists_customer_category_id(): void
     {
         $kategori = \App\Models\MasterKategoriCustomer::create([
-            'ulid'          => (string) Str::ulid(),
+            'ulid' => (string) Str::ulid(),
             'kode_kategori' => 'GOLD',
             'nama_kategori' => 'Gold Member',
-            'status'        => 'active',
+            'status' => 'active',
         ]);
 
         $promo = $this->makePromo();
@@ -342,17 +382,19 @@ class PromoApiTest extends TestCase
 
         $payload = $this->validPayload(['customer_category_id' => $kategori->id]);
 
-        $response = $this->putJson(self::BASE . "/{$promo->ulid}", $payload);
+        $response = $this->putJson(self::BASE."/{$promo->ulid}", $payload);
 
         $response->assertOk();
         $this->assertEquals($kategori->id, $promo->fresh()->customer_category_id);
         $response->assertJsonPath('data.promo.customer_category.kode_kategori', 'GOLD');
     }
+
     #[Test]
     public function update_returns_404_for_unknown_ulid(): void
     {
-        $this->putJson(self::BASE . '/unknown-ulid', $this->validPayload())->assertNotFound();
+        $this->putJson(self::BASE.'/unknown-ulid', $this->validPayload())->assertNotFound();
     }
+
     #[Test]
     public function update_requires_promo_update_permission(): void
     {
@@ -360,7 +402,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->putJson(self::BASE . "/{$promo->ulid}", $this->validPayload())->assertForbidden();
+        $this->putJson(self::BASE."/{$promo->ulid}", $this->validPayload())->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -371,10 +413,11 @@ class PromoApiTest extends TestCase
     {
         $promo = $this->makePromo();
 
-        $this->deleteJson(self::BASE . "/{$promo->ulid}")->assertOk();
+        $this->deleteJson(self::BASE."/{$promo->ulid}")->assertOk();
 
         $this->assertEquals(0, DocPromo::count());
     }
+
     #[Test]
     public function destroy_cascades_to_details(): void
     {
@@ -382,23 +425,26 @@ class PromoApiTest extends TestCase
         $this->addDetail($promo);
         $this->addDetail($promo);
 
-        $this->deleteJson(self::BASE . "/{$promo->ulid}")->assertOk();
+        $this->deleteJson(self::BASE."/{$promo->ulid}")->assertOk();
 
         $this->assertEquals(0, DocPromoDetail::count());
     }
+
     #[Test]
     public function destroy_returns_422_when_promo_is_not_draft(): void
     {
         $promo = $this->makePromo(['status' => 'approved']);
 
-        $this->deleteJson(self::BASE . "/{$promo->ulid}")->assertUnprocessable();
+        $this->deleteJson(self::BASE."/{$promo->ulid}")->assertUnprocessable();
         $this->assertEquals(1, DocPromo::count(), 'Promo must not be deleted');
     }
+
     #[Test]
     public function destroy_returns_404_for_unknown_ulid(): void
     {
-        $this->deleteJson(self::BASE . '/unknown-ulid')->assertNotFound();
+        $this->deleteJson(self::BASE.'/unknown-ulid')->assertNotFound();
     }
+
     #[Test]
     public function destroy_requires_promo_delete_permission(): void
     {
@@ -406,7 +452,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->deleteJson(self::BASE . "/{$promo->ulid}")->assertForbidden();
+        $this->deleteJson(self::BASE."/{$promo->ulid}")->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -418,27 +464,30 @@ class PromoApiTest extends TestCase
         $promo = $this->makePromo();
         $this->addDetail($promo);
 
-        $response = $this->postJson(self::BASE . "/{$promo->ulid}/approve");
+        $response = $this->postJson(self::BASE."/{$promo->ulid}/approve");
 
         $response->assertOk();
         $this->assertEquals('approved', $promo->fresh()->status);
         $this->assertNotNull($promo->fresh()->approved_at);
     }
+
     #[Test]
     public function approve_returns_422_when_already_approved(): void
     {
         $promo = $this->makePromo(['status' => 'approved']);
         $this->addDetail($promo);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/approve")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/approve")->assertUnprocessable();
     }
+
     #[Test]
     public function approve_returns_422_when_no_details(): void
     {
         $promo = $this->makePromo(); // no details
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/approve")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/approve")->assertUnprocessable();
     }
+
     #[Test]
     public function approve_returns_422_when_all_discounts_are_zero(): void
     {
@@ -450,8 +499,9 @@ class PromoApiTest extends TestCase
             'diskon_4_tipe' => 'none', 'diskon_4_nilai' => 0,
         ]);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/approve")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/approve")->assertUnprocessable();
     }
+
     #[Test]
     public function approve_requires_promo_approve_permission(): void
     {
@@ -460,7 +510,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/approve")->assertForbidden();
+        $this->postJson(self::BASE."/{$promo->ulid}/approve")->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -472,7 +522,7 @@ class PromoApiTest extends TestCase
         $promo = $this->makePromo(['status' => 'approved', 'approved_at' => now(), 'approved_by' => $this->user->id]);
         $this->addDetail($promo);
 
-        $response = $this->postJson(self::BASE . "/{$promo->ulid}/cancel");
+        $response = $this->postJson(self::BASE."/{$promo->ulid}/cancel");
 
         $response->assertOk();
         $fresh = $promo->fresh();
@@ -480,13 +530,15 @@ class PromoApiTest extends TestCase
         $this->assertNull($fresh->approved_at);
         $this->assertNull($fresh->approved_by);
     }
+
     #[Test]
     public function cancel_returns_422_when_promo_is_draft(): void
     {
         $promo = $this->makePromo(['status' => 'draft']);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/cancel")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/cancel")->assertUnprocessable();
     }
+
     #[Test]
     public function cancel_requires_promo_approve_permission(): void
     {
@@ -494,7 +546,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/cancel")->assertForbidden();
+        $this->postJson(self::BASE."/{$promo->ulid}/cancel")->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -505,18 +557,20 @@ class PromoApiTest extends TestCase
     {
         $promo = $this->makePromo(['status' => 'approved']);
 
-        $response = $this->postJson(self::BASE . "/{$promo->ulid}/deactivate");
+        $response = $this->postJson(self::BASE."/{$promo->ulid}/deactivate");
 
         $response->assertOk();
         $this->assertEquals('inactive', $promo->fresh()->status);
     }
+
     #[Test]
     public function deactivate_returns_422_when_promo_is_not_approved(): void
     {
         $promo = $this->makePromo(['status' => 'draft']);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/deactivate")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/deactivate")->assertUnprocessable();
     }
+
     #[Test]
     public function deactivate_requires_promo_toggle_permission(): void
     {
@@ -524,7 +578,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/deactivate")->assertForbidden();
+        $this->postJson(self::BASE."/{$promo->ulid}/deactivate")->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -535,23 +589,26 @@ class PromoApiTest extends TestCase
     {
         $promo = $this->makePromo(['status' => 'inactive']);
 
-        $response = $this->postJson(self::BASE . "/{$promo->ulid}/reactivate");
+        $response = $this->postJson(self::BASE."/{$promo->ulid}/reactivate");
 
         $response->assertOk();
         $this->assertEquals('approved', $promo->fresh()->status);
     }
+
     #[Test]
     public function reactivate_returns_422_when_promo_is_not_inactive(): void
     {
         $promo = $this->makePromo(['status' => 'draft']);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/reactivate")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/reactivate")->assertUnprocessable();
     }
+
     #[Test]
     public function reactivate_returns_404_for_unknown_ulid(): void
     {
-        $this->postJson(self::BASE . '/unknown-ulid/reactivate')->assertNotFound();
+        $this->postJson(self::BASE.'/unknown-ulid/reactivate')->assertNotFound();
     }
+
     #[Test]
     public function reactivate_requires_promo_toggle_permission(): void
     {
@@ -559,7 +616,7 @@ class PromoApiTest extends TestCase
         $noPermUser = User::factory()->create();
         Sanctum::actingAs($noPermUser);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/reactivate")->assertForbidden();
+        $this->postJson(self::BASE."/{$promo->ulid}/reactivate")->assertForbidden();
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -580,22 +637,22 @@ class PromoApiTest extends TestCase
         $this->assertEquals('draft', DocPromo::where('ulid', $ulid)->value('status'));
 
         // 2. approve → approved + approved_at + approved_by
-        $this->postJson(self::BASE . "/{$ulid}/approve")->assertOk();
+        $this->postJson(self::BASE."/{$ulid}/approve")->assertOk();
         $promo = DocPromo::where('ulid', $ulid)->first();
         $this->assertEquals('approved', $promo->status);
         $this->assertNotNull($promo->approved_at);
         $this->assertEquals($this->user->id, $promo->approved_by);
 
         // 3. deactivate → inactive
-        $this->postJson(self::BASE . "/{$ulid}/deactivate")->assertOk();
+        $this->postJson(self::BASE."/{$ulid}/deactivate")->assertOk();
         $this->assertEquals('inactive', DocPromo::where('ulid', $ulid)->value('status'));
 
         // 4. reactivate → approved kembali
-        $this->postJson(self::BASE . "/{$ulid}/reactivate")->assertOk();
+        $this->postJson(self::BASE."/{$ulid}/reactivate")->assertOk();
         $this->assertEquals('approved', DocPromo::where('ulid', $ulid)->value('status'));
 
         // 5. cancel → draft + meta approval bersih
-        $this->postJson(self::BASE . "/{$ulid}/cancel")->assertOk();
+        $this->postJson(self::BASE."/{$ulid}/cancel")->assertOk();
         $fresh = DocPromo::where('ulid', $ulid)->first();
         $this->assertEquals('draft', $fresh->status);
         $this->assertNull($fresh->approved_at);
@@ -610,7 +667,7 @@ class PromoApiTest extends TestCase
     public function store_lolos_saat_tanggal_selesai_sama_dengan_tanggal_mulai(): void
     {
         $payload = $this->validPayload([
-            'tanggal_mulai'   => today()->toDateString(),
+            'tanggal_mulai' => today()->toDateString(),
             'tanggal_selesai' => today()->toDateString(),
         ]);
 
@@ -625,7 +682,7 @@ class PromoApiTest extends TestCase
     public function store_tolak_saat_jam_selesai_tidak_setelah_jam_mulai(): void
     {
         $payload = $this->validPayload([
-            'jam_mulai'   => '10:00',
+            'jam_mulai' => '10:00',
             'jam_selesai' => '09:00',
         ]);
 
@@ -699,12 +756,12 @@ class PromoApiTest extends TestCase
     {
         $warehouse = \App\Models\MasterWarehouse::factory()->create(['status' => 'active']);
         $terminal = \App\Models\MasterPosTerminal::create([
-            'ulid'          => (string) Str::ulid(),
+            'ulid' => (string) Str::ulid(),
             'kode_terminal' => 'TRM-API',
             'nama_terminal' => 'Kasir API',
-            'warehouse_id'  => $warehouse->id,
-            'status'        => 'active',
-            'created_by'    => $this->user->id,
+            'warehouse_id' => $warehouse->id,
+            'status' => 'active',
+            'created_by' => $this->user->id,
         ]);
 
         $response = $this->postJson(self::BASE, $this->validPayload(['terminal_id' => $terminal->id]));
@@ -712,6 +769,36 @@ class PromoApiTest extends TestCase
         $response->assertCreated();
         $ulid = $response->json('data.promo.ulid');
         $this->assertEquals($terminal->id, DocPromo::where('ulid', $ulid)->value('terminal_id'));
+    }
+
+    #[Test]
+    public function store_channel_penjualan_forces_terminal_null(): void
+    {
+        $warehouse = \App\Models\MasterWarehouse::factory()->create(['status' => 'active']);
+        $terminal = \App\Models\MasterPosTerminal::create([
+            'kode_terminal' => 'TRM-CHANNEL',
+            'nama_terminal' => 'Kasir Channel',
+            'warehouse_id' => $warehouse->id,
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
+
+        $response = $this->postJson(self::BASE, $this->validPayload([
+            'channel' => 'penjualan',
+            'terminal_id' => $terminal->id,
+        ]));
+
+        $response->assertCreated()->assertJsonPath('data.promo.channel', 'penjualan');
+        $promo = DocPromo::where('ulid', $response->json('data.promo.ulid'))->firstOrFail();
+        $this->assertNull($promo->terminal_id);
+    }
+
+    #[Test]
+    public function store_rejects_invalid_channel(): void
+    {
+        $this->postJson(self::BASE, $this->validPayload(['channel' => 'marketplace']))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('channel');
     }
 
     /**
@@ -755,7 +842,7 @@ class PromoApiTest extends TestCase
     {
         $promo = $this->makePromo(['status' => 'inactive']);
 
-        $this->putJson(self::BASE . "/{$promo->ulid}", $this->validPayload())
+        $this->putJson(self::BASE."/{$promo->ulid}", $this->validPayload())
             ->assertUnprocessable();
     }
 
@@ -768,7 +855,7 @@ class PromoApiTest extends TestCase
         $this->makePromo(['nama_promo' => 'PROMO RAMADHAN']);
         $this->makePromo(['nama_promo' => 'PROMO NATAL']);
 
-        $response = $this->getJson(self::BASE . '?search=RAMADHAN');
+        $response = $this->getJson(self::BASE.'?search=RAMADHAN');
 
         $response->assertOk();
         $response->assertJsonPath('data.pagination.total', 1);
@@ -791,7 +878,7 @@ class PromoApiTest extends TestCase
             'diskon_4_tipe' => 'none',    'diskon_4_nilai' => 0,
         ]);
 
-        $this->postJson(self::BASE . "/{$promo->ulid}/approve")->assertUnprocessable();
+        $this->postJson(self::BASE."/{$promo->ulid}/approve")->assertUnprocessable();
         $this->assertEquals('draft', $promo->fresh()->status, 'Promo harus tetap draft');
     }
 
@@ -803,17 +890,17 @@ class PromoApiTest extends TestCase
     public function update_dapat_menghapus_customer_category_id(): void
     {
         $kategori = \App\Models\MasterKategoriCustomer::create([
-            'ulid'          => (string) Str::ulid(),
+            'ulid' => (string) Str::ulid(),
             'kode_kategori' => 'GOLD',
             'nama_kategori' => 'Gold Member',
-            'status'        => 'active',
+            'status' => 'active',
         ]);
 
         $promo = $this->makePromo(['customer_category_id' => $kategori->id]);
         $this->addDetail($promo);
 
         // Payload tanpa customer_category_id → controller set null
-        $this->putJson(self::BASE . "/{$promo->ulid}", $this->validPayload())->assertOk();
+        $this->putJson(self::BASE."/{$promo->ulid}", $this->validPayload())->assertOk();
 
         $this->assertNull($promo->fresh()->customer_category_id, 'Targeting kategori harus dilepas');
     }

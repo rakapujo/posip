@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Exports\SupplierDepositExport;
 use App\Http\Controllers\Api\BaseApiController;
+use App\Models\MasterSupplier;
 use App\Models\SupplierDeposit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
 
 class SupplierDepositController extends BaseApiController
@@ -65,8 +67,17 @@ class SupplierDepositController extends BaseApiController
         $perPage = $this->getPerPage($request, 15);
         $items = $query->paginate($perPage);
 
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
+        $transformed = collect($items->items())->map(function ($item) use ($canViewNominal) {
+            if (! $canViewNominal) {
+                $item->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
+            }
+
+            return $item;
+        });
+
         return $this->success([
-            'items' => $items->items(),
+            'items' => $transformed,
             'pagination' => [
                 'current_page' => $items->currentPage(),
                 'last_page' => $items->lastPage(),
@@ -101,6 +112,13 @@ class SupplierDepositController extends BaseApiController
         $deposit->can_edit = $deposit->canBeEdited();
         $deposit->can_delete = $deposit->canBeDeleted();
 
+        if (! auth()->user()->can('hutang.view_nominal')) {
+            $deposit->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
+            if ($deposit->relationLoaded('purchaseReturn') && $deposit->purchaseReturn) {
+                $deposit->purchaseReturn->makeHidden(['nilai_kalkulasi', 'nilai_diakui', 'selisih']);
+            }
+        }
+
         return $this->success([
             'deposit' => $deposit,
         ]);
@@ -115,13 +133,7 @@ class SupplierDepositController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk membuat deposit supplier.');
         }
 
-        $validated = $request->validate([
-            'supplier_id' => 'required|exists:master_supplier,id',
-            'tanggal' => 'required|date',
-            'nominal_awal' => 'required|numeric|min:0.01',
-            'no_referensi' => 'nullable|string|max:50',
-            'keterangan' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validate($this->rules());
 
         $deposit = SupplierDeposit::create([
             'supplier_id' => $validated['supplier_id'],
@@ -142,6 +154,10 @@ class SupplierDepositController extends BaseApiController
             'createdBy:id,name',
         ]);
 
+        if (! auth()->user()->can('hutang.view_nominal')) {
+            $deposit->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
+        }
+
         return $this->created([
             'deposit' => $deposit,
             'message' => 'Deposit supplier berhasil dibuat.',
@@ -157,61 +173,56 @@ class SupplierDepositController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk mengubah deposit supplier.');
         }
 
-        $deposit = SupplierDeposit::where('ulid', $ulid)->first();
+        $validated = $request->validate($this->rules());
 
-        if (!$deposit) {
+        try {
+            $deposit = DB::transaction(function () use ($ulid, $validated) {
+                $deposit = SupplierDeposit::where('ulid', $ulid)->lockForUpdate()->firstOrFail();
+                if (! $deposit->canBeEdited()) {
+                    throw new \DomainException('Deposit dari retur pembelian tidak dapat diubah.');
+                }
+
+                if ($validated['nominal_awal'] < $deposit->nominal_terpakai) {
+                    throw new \DomainException(
+                        'Nominal awal tidak boleh lebih kecil dari nominal terpakai (' . number_format($deposit->nominal_terpakai, 2) . ').'
+                    );
+                }
+
+                $newSisaDeposit = $validated['nominal_awal'] - $deposit->nominal_terpakai;
+                $newStatus = 'available';
+                if ($newSisaDeposit <= 0) {
+                    $newStatus = 'used_all';
+                } elseif ($deposit->nominal_terpakai > 0) {
+                    $newStatus = 'used_partial';
+                }
+
+                $deposit->update([
+                    'supplier_id' => $validated['supplier_id'],
+                    'tanggal' => $validated['tanggal'],
+                    'nominal_awal' => $validated['nominal_awal'],
+                    'sisa_deposit' => $newSisaDeposit,
+                    'status' => $newStatus,
+                    'no_referensi' => $validated['no_referensi'] ?? null,
+                    'keterangan' => $validated['keterangan'] ?? null,
+                    'updated_by' => auth()->id(),
+                    'updated_at' => now(),
+                ]);
+
+                return $deposit->load([
+                    'supplier:id,ulid,kode_supplier,nama_supplier',
+                    'createdBy:id,name',
+                    'updatedBy:id,name',
+                ]);
+            });
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
             return $this->notFound('Deposit tidak ditemukan.');
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
         }
 
-        // Only manual deposits can be edited
-        if (!$deposit->canBeEdited()) {
-            return $this->error('Deposit dari retur pembelian tidak dapat diubah.', 422);
+        if (! auth()->user()->can('hutang.view_nominal')) {
+            $deposit->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']);
         }
-
-        $validated = $request->validate([
-            'supplier_id' => 'required|exists:master_supplier,id',
-            'tanggal' => 'required|date',
-            'nominal_awal' => 'required|numeric|min:0.01',
-            'no_referensi' => 'nullable|string|max:50',
-            'keterangan' => 'nullable|string|max:500',
-        ]);
-
-        // Validate nominal_awal cannot be less than nominal_terpakai
-        if ($validated['nominal_awal'] < $deposit->nominal_terpakai) {
-            return $this->error(
-                'Nominal awal tidak boleh lebih kecil dari nominal terpakai (' . number_format($deposit->nominal_terpakai, 2) . ').',
-                422
-            );
-        }
-
-        // Calculate new sisa_deposit
-        $newSisaDeposit = $validated['nominal_awal'] - $deposit->nominal_terpakai;
-
-        // Update status based on new values
-        $newStatus = 'available';
-        if ($newSisaDeposit <= 0) {
-            $newStatus = 'used_all';
-        } elseif ($deposit->nominal_terpakai > 0) {
-            $newStatus = 'used_partial';
-        }
-
-        $deposit->update([
-            'supplier_id' => $validated['supplier_id'],
-            'tanggal' => $validated['tanggal'],
-            'nominal_awal' => $validated['nominal_awal'],
-            'sisa_deposit' => $newSisaDeposit,
-            'status' => $newStatus,
-            'no_referensi' => $validated['no_referensi'] ?? null,
-            'keterangan' => $validated['keterangan'] ?? null,
-            'updated_by' => auth()->id(),
-            'updated_at' => now(),
-        ]);
-
-        $deposit->load([
-            'supplier:id,ulid,kode_supplier,nama_supplier',
-            'createdBy:id,name',
-            'updatedBy:id,name',
-        ]);
 
         return $this->success([
             'deposit' => $deposit,
@@ -228,25 +239,21 @@ class SupplierDepositController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk menghapus deposit supplier.');
         }
 
-        $deposit = SupplierDeposit::where('ulid', $ulid)->first();
-
-        if (!$deposit) {
+        try {
+            DB::transaction(function () use ($ulid) {
+                $deposit = SupplierDeposit::where('ulid', $ulid)->lockForUpdate()->firstOrFail();
+                if (! $deposit->canBeDeleted()) {
+                    throw new \DomainException('Hanya deposit manual yang belum terpakai dapat dihapus.');
+                }
+                $deposit->delete();
+            });
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
             return $this->notFound('Deposit tidak ditemukan.');
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 422);
         }
 
-        // Only manual deposits can be deleted
-        if (!$deposit->isManual()) {
-            return $this->error('Deposit dari retur pembelian tidak dapat dihapus.', 422);
-        }
-
-        // Cannot delete if already used
-        if ($deposit->nominal_terpakai > 0) {
-            return $this->error('Deposit yang sudah terpakai tidak dapat dihapus.', 422);
-        }
-
-        $deposit->delete();
-
-        return $this->deleted('Deposit supplier berhasil dihapus.');
+        return $this->success(null, 'Deposit supplier berhasil dihapus.');
     }
 
     /**
@@ -254,8 +261,11 @@ class SupplierDepositController extends BaseApiController
      */
     public function export(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
-            return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
+        if (! auth()->user()->can('deposit-supplier.view') || ! auth()->user()->can('laporan.export')) {
+            return $this->forbidden('Anda tidak memiliki akses untuk export deposit supplier.');
+        }
+        if (! auth()->user()->can('hutang.view_nominal')) {
+            return $this->forbidden('Export deposit membutuhkan izin melihat nominal.');
         }
 
         $filename = 'deposit_supplier_' . date('Y-m-d_His') . '.xlsx';
@@ -303,17 +313,18 @@ class SupplierDepositController extends BaseApiController
             ->orderByDesc('p.tanggal')
             ->get();
 
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
         $totalUsed = $rows->sum('nominal_digunakan');
 
         return $this->success([
             'deposit' => [
                 'ulid' => $deposit->ulid,
-                'nominal_awal' => (float) $deposit->nominal_awal,
-                'nominal_terpakai' => (float) $deposit->nominal_terpakai,
-                'sisa_deposit' => (float) $deposit->sisa_deposit,
+                'nominal_awal' => $canViewNominal ? (float) $deposit->nominal_awal : null,
+                'nominal_terpakai' => $canViewNominal ? (float) $deposit->nominal_terpakai : null,
+                'sisa_deposit' => $canViewNominal ? (float) $deposit->sisa_deposit : null,
             ],
             'usage_count' => $rows->count(),
-            'total_used_from_history' => (float) $totalUsed,
+            'total_used_from_history' => $canViewNominal ? (float) $totalUsed : null,
             'items' => $rows->map(fn ($r) => [
                 'id' => $r->id,
                 'pembayaran_id' => $r->pembayaran_id,
@@ -325,7 +336,7 @@ class SupplierDepositController extends BaseApiController
                     'kode' => $r->kode_supplier,
                     'nama' => $r->nama_supplier,
                 ] : null,
-                'nominal_digunakan' => (float) $r->nominal_digunakan,
+                'nominal_digunakan' => $canViewNominal ? (float) $r->nominal_digunakan : null,
             ])->values(),
         ]);
     }
@@ -341,22 +352,31 @@ class SupplierDepositController extends BaseApiController
 
         $query = SupplierDeposit::query();
 
-        // Filter by supplier
         if ($request->filled('supplier_id')) {
             $query->bySupplier($request->supplier_id);
         }
 
-        $totalDeposit = (clone $query)->sum('nominal_awal');
-        $totalUsed = (clone $query)->sum('nominal_terpakai');
-        $totalBalance = (clone $query)->sum('sisa_deposit');
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->boolean('has_balance_only')) {
+            $query->hasBalance();
+        }
+
+        if ($request->filled('date_from') || $request->filled('date_to')) {
+            $query->byDateRange($request->date_from, $request->date_to);
+        }
+
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
         $depositCount = (clone $query)->count();
-        $availableCount = (clone $query)->where('status', 'available')->count();
+        $availableCount = (clone $query)->where('sisa_deposit', '>', 0)->count();
 
         return $this->success([
             'summary' => [
-                'total_deposit' => (float) $totalDeposit,
-                'total_used' => (float) $totalUsed,
-                'total_balance' => (float) $totalBalance,
+                'total_deposit' => $canViewNominal ? (float) (clone $query)->sum('nominal_awal') : null,
+                'total_used' => $canViewNominal ? (float) (clone $query)->sum('nominal_terpakai') : null,
+                'total_balance' => $canViewNominal ? (float) (clone $query)->sum('sisa_deposit') : null,
                 'deposit_count' => $depositCount,
                 'available_count' => $availableCount,
             ],
@@ -381,15 +401,34 @@ class SupplierDepositController extends BaseApiController
         ])
             ->bySupplier($request->supplier_id)
             ->hasBalance()
-            ->available()
             ->orderBy('tanggal', 'asc')
             ->get();
 
-        $totalAvailable = $deposits->sum('sisa_deposit');
+        $canViewNominal = auth()->user()->can('hutang.view_nominal');
+        if (! $canViewNominal) {
+            $deposits->each(fn ($d) => $d->makeHidden(['nominal_awal', 'nominal_terpakai', 'sisa_deposit']));
+        }
+
+        $totalAvailable = $canViewNominal ? (float) $deposits->sum('sisa_deposit') : null;
 
         return $this->success([
             'deposits' => $deposits,
-            'total_available' => (float) $totalAvailable,
+            'total_available' => $totalAvailable,
         ]);
+    }
+
+    private function rules(): array
+    {
+        return [
+            'supplier_id' => ['required', 'exists:master_supplier,id', function ($attribute, $value, $fail) {
+                if (! MasterSupplier::whereKey($value)->active()->exists()) {
+                    $fail('Supplier harus aktif.');
+                }
+            }],
+            'tanggal' => 'required|date',
+            'nominal_awal' => 'required|numeric|min:0.01',
+            'no_referensi' => 'nullable|string|max:50',
+            'keterangan' => 'nullable|string|max:500',
+        ];
     }
 }

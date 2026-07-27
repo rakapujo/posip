@@ -51,8 +51,9 @@ async function runAsyncTests() {
         clearActiveConnection();
     });
 
-    await runner.testAsync('printRawCore needPicker when no connection and no legacy', async () => {
+    await runner.testAsync('printRawCore needPicker when no connection', async () => {
         clearActiveConnection();
+        clearStoredPrinter();
         const r = await printRawCore(sampleB64, {
             reconnectFn: async () => null
         });
@@ -66,26 +67,6 @@ async function runAsyncTests() {
         runner.assertEqual(r.error, 'Payload ESC/POS kosong');
     });
 
-    await runner.testAsync('printRawCore legacy-only when no browser connection', async () => {
-        clearActiveConnection();
-        clearStoredPrinter();
-        let legacyCalled = false;
-        const r = await printRawCore(sampleB64, {
-            reconnectFn: async () => null,
-            legacyPrinterId: 'WIN:TEST',
-            legacy: {
-                checkStatus: async () => true,
-                printRaw: async () => {
-                    legacyCalled = true;
-                    return { success: true };
-                }
-            }
-        });
-        runner.assertTrue(r.ok);
-        runner.assertTrue(legacyCalled);
-        runner.assertTrue(r.legacyUsed);
-    });
-
     await runner.testAsync('printRawCore stored kind without connection → needPicker + reconnect message', async () => {
         clearActiveConnection();
         setStoredPrinter({ kind: 'serial', terminalUlid: 'TERM1' });
@@ -96,7 +77,7 @@ async function runAsyncTests() {
         clearStoredPrinter();
     });
 
-    await runner.testAsync('printRawCore falls back to legacy on write failure', async () => {
+    await runner.testAsync('printRawCore write failure returns error', async () => {
         clearActiveConnection();
         setActiveConnection({
             kind: 'serial',
@@ -106,54 +87,25 @@ async function runAsyncTests() {
             },
             disconnect: async () => {}
         });
-        let legacyCalled = false;
-        const r = await printRawCore(sampleB64, {
-            legacyPrinterId: 'WIN:XP-58',
-            legacy: {
-                checkStatus: async () => true,
-                printRaw: async () => {
-                    legacyCalled = true;
-                    return { success: true };
-                }
-            }
-        });
-        runner.assertTrue(r.ok);
-        runner.assertTrue(legacyCalled);
-        runner.assertTrue(r.legacyUsed);
+        const r = await printRawCore(sampleB64);
+        runner.assertFalse(r.ok);
+        runner.assertContains(r.error, 'USB unplugged');
         clearActiveConnection();
     });
 
-    await runner.testAsync('printRawCore legacy checkStatus false → needPicker with legacy hint', async () => {
+    await runner.testAsync('checkStatusCore false when no pair/connection', async () => {
         clearActiveConnection();
         clearStoredPrinter();
-        const r = await printRawCore(sampleB64, {
-            reconnectFn: async () => null,
-            legacyPrinterId: 'WIN:X',
-            legacy: {
-                checkStatus: async () => false,
-                printRaw: async () => ({ success: false })
-            }
-        });
-        runner.assertFalse(r.ok);
-        runner.assertTrue(r.needPicker);
-        runner.assertContains(r.error, 'Pasangkan printer');
+        const ok = await checkStatusCore();
+        runner.assertFalse(ok);
     });
 
-    await runner.testAsync('checkStatusCore true when browser thermal supported', async () => {
-        const ok = await checkStatusCore({ serial: {} }, null);
+    await runner.testAsync('checkStatusCore true when printer paired in storage', async () => {
+        clearActiveConnection();
+        setStoredPrinter({ kind: 'serial', terminalUlid: 'T1' });
+        const ok = await checkStatusCore();
         runner.assertTrue(ok);
-    });
-
-    await runner.testAsync('checkStatusCore falls back to legacy checkStatus', async () => {
-        let checked = false;
-        const ok = await checkStatusCore({}, {
-            checkStatus: async () => {
-                checked = true;
-                return true;
-            }
-        });
-        runner.assertTrue(checked);
-        runner.assertTrue(ok);
+        clearStoredPrinter();
     });
 }
 

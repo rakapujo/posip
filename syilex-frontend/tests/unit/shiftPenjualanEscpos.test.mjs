@@ -1,8 +1,5 @@
 import { TestRunner } from './testRunner.mjs';
-import {
-    SHIFT_PENJUALAN_REQUIRED_LABELS,
-    buildShiftPenjualanLines
-} from '../../src/composables/print/shiftPenjualanEscpos.js';
+import { SHIFT_PENJUALAN_REQUIRED_LABELS, buildShiftPenjualanLines } from '../../src/composables/print/shiftPenjualanEscpos.js';
 
 const runner = new TestRunner('shiftPenjualanEscpos');
 

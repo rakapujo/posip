@@ -55,7 +55,7 @@ class SerialChangeTest extends TestCase
             'product_id' => $p->id, 'warehouse_id' => $this->wh->id, 'serial_number' => $sn,
             'harga_modal' => 10000000, 'cost_per_unit' => 10000000, 'harga_jual' => 12000000,
             'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90,
-            'account_status' => 'unlocked', 'status' => $status,
+            'battery_cycle_count' => 100, 'account_status' => 'unlocked', 'status' => $status,
         ]);
     }
 
@@ -69,6 +69,7 @@ class SerialChangeTest extends TestCase
             'grade' => $u->grade,
             'battery_condition' => $u->battery_condition,
             'battery_health' => (float) $u->battery_health,
+            'battery_cycle_count' => (int) ($u->battery_cycle_count ?? 0),
             'account_status' => $u->account_status,
         ], $override);
     }
@@ -200,7 +201,7 @@ class SerialChangeTest extends TestCase
         $ulid = $this->createChange([
             $this->unitPayload($u, [
                 'serial_number' => 'SN-AFT', 'grade' => 'C',
-                'harga_jual' => 9990000, 'battery_health' => 77, 'account_status' => 'locked',
+                'harga_jual' => 9990000, 'battery_health' => 77, 'battery_cycle_count' => 250, 'account_status' => 'locked',
             ]),
         ])->assertStatus(201)->json('data.serial_change.ulid');
 
@@ -214,12 +215,14 @@ class SerialChangeTest extends TestCase
         $this->assertSame('A', $before['grade']);
         $this->assertEquals(12000000, (float) $before['harga_jual']);
         $this->assertEquals(90, (float) $before['battery_health']);
+        $this->assertEquals(100, (int) $before['battery_cycle_count']);
         $this->assertSame('unlocked', $before['account_status']);
 
         // Nilai baru tersimpan di detail
         $this->assertSame('SN-AFT', $detail->serial_number);
         $this->assertSame('C', $detail->grade);
         $this->assertEquals(9990000, (float) $detail->harga_jual);
+        $this->assertEquals(250, (int) $detail->battery_cycle_count);
     }
     #[Test]
     public function harga_modal_is_never_touched_by_change_module()
@@ -281,6 +284,14 @@ class SerialChangeTest extends TestCase
         $u = $this->makeUnit($this->produk, 'SN-BH');
         $this->createChange([$this->unitPayload($u, ['battery_health' => 150])])
             ->assertStatus(422)->assertJsonValidationErrors('units.0.battery_health');
+    }
+
+    #[Test]
+    public function battery_cycle_count_negative_is_rejected_by_validation()
+    {
+        $u = $this->makeUnit($this->produk, 'SN-BC');
+        $this->createChange([$this->unitPayload($u, ['battery_cycle_count' => -5])])
+            ->assertStatus(422)->assertJsonValidationErrors('units.0.battery_cycle_count');
     }
     #[Test]
     public function update_only_allowed_on_draft_and_replaces_details()

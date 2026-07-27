@@ -7,26 +7,39 @@ import { useReportList } from '@/composables/useReportList';
 import { useReportDetailDialog } from '@/composables/useReportDetailDialog';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const router = useRouter();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 const { formatCurrency, formatQty, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
 const canExport = computed(() => authStore.can('laporan.export'));
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 
 const canViewHarga = ref(false);
 const selectedSupplier = ref(null);
 const selectedWarehouse = ref(null);
 const selectedSource = ref(null);
-const sourceOptions = [
-    { label: 'Semua Sumber', value: null },
-    { label: 'Purchase Order', value: 'po' },
-    { label: 'Serial', value: 'serial' }
+const reportMode = ref('bruto');
+const modeOptions = [
+    { label: 'Bruto', value: 'bruto' },
+    { label: 'Net', value: 'net' }
 ];
+const sourceOptions = computed(() => {
+    const opts = [
+        { label: 'Semua Sumber', value: null },
+        { label: 'Purchase Order', value: 'po' }
+    ];
+    if (serialEnabled.value) opts.push({ label: 'Serial', value: 'serial' });
+    return opts;
+});
 
 const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, lazyParams, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams } = useReportList({
     fetchList: (params) => purchaseReportApi.getPerDokumen(params),
@@ -36,12 +49,14 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
     getExtraFilters: () => ({
         supplier_id: selectedSupplier.value,
         warehouse_id: selectedWarehouse.value,
-        source: selectedSource.value
+        source: selectedSource.value,
+        mode: reportMode.value
     }),
     onResetFilters: () => {
         selectedSupplier.value = null;
         selectedWarehouse.value = null;
         selectedSource.value = null;
+        reportMode.value = 'bruto';
     },
     onListLoaded: (data) => {
         canViewHarga.value = data.can_view_harga ?? false;
@@ -81,8 +96,19 @@ const detailColumns = computed(() => {
     return cols;
 });
 
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedSupplier.value) n++;
+    if (selectedWarehouse.value) n++;
+    if (selectedSource.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
+
 async function viewDetail(item) {
     if (item.sumber === 'serial') {
+        if (!serialEnabled.value) return;
         router.push({ name: 'inventory-serial-intake', query: { detail: item.ulid } });
         return;
     }
@@ -140,38 +166,43 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
-                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" class="w-36" @change="onFilterChange" />
-                    <div class="w-40">
+                    <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" @change="onFilterChange" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                </ListFiltersSheet>
                 </div>
             </template>
         </Toolbar>
 
+        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: baris, ringkasan, dan export sudah dikurangi retur</Message>
+
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Jumlah PO</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.jumlah_po }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.jumlah_po }}</div>
             </div>
             <template v-if="canViewHarga">
-                <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+                <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                     <div class="text-surface-500 text-sm mb-1">Total Subtotal</div>
-                    <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_subtotal) }}</div>
+                    <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_subtotal) }}</div>
                 </div>
-                <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+                <div class="summary-stat-card bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                     <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Diskon</div>
-                    <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
+                    <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
                 </div>
-                <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+                <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                     <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Total Grand Total</div>
-                    <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_grand_total) }}</div>
+                    <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_grand_total) }}</div>
                 </div>
             </template>
         </div>
@@ -199,7 +230,7 @@ async function exportPdf() {
                     <template v-if="canExport" #extra>
                         <div class="flex gap-2">
                             <Button icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                            <Button icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                            <Button icon="pi pi-file-pdf" severity="secondary" :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  outlined />
                         </div>
                     </template>
                 </DataTableHeader>
@@ -260,7 +291,17 @@ async function exportPdf() {
 
             <Column header="Aksi" style="min-width: 80px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
+                    <RowActionButtons>
+                        <Button
+                            icon="pi pi-eye"
+                            severity="info"
+                            text
+                            rounded
+                            @click="viewDetail(data)"
+                            :disabled="data.sumber === 'serial' && !serialEnabled"
+                            v-tooltip.top="data.sumber === 'serial' && !serialEnabled ? 'Modul Elektronik nonaktif' : 'Lihat Detail'"
+                        />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>

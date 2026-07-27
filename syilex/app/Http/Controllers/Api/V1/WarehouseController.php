@@ -76,6 +76,15 @@ class WarehouseController extends BaseApiController
                     return $this->warehouseDeactivationBlockResponse($warehouse);
                 }
 
+                $newSaleable = array_key_exists('is_saleable', $validated)
+                    ? (bool) $validated['is_saleable']
+                    : (bool) $warehouse->is_saleable;
+                if ($warehouse->is_saleable && ! $newSaleable) {
+                    if ($message = \App\Services\WarehouseRules::unsaleableBlockMessage($warehouse)) {
+                        return $this->error($message, 422);
+                    }
+                }
+
                 return null;
             },
             'before_toggle' => function (MasterWarehouse $warehouse) {
@@ -99,6 +108,16 @@ class WarehouseController extends BaseApiController
                 $stockCardCount = $warehouse->stockCards()->count();
                 if ($stockCardCount > 0) {
                     return $this->error("Tidak dapat menghapus Gudang karena sudah memiliki {$stockCardCount} riwayat kartu stok", 422);
+                }
+
+                $poCount = $warehouse->purchaseOrders()->count();
+                if ($poCount > 0) {
+                    return $this->error("Tidak dapat menghapus Gudang karena sudah dipakai {$poCount} purchase order", 422);
+                }
+
+                $intakeCount = $warehouse->serialIntakes()->count();
+                if ($intakeCount > 0) {
+                    return $this->error("Tidak dapat menghapus Gudang karena sudah punya {$intakeCount} serial intake", 422);
                 }
 
                 return null;

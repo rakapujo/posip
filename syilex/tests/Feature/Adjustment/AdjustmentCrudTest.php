@@ -409,4 +409,72 @@ class AdjustmentCrudTest extends TestCase
         // Tak ada dokumen tersimpan
         $this->assertSame(0, DocAdjustment::count());
     }
+
+    /**
+     * Kartu stok yang sudah ada SEBELUM mutate → approve 422 (bukan skip-after-mutate).
+     */
+    #[Test]
+    public function approve_tolak_jika_kartu_stok_sudah_ada_sebelum_mutate()
+    {
+        $adjustment = $this->createAction->execute($this->baseData());
+
+        StockCard::$skipObserver = true;
+        StockCard::record([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'ADJUSTMENT_IN',
+            'transaction_id' => $adjustment->id,
+            'transaction_no' => $adjustment->nomor_dokumen,
+            'tanggal' => $adjustment->tanggal,
+            'qty_in' => 10,
+            'qty_out' => 0,
+            'cost_per_unit' => 10000,
+            'avg_cost_before' => 10000,
+            'avg_cost_after' => 10000,
+        ]);
+        StockCard::$skipObserver = false;
+
+        try {
+            (new ApproveAdjustmentAction())->execute($adjustment->fresh());
+            $this->fail('Approve seharusnya ditolak karena kartu sudah ada.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('status', $e->errors());
+        }
+
+        $this->assertSame('draft', $adjustment->fresh()->status);
+        $this->assertSame(50, (int) InventoryStock::where('product_id', $this->product->id)
+            ->where('warehouse_id', $this->warehouse->id)->value('qty'));
+    }
+
+    /**
+     * Create dengan serial_unit_ids palsu ditolak 422 (validasi early, bukan baru di approve).
+     */
+    #[Test]
+    public function create_serial_dengan_unit_palsu_ditolak()
+    {
+        $serial = MasterProduk::factory()->create([
+            'nama_produk' => 'Serial Adj',
+            'avg_cost' => 5000,
+            'is_serial' => true,
+            'status' => 'active',
+        ]);
+
+        try {
+            $this->createAction->execute([
+                'warehouse_id' => $this->warehouse->id,
+                'tanggal' => '2026-04-12 10:00:00',
+                'details' => [[
+                    'product_id' => $serial->id,
+                    'jenis' => 'kredit',
+                    'qty' => 1,
+                    'serial_unit_ids' => ['01FAKEULID0000000000000000'],
+                ]],
+            ]);
+            $this->fail('Create dengan unit palsu seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertNotEmpty($e->errors());
+        }
+
+        $this->assertSame(0, DocAdjustment::count());
+    }
 }

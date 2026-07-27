@@ -24,8 +24,12 @@ class GrossProfitDailyExport implements FromCollection, WithHeadings, WithMappin
         protected string $dateFrom,
         protected string $dateTo,
         protected ?int $terminalId = null,
+        protected ?int $warehouseId = null,
     ) {
-        $this->rows = GrossProfitReportResolver::dailyRows($dateFrom, $dateTo, $terminalId);
+        $this->rows = GrossProfitReportResolver::dailyRows($dateFrom, $dateTo, [
+            'terminal_id' => $terminalId,
+            'warehouse_id' => $warehouseId,
+        ]);
     }
 
     public function collection(): Collection

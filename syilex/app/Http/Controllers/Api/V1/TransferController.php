@@ -333,7 +333,7 @@ class TransferController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('transfer.create')) {
+        if (!auth()->user()->canAny(['transfer.create', 'transfer.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -347,6 +347,7 @@ class TransferController extends BaseApiController
 
         $query = MasterProduk::active()
             ->select('id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'is_serial');
+        SettingService::constrainNonSerialWhenDisabled($query);
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -358,19 +359,19 @@ class TransferController extends BaseApiController
 
         $products = $query->limit(20)->get();
 
-        // Add stock info for each product and transform to array
-        $items = $products->map(function ($product) use ($warehouseId) {
-            $stock = InventoryStock::where('product_id', $product->id)
-                ->where('warehouse_id', $warehouseId)
-                ->first();
+        $stocks = InventoryStock::where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $products->pluck('id'))
+            ->get()
+            ->keyBy('product_id');
 
+        $items = $products->map(function ($product) use ($stocks) {
             return [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'stok' => $stock ? (int) $stock->qty : 0,
+                'stok' => (int) ($stocks[$product->id]->qty ?? 0),
                 'is_serial' => (bool) $product->is_serial, // frontend tampilkan pemilih unit serial
             ];
         });
@@ -385,6 +386,10 @@ class TransferController extends BaseApiController
      */
     public function getStockSetting(): JsonResponse
     {
+        if (!auth()->user()->can('transfer.view')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'negative_stock_allowed' => SettingService::isNegativeStockAllowed(),
         ]);

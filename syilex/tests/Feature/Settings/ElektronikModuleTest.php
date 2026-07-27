@@ -29,6 +29,7 @@ class ElektronikModuleTest extends TestCase
         foreach ([
             'settings.view', 'settings.update', 'produk.create',
             'serial-intake.view', 'serial-change.view', 'serial-hpp.view',
+            'retur-beli.view',
         ] as $perm) {
             Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
         }
@@ -36,6 +37,7 @@ class ElektronikModuleTest extends TestCase
         $this->admin->givePermissionTo([
             'settings.view', 'settings.update', 'produk.create',
             'serial-intake.view', 'serial-change.view', 'serial-hpp.view',
+            'retur-beli.view',
         ]);
         $this->actingAs($this->admin);
     }
@@ -62,6 +64,7 @@ class ElektronikModuleTest extends TestCase
         '/api/v1/serial-intakes',
         '/api/v1/serial-changes',
         '/api/v1/serial-hpp-corrections',
+        '/api/v1/purchase-returns/serial-intakes/list',
     ];
     #[Test]
     public function default_on_serial_endpoints_accessible()

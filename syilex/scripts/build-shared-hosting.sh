@@ -108,7 +108,12 @@ mkdir -p "$BUILD_DIR/posip/storage/logs"
 mkdir -p "$BUILD_DIR/posip/bootstrap/cache"
 
 echo "[6/7] Writing INSTALL tutorial..."
-cp "$PROJECT_DIR/INSTALL-SHARED-HOSTING.md" "$BUILD_DIR/INSTALL.md"
+# Tutorial into zip root
+INSTALL_DOC="$REPO_ROOT/docs/ops/install-shared-hosting.md"
+if [ ! -f "$INSTALL_DOC" ]; then
+  INSTALL_DOC="$PROJECT_DIR/INSTALL-SHARED-HOSTING.md"
+fi
+cp "$INSTALL_DOC" "$BUILD_DIR/INSTALL.md"
 cat > "$BUILD_DIR/INSTALL.txt" << 'GUIDE'
 INSTALASI POSIP — RINGKAS
 =========================

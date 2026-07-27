@@ -7,6 +7,8 @@ import ImageUpload from '@/components/common/ImageUpload.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 
@@ -64,6 +66,7 @@ const detailData = ref({});
 // Current user being edited
 const user = ref({});
 const isEdit = computed(() => !!user.value.ulid);
+const editingSelf = computed(() => isEdit.value && isSelf(user.value));
 // PIN yang sudah di-strip dari placeholder chars '______' yang kadang emit-nya
 // oleh InputMask. Dipakai untuk validasi + invalid binding di template.
 const pinDigits = computed(() => (user.value.pin || '').replace(/\D/g, ''));
@@ -83,6 +86,13 @@ const emptyUser = {
     status: 'active',
     avatar: ''
 };
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    if (selectedRole.value) n++;
+    return n;
+});
 
 onMounted(async () => {
     await loadRoles();
@@ -110,12 +120,44 @@ watch(
 );
 
 async function openEditByUlid(ulid) {
+    if (!canUpdate.value) {
+        notify.error('Anda tidak memiliki akses untuk mengubah user');
+        return;
+    }
     try {
         const response = await usersApi.get(ulid);
         if (response.data.success) {
-            editUser(response.data.data.user);
+            applyEditForm(response.data.data.user);
         }
     } catch (error) {
+        notify.error('User tidak ditemukan');
+    }
+}
+
+function applyEditForm(userData) {
+    user.value = {
+        ulid: userData.ulid,
+        name: userData.name,
+        email: userData.email,
+        password: '',
+        pin: '',
+        phone: userData.phone || '',
+        role: userData.roles?.[0]?.name || '',
+        status: userData.status,
+        avatar: userData.avatar_url || ''
+    };
+    submitted.value = false;
+    pinDirty.value = false;
+    userDialog.value = true;
+}
+
+async function editUser(userData) {
+    try {
+        const response = await usersApi.get(userData.ulid);
+        if (response.data.success) {
+            applyEditForm(response.data.data.user);
+        }
+    } catch {
         notify.error('User tidak ditemukan');
     }
 }
@@ -210,23 +252,6 @@ function openNew() {
 function hideDialog() {
     userDialog.value = false;
     submitted.value = false;
-}
-
-function editUser(userData) {
-    user.value = {
-        ulid: userData.ulid,
-        name: userData.name,
-        email: userData.email,
-        password: '', // Don't show password
-        pin: '', // Don't show PIN
-        phone: userData.phone || '',
-        role: userData.roles?.[0]?.name || '',
-        status: userData.status,
-        avatar: userData.avatar_url || ''
-    };
-    submitted.value = false;
-    pinDirty.value = false;
-    userDialog.value = true;
 }
 
 async function viewDetail(userData) {
@@ -443,11 +468,11 @@ function resetFilters() {
                 </template>
 
                 <template #end>
-                    <div class="flex gap-2">
-                        <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" class="w-40" filter filterPlaceholder="Cari..." @change="onFilter" />
-                        <Select v-model="selectedRole" :options="[{ label: 'Semua Role', value: null }, ...roles]" optionLabel="label" optionValue="value" placeholder="Filter Role" class="w-40" filter filterPlaceholder="Cari..." @change="onFilter" />
-                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                    </div>
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" filter filterPlaceholder="Cari..." @change="onFilter" />
+                    <Select v-model="selectedRole" :options="[{ label: 'Semua Role', value: null }, ...roles]" optionLabel="label" optionValue="value" placeholder="Filter Role" filter filterPlaceholder="Cari..." @change="onFilter" />
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                </ListFiltersSheet>
                 </template>
             </Toolbar>
 
@@ -511,21 +536,13 @@ function resetFilters() {
                 </Column>
                 <Column :exportable="false" style="min-width: 220px" alignFrozen="right" frozen>
                     <template #body="slotProps">
-                        <Button icon="pi pi-eye" outlined rounded class="mr-2" severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button v-if="canUpdate" icon="pi pi-pencil" outlined rounded class="mr-2" @click="editUser(slotProps.data)" v-tooltip.top="'Edit'" />
-                        <Button
-                            v-if="canUpdate"
-                            :icon="slotProps.data.status === 'active' ? 'pi pi-ban' : 'pi pi-check-circle'"
-                            outlined
-                            rounded
-                            class="mr-2"
-                            :severity="slotProps.data.status === 'active' ? 'warn' : 'success'"
-                            :disabled="!canToggleStatus(slotProps.data)"
-                            @click="confirmToggleStatus(slotProps.data)"
-                            v-tooltip.top="slotProps.data.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'"
-                        />
-                        <Button v-if="canDelete" icon="pi pi-trash" outlined rounded severity="danger" :disabled="!canDeleteUser(slotProps.data)" @click="confirmDeleteUser(slotProps.data)" v-tooltip.top="'Hapus'" />
-                    </template>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" rounded severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" text />
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editUser(slotProps.data)" v-tooltip.top="'Edit'" text />
+                        <Button v-if="canUpdate" :icon="slotProps.data.status === 'active' ? 'pi pi-ban' : 'pi pi-check-circle'" rounded :severity="slotProps.data.status === 'active' ? 'warn' : 'success'" :disabled="!canToggleStatus(slotProps.data)" @click="confirmToggleStatus(slotProps.data)" v-tooltip.top="slotProps.data.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'"  text />
+                        <Button v-if="canDelete" icon="pi pi-trash" rounded severity="danger" :disabled="!canDeleteUser(slotProps.data)" @click="confirmDeleteUser(slotProps.data)" v-tooltip.top="'Hapus'" text />
+                    </RowActionButtons>
+                </template>
                 </Column>
             </DataTable>
         </div>
@@ -602,8 +619,9 @@ function resetFilters() {
                 <!-- Role -->
                 <div>
                     <label for="role" class="block font-medium mb-2">Role <span class="text-red-500">*</span></label>
-                    <Select id="role" v-model="user.role" :options="roles" optionLabel="label" optionValue="value" :invalid="submitted && !user.role" fluid filter filterPlaceholder="Cari..." placeholder="Pilih role" />
+                    <Select id="role" v-model="user.role" :options="roles" optionLabel="label" optionValue="value" :invalid="submitted && !user.role" :disabled="editingSelf" fluid filter filterPlaceholder="Cari..." placeholder="Pilih role" />
                     <small v-if="submitted && !user.role" class="text-red-500">Role wajib dipilih</small>
+                    <small v-else-if="editingSelf" class="text-surface-500">Tidak dapat mengubah role akun sendiri</small>
                 </div>
 
                 <!-- Status -->
@@ -619,11 +637,13 @@ function resetFilters() {
                         optionLabel="label"
                         optionValue="value"
                         :invalid="submitted && !user.status"
+                        :disabled="editingSelf"
                         fluid
                         filter
                         filterPlaceholder="Cari..."
                     />
                     <small v-if="submitted && !user.status" class="text-red-500">Status wajib dipilih</small>
+                    <small v-else-if="editingSelf" class="text-surface-500">Tidak dapat menonaktifkan akun sendiri</small>
                 </div>
             </div>
 

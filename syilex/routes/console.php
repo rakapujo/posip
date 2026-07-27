@@ -10,5 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('price-change:apply')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->runInBackground();
+    ->withoutOverlapping();

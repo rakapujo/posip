@@ -3,18 +3,18 @@
 namespace App\Models;
 
 use App\Casts\LocalDateTime;
-use App\Traits\HasUlid;
+use App\Traits\HasAuditLog;
 use App\Traits\HasCreatedUpdatedBy;
+use App\Traits\HasUlid;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
-use App\Traits\HasAuditLog;
 
 class DocPromo extends Model
 {
-    use HasUlid, HasCreatedUpdatedBy, HasAuditLog;
+    use HasAuditLog, HasCreatedUpdatedBy, HasUlid;
 
     protected $table = 'doc_promo';
 
@@ -23,6 +23,7 @@ class DocPromo extends Model
         'kode_promo',
         'nama_promo',
         'deskripsi',
+        'channel',
         'customer_type_id',
         'customer_category_id',
         'terminal_id',
@@ -134,10 +135,10 @@ class DocPromo extends Model
         return $query->where('status', 'approved')
             ->where('tanggal_mulai', '<=', $today)
             ->where(fn ($q) => $q->whereNull('tanggal_selesai')
-                                 ->orWhere('tanggal_selesai', '>=', $today))
+                ->orWhere('tanggal_selesai', '>=', $today))
             ->where(fn ($q) => $q->whereNull('jam_mulai')
-                                 ->orWhere(fn ($q2) => $q2->where('jam_mulai', '<=', $time)
-                                                           ->where('jam_selesai', '>=', $time)));
+                ->orWhere(fn ($q2) => $q2->where('jam_mulai', '<=', $time)
+                    ->where('jam_selesai', '>=', $time)));
     }
 
     /**
@@ -153,7 +154,20 @@ class DocPromo extends Model
             'draft' => $query->where('status', 'draft'),
             'inactive' => $query->where('status', 'inactive'),
             'active' => $query->effective(),
-            'upcoming' => $query->where('status', 'approved')->where('tanggal_mulai', '>', $today),
+            // approved + not expired by date + not currently effective (future date OR outside jam)
+            'upcoming' => $query->where('status', 'approved')
+                ->where(fn ($q) => $q->whereNull('tanggal_selesai')->orWhere('tanggal_selesai', '>=', $today))
+                ->where(function ($q) use ($today, $now) {
+                    $time = $now->format('H:i:s');
+                    $q->where('tanggal_mulai', '>', $today)
+                        ->orWhere(function ($q2) use ($today, $time) {
+                            $q2->where('tanggal_mulai', '<=', $today)
+                                ->whereNotNull('jam_mulai')
+                                ->whereNotNull('jam_selesai')
+                                ->where(fn ($q3) => $q3->where('jam_mulai', '>', $time)
+                                    ->orWhere('jam_selesai', '<', $time));
+                        });
+                }),
             'expired' => $query->where('status', 'approved')
                 ->whereNotNull('tanggal_selesai')
                 ->where('tanggal_selesai', '<', $today),
@@ -204,6 +218,7 @@ class DocPromo extends Model
                 return 'upcoming'; // belum masuk jam aktif (atau sudah lewat jam hari ini)
             }
         }
+
         return 'active';
     }
 }

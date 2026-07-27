@@ -5,11 +5,14 @@ namespace Database\Seeders;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionSeeder extends Seeder
 {
     public function run(): void
     {
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $superAdminRole = Role::firstOrCreate(['name' => 'super-admin']);
         $adminRole = Role::firstOrCreate(['name' => 'admin']);
         $kasirRole = Role::firstOrCreate(['name' => 'kasir']);
@@ -46,6 +49,11 @@ class RolePermissionSeeder extends Seeder
             'retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.delete', 'retur-beli.lock', 'retur-beli.approve',
             'deposit-supplier.view', 'deposit-supplier.create', 'deposit-supplier.update', 'deposit-supplier.delete',
             'pembayaran-hutang.view', 'pembayaran-hutang.create', 'pembayaran-hutang.update', 'pembayaran-hutang.delete', 'pembayaran-hutang.complete',
+            'sales.view', 'sales.view_harga', 'sales.create', 'sales.update', 'sales.delete', 'sales.approve', 'sales.void',
+            'piutang.view', 'piutang.view_nominal',
+            'pembayaran-piutang.view', 'pembayaran-piutang.create', 'pembayaran-piutang.update', 'pembayaran-piutang.delete', 'pembayaran-piutang.complete',
+            'deposit-customer.view', 'deposit-customer.create', 'deposit-customer.update', 'deposit-customer.delete',
+            'retur-jual.view', 'retur-jual.create', 'retur-jual.update', 'retur-jual.delete', 'retur-jual.lock', 'retur-jual.approve',
             'price-change.view', 'price-change.create', 'price-change.update', 'price-change.delete', 'price-change.approve', 'price-change.apply',
             'promo.view', 'promo.create', 'promo.update', 'promo.delete', 'promo.approve', 'promo.toggle',
             'terminal.view', 'terminal.create', 'terminal.edit', 'terminal.delete', 'terminal.toggle-status', 'terminal.force-release',
@@ -61,7 +69,8 @@ class RolePermissionSeeder extends Seeder
         $superAdminRole->syncPermissions(Permission::all());
 
         $adminRole->syncPermissions([
-            'user.view', 'settings.view',
+            'user.view', 'user.create', 'user.update', 'user.delete',
+            'settings.view', 'settings.update',
             'warehouse.view', 'warehouse.create', 'warehouse.update', 'warehouse.delete',
             'brand.view', 'brand.create', 'brand.update', 'brand.delete',
             'tipe.view', 'tipe.create', 'tipe.update', 'tipe.delete',
@@ -89,6 +98,11 @@ class RolePermissionSeeder extends Seeder
             'retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.delete', 'retur-beli.lock', 'retur-beli.approve',
             'deposit-supplier.view', 'deposit-supplier.create', 'deposit-supplier.update', 'deposit-supplier.delete',
             'pembayaran-hutang.view', 'pembayaran-hutang.create', 'pembayaran-hutang.update', 'pembayaran-hutang.delete', 'pembayaran-hutang.complete',
+            'sales.view', 'sales.view_harga', 'sales.create', 'sales.update', 'sales.delete', 'sales.approve', 'sales.void',
+            'piutang.view', 'piutang.view_nominal',
+            'pembayaran-piutang.view', 'pembayaran-piutang.create', 'pembayaran-piutang.update', 'pembayaran-piutang.delete', 'pembayaran-piutang.complete',
+            'deposit-customer.view', 'deposit-customer.create', 'deposit-customer.update', 'deposit-customer.delete',
+            'retur-jual.view', 'retur-jual.create', 'retur-jual.update', 'retur-jual.delete', 'retur-jual.lock', 'retur-jual.approve',
             'price-change.view', 'price-change.create', 'price-change.update', 'price-change.delete', 'price-change.approve', 'price-change.apply',
             'promo.view', 'promo.create', 'promo.update', 'promo.delete', 'promo.approve', 'promo.toggle',
             'terminal.view', 'terminal.create', 'terminal.edit', 'terminal.delete', 'terminal.toggle-status', 'terminal.force-release',
@@ -101,8 +115,8 @@ class RolePermissionSeeder extends Seeder
             'warehouse.view', 'brand.view', 'tipe.view', 'kategori.view', 'grup.view',
             'supplier.view', 'tipe-customer.view', 'kategori-customer.view', 'customer.view',
             'metode-bayar.view', 'produk.view', 'stok.view', 'terminal.view',
-            'pos.access', 'pos.retur', 'pos.void', 'pos.discount', 'laporan.view',
-            'laporan.penjualan', 'laporan.pembelian', 'laporan.keuangan', 'laporan.performa', 'laporan.promo', 'laporan.inventory',
+            'pos.access', 'pos.retur', 'pos.void', 'pos.discount',
+            'laporan.view', 'laporan.penjualan',
         ]);
 
         $gudangRole->syncPermissions([
@@ -116,11 +130,13 @@ class RolePermissionSeeder extends Seeder
             'po.view', 'po.create', 'po.edit', 'po.delete',
             'serial-intake.view', 'serial-intake.create', 'serial-intake.update', 'serial-intake.delete',
             'serial-change.view', 'serial-change.create', 'serial-change.update', 'serial-change.delete',
-            'serial-hpp.view', 'serial-hpp.create', 'serial-hpp.update', 'serial-hpp.delete',
+            'serial-hpp.view', // CRUD HPP butuh stok.view_hpp — gudang hanya lihat list
             'hutang.view',
             'retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.delete',
-            'deposit-supplier.view', 'laporan.view',
-            'laporan.penjualan', 'laporan.pembelian', 'laporan.keuangan', 'laporan.performa', 'laporan.promo', 'laporan.inventory',
+            'deposit-supplier.view',
+            'laporan.view', 'laporan.pembelian', 'laporan.inventory',
         ]);
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
     }
 }

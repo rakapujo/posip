@@ -98,6 +98,7 @@ trait HandlesSerialUnits
                 'grade' => $u['grade'] ?? null,
                 'battery_condition' => $u['battery_condition'] ?? null,
                 'battery_health' => isset($u['battery_health']) && $u['battery_health'] !== '' ? (float) $u['battery_health'] : null,
+                'battery_cycle_count' => isset($u['battery_cycle_count']) && $u['battery_cycle_count'] !== '' ? (int) $u['battery_cycle_count'] : null,
                 'account_status' => $u['account_status'] ?? null,
                 'status' => 'pending',
                 'catatan' => $u['catatan'] ?? null,
@@ -111,8 +112,9 @@ trait HandlesSerialUnits
      */
     protected function calculateFinance(array $units, array $headerData): array
     {
+        $productId = (int) ($headerData['product_id'] ?? 0);
         $details = array_map(fn ($u) => [
-            'product_id' => 0,
+            'product_id' => $productId,
             'unit_used' => 'UNIT',
             'unit_konversi' => 1,
             'qty_in_unit' => 1,

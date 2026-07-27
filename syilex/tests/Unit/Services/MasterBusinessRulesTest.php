@@ -133,6 +133,33 @@ class MasterBusinessRulesTest extends TestCase
         );
     }
 
+    public function test_customer_walk_in_blocked_from_backoffice(): void
+    {
+        $customer = MasterCustomer::create([
+            'kode_customer' => 'WALKIN-BO',
+            'nama' => 'Walk In BO',
+            'telepon' => '08000',
+            'jenis' => 'walk_in',
+            'status' => 'active',
+            'created_by' => $this->user->id,
+        ]);
+
+        $this->assertSame(
+            'Customer Walk-in hanya untuk POS.',
+            CustomerRules::backofficeBlockMessage($customer)
+        );
+        $this->assertNull(CustomerRules::backofficeBlockMessage(
+            MasterCustomer::create([
+                'kode_customer' => 'SPEC-BO',
+                'nama' => 'Spesifik',
+                'telepon' => '08001',
+                'jenis' => 'spesifik',
+                'status' => 'active',
+                'created_by' => $this->user->id,
+            ])
+        ));
+    }
+
     public function test_metode_pembayaran_normalize_clears_non_tunai_fields_for_tunai(): void
     {
         $normalized = MetodePembayaranRules::normalize([

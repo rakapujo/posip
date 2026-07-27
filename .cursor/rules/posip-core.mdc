@@ -1,0 +1,27 @@
+---
+description: POSIP core — SSoT, no-assume, permission, POS lock
+alwaysApply: true
+---
+
+# POSIP core
+
+## Source of truth
+
+1. **Kode** di `syilex/` + `syilex-frontend/`
+2. Docs hub: `docs/README.md` · agent: `docs/ai/README.md`
+3. Konvensi docs: `docs/CONVENTIONS.md`
+
+Konflik docs ≠ kode → **ikuti kode**, lalu tanya apakah docs perlu update.
+
+## WAJIB
+
+- Jangan berasumsi; instruksi ambigu → klarifikasi dulu
+- Reuse `syilex-frontend/src/components/common/` + `composables/` sebelum bikin baru
+- Endpoint baru: `->can(...)` + update `RolePermissionSeeder` (bukan `UserSeeder`)
+- **JANGAN** ubah POS Kasir (`PosKasirPage`) kecuali bug yang diminta eksplisit
+- Jangan commit/push kecuali user minta
+- Setelah ubah perilaku bisnis: update docs terkait ATAU tandai draft + tanya user
+
+## Baca cepat (bisnis kritis)
+
+Sebelum ubah HPP/stok/checkout/serial: `docs/ai/business-rules.md` + rules di folder ini (`posip-business-flows`, `posip-backend` / `posip-frontend*`).

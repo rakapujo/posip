@@ -19,9 +19,13 @@ class ReturPatternReportTest extends TestCase
     use RefreshDatabase;
 
     protected User $viewer;
+
     protected int $terminalId;
+
     protected int $shiftId;
+
     protected int $warehouseId;
+
     protected int $customerId;
 
     protected function setUp(): void
@@ -83,7 +87,7 @@ class ReturPatternReportTest extends TestCase
     {
         $salesId = DB::table('doc_sales')->insertGetId([
             'ulid' => (string) Str::ulid(),
-            'nomor_dokumen' => 'INV-' . fake()->unique()->numerify('######'),
+            'nomor_dokumen' => 'INV-'.fake()->unique()->numerify('######'),
             'tanggal' => now()->toDateTimeString(),
             'terminal_id' => $this->terminalId,
             'shift_id' => $this->shiftId,
@@ -113,7 +117,7 @@ class ReturPatternReportTest extends TestCase
         if ($returnQty > 0) {
             $returnId = DB::table('doc_sales_returns')->insertGetId([
                 'ulid' => (string) Str::ulid(),
-                'nomor_dokumen' => 'RTR-' . fake()->unique()->numerify('######'),
+                'nomor_dokumen' => 'RTR-'.fake()->unique()->numerify('######'),
                 'tanggal' => now()->toDateTimeString(),
                 'sales_id' => $salesId,
                 'terminal_id' => $this->terminalId,
@@ -121,6 +125,7 @@ class ReturPatternReportTest extends TestCase
                 'warehouse_id' => $this->warehouseId,
                 'customer_id' => $this->customerId,
                 'refund_method' => 'cash',
+                'status' => 'approved',
                 'grand_total' => $returnQty * $harga,
                 'created_by' => $this->viewer->id,
                 'created_at' => now(), 'updated_at' => now(),
@@ -248,7 +253,7 @@ class ReturPatternReportTest extends TestCase
 
         $salesId = DB::table('doc_sales')->insertGetId([
             'ulid' => (string) Str::ulid(),
-            'nomor_dokumen' => 'INV-' . fake()->unique()->numerify('######'),
+            'nomor_dokumen' => 'INV-'.fake()->unique()->numerify('######'),
             'tanggal' => $tanggal,
             'terminal_id' => $opts['terminal_id'] ?? $this->terminalId,
             'shift_id' => $this->shiftId,
@@ -272,7 +277,7 @@ class ReturPatternReportTest extends TestCase
 
         $returnId = DB::table('doc_sales_returns')->insertGetId([
             'ulid' => (string) Str::ulid(),
-            'nomor_dokumen' => 'RTR-' . fake()->unique()->numerify('######'),
+            'nomor_dokumen' => 'RTR-'.fake()->unique()->numerify('######'),
             'tanggal' => $tanggal,
             'sales_id' => $salesId,
             'terminal_id' => $opts['terminal_id'] ?? $this->terminalId,
@@ -280,6 +285,7 @@ class ReturPatternReportTest extends TestCase
             'warehouse_id' => $this->warehouseId,
             'customer_id' => $this->customerId,
             'refund_method' => 'cash',
+            'status' => 'approved',
             'grand_total' => $qty * $harga,
             'created_by' => $this->viewer->id,
             'created_at' => $tanggal, 'updated_at' => $tanggal,
@@ -392,18 +398,18 @@ class ReturPatternReportTest extends TestCase
             'nomor_dokumen' => 'RTR-MULTI', 'tanggal' => now()->toDateTimeString(),
             'sales_id' => $salesId, 'terminal_id' => $this->terminalId, 'shift_id' => $this->shiftId,
             'warehouse_id' => $this->warehouseId, 'customer_id' => $this->customerId,
-            'refund_method' => 'cash', 'grand_total' => 3000,
+            'refund_method' => 'cash', 'status' => 'approved', 'grand_total' => 3000,
             'created_by' => $this->viewer->id,
             'created_at' => now(), 'updated_at' => now(),
         ]);
         // 2 baris detail di retur YANG SAMA, produk sama
         DB::table('doc_sales_return_detail')->insert([
             ['return_id' => $returnId, 'sales_detail_id' => $sd, 'product_id' => $product->id,
-             'unit' => 'PCS', 'konversi' => 1, 'qty' => 2, 'qty_base' => 2,
-             'harga_satuan' => 1000, 'jumlah' => 2000, 'hpp_at_time' => 500],
+                'unit' => 'PCS', 'konversi' => 1, 'qty' => 2, 'qty_base' => 2,
+                'harga_satuan' => 1000, 'jumlah' => 2000, 'hpp_at_time' => 500],
             ['return_id' => $returnId, 'sales_detail_id' => $sd, 'product_id' => $product->id,
-             'unit' => 'PCS', 'konversi' => 1, 'qty' => 1, 'qty_base' => 1,
-             'harga_satuan' => 1000, 'jumlah' => 1000, 'hpp_at_time' => 500],
+                'unit' => 'PCS', 'konversi' => 1, 'qty' => 1, 'qty_base' => 1,
+                'harga_satuan' => 1000, 'jumlah' => 1000, 'hpp_at_time' => 500],
         ]);
 
         $data = $this->actingAs($this->viewer)

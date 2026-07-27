@@ -1,16 +1,13 @@
 import { ref, computed } from 'vue';
-import { usePrintService } from '@/composables/usePrintService';
 import { getStoredPrinter } from './printStorage.js';
 import { checkStatusCore, printRawCore } from './printAdapterCore.js';
-import { isThermalSupported, supportMatrix } from './printTransportCore.js';
+import { getActiveConnection, isThermalSupported, supportMatrix } from './printTransportCore.js';
 import { usePrintTransport } from './usePrintTransport.js';
 
 /**
- * Facade for thermal printing — browser transport primary, legacy Python optional.
- * API mirrors usePrintService for easier migration.
+ * Facade for browser thermal printing (Web Serial / WebUSB / Bluetooth).
  */
 export function usePrintAdapter() {
-    const legacy = usePrintService();
     const transport = usePrintTransport();
 
     const isAvailable = ref(false);
@@ -22,9 +19,14 @@ export function usePrintAdapter() {
     const printerLabel = computed(() => transport.printerLabel.value || getStoredPrinter()?.label || null);
 
     async function checkStatus() {
-        const ok = await checkStatusCore(typeof navigator !== 'undefined' ? navigator : undefined, legacy);
+        const ok = await checkStatusCore();
         isAvailable.value = ok;
         return ok;
+    }
+
+    /** True when paired or live-connected (not merely browser API support). */
+    function isReadyToThermal() {
+        return !!(getActiveConnection() || getStoredPrinter()?.kind);
     }
 
     async function pick(kind, opts) {
@@ -42,18 +44,13 @@ export function usePrintAdapter() {
     /**
      * @param {string} base64Data
      * @param {Object} [opts]
-     * @param {boolean} [opts.openDrawer]
-     * @param {string} [opts.legacyPrinterId] — terminal default_printer for legacy bridge
+     * @param {boolean} [opts.openDrawer] — unused here; drawer bytes belong in ESC/POS payload
      */
     async function printRaw(base64Data, opts = {}) {
-        const { openDrawer = false, legacyPrinterId } = opts;
         busy.value = true;
         error.value = null;
         try {
             const result = await printRawCore(base64Data, {
-                openDrawer,
-                legacyPrinterId,
-                legacy,
                 writeFn: (bytes) => transport.write(bytes),
                 reconnectFn: () => transport.reconnect()
             });
@@ -64,24 +61,11 @@ export function usePrintAdapter() {
             return {
                 success: result.ok,
                 needPicker: result.needPicker || false,
-                message: result.error,
-                legacyUsed: result.legacyUsed || false
+                message: result.error
             };
         } finally {
             busy.value = false;
         }
-    }
-
-    /** @deprecated Browser transport uses pairing — returns label for UI compat */
-    async function getPrinters() {
-        const stored = getStoredPrinter();
-        if (stored?.label) {
-            return [{ id: stored.kind, name: stored.label }];
-        }
-        if (transport.printerLabel.value) {
-            return [{ id: getStoredPrinter()?.kind || 'browser', name: transport.printerLabel.value }];
-        }
-        return [];
     }
 
     return {
@@ -92,11 +76,11 @@ export function usePrintAdapter() {
         support,
         printerLabel,
         checkStatus,
+        isReadyToThermal,
         pick,
         reconnect,
         forget,
         printRaw,
-        getPrinters,
         transport
     };
 }

@@ -15,6 +15,8 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const { formatCurrency, formatQty, formatPercent, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
@@ -30,11 +32,17 @@ const selectedTerminal = ref(null);
 const selectedUser = ref(null);
 const selectedMetodeBayar = ref(null);
 const selectedStatus = ref(null);
+const selectedWarehouse = ref(null);
+const selectedSource = ref(null);
 const statusOptions = [
     { label: 'Selesai', value: 'completed' },
     { label: 'Void', value: 'voided' },
     { label: 'Retur Sebagian', value: 'retur_partial' },
     { label: 'Retur Penuh', value: 'retur_full' }
+];
+const sourceOptions = [
+    { label: 'POS', value: 'pos' },
+    { label: 'Manual (BO)', value: 'manual' }
 ];
 
 const { items, loading, totalRecords, searchQuery, lazyParams, startDate, endDate, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams } = useReportList({
@@ -46,13 +54,17 @@ const { items, loading, totalRecords, searchQuery, lazyParams, startDate, endDat
         terminal_id: selectedTerminal.value,
         user_id: selectedUser.value,
         metode_bayar_id: selectedMetodeBayar.value,
-        status: selectedStatus.value
+        status: selectedStatus.value,
+        warehouse_id: selectedWarehouse.value,
+        source: selectedSource.value
     }),
     onResetFilters: () => {
         selectedTerminal.value = null;
         selectedUser.value = null;
         selectedMetodeBayar.value = null;
         selectedStatus.value = null;
+        selectedWarehouse.value = null;
+        selectedSource.value = null;
     },
     listErrorLabel: 'penjualan',
     defaultSortField: 'tanggal'
@@ -61,6 +73,7 @@ const { items, loading, totalRecords, searchQuery, lazyParams, startDate, endDat
 const terminals = computed(() => dropdowns.value.terminals ?? []);
 const users = computed(() => dropdowns.value.users ?? []);
 const metodeBayar = computed(() => dropdowns.value.metode_bayar ?? []);
+const warehouses = computed(() => dropdowns.value.warehouses ?? []);
 
 const {
     detailDialog,
@@ -75,6 +88,19 @@ const {
         items: data.sales?.details ?? []
     }),
     errorLabel: 'penjualan'
+});
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedTerminal.value) n++;
+    if (selectedUser.value) n++;
+    if (selectedMetodeBayar.value) n++;
+    if (selectedStatus.value) n++;
+    if (selectedWarehouse.value) n++;
+    if (selectedSource.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
 });
 
 async function viewDetail(data) {
@@ -199,7 +225,7 @@ async function tryDirectPrintReceipt(salesData) {
 const handlePrint = async (data) => {
     const fullData = await fetchFullSales(data.ulid);
     if (!fullData) return;
-    if (printAdapter.supported.value || printAdapter.isAvailable.value) {
+    if (printAdapter.isReadyToThermal()) {
         const ok = await tryDirectPrintReceipt(fullData);
         if (ok) return;
     }
@@ -225,7 +251,7 @@ const handleCopyUrl = async (data) => {
 // For detail dialog actions, we need the full data loaded
 const handleDetailPrint = async () => {
     if (!detailData.value?.ulid) return;
-    if (printService.isAvailable.value) {
+    if (printAdapter.isReadyToThermal()) {
         const ok = await tryDirectPrintReceipt(detailData.value);
         if (ok) return;
     }
@@ -241,7 +267,7 @@ const handleDetailCopyUrl = () => {
 };
 
 onMounted(() => {
-    printService.checkStatus();
+    printAdapter.checkStatus();
 });
 </script>
 
@@ -253,19 +279,21 @@ onMounted(() => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedUser" :options="users" optionLabel="name" optionValue="id" placeholder="Kasir" class="w-36" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedMetodeBayar" :options="metodeBayar" optionLabel="nama_pembayaran" optionValue="id" placeholder="Metode Bayar" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" showClear @change="onFilterChange" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedUser" :options="users" optionLabel="name" optionValue="id" placeholder="Kasir" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedMetodeBayar" :options="metodeBayar" optionLabel="nama_pembayaran" optionValue="id" placeholder="Metode Bayar" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" showClear @change="onFilterChange" />
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" showClear @change="onFilterChange" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -292,7 +320,7 @@ onMounted(() => {
             <template #header>
                 <DataTableHeader v-model="searchQuery" title="Daftar Penjualan" placeholder="Cari no. invoice, customer..." @search="doSearch" @clear="clearSearch">
                     <template v-if="canExport" #extra>
-                        <Button icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                        <Button icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  />
                         <Button icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
                     </template>
                 </DataTableHeader>
@@ -357,12 +385,12 @@ onMounted(() => {
 
             <Column header="Aksi" style="min-width: 150px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-print" severity="secondary" text rounded @click="handlePrint(data)" v-tooltip.top="'Print Struk'" />
-                        <Button icon="pi pi-file-pdf" severity="warn" text rounded @click="handleDownloadPdf(data)" v-tooltip.top="'Download PDF'" />
-                        <Button icon="pi pi-link" severity="secondary" text rounded @click="handleCopyUrl(data)" v-tooltip.top="'Copy URL Struk'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-print" severity="secondary" text rounded @click="handlePrint(data)" v-tooltip.top="'Print Struk'"  />
+                        <Button icon="pi pi-file-pdf" severity="warn" text rounded @click="handleDownloadPdf(data)" v-tooltip.top="'Download PDF'"  />
+                        <Button icon="pi pi-link" severity="secondary" text rounded @click="handleCopyUrl(data)" v-tooltip.top="'Copy URL Struk'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -404,6 +432,7 @@ onMounted(() => {
                                         <template v-if="u.kode_internal">{{ u.kode_internal }} · </template>SN {{ u.serial_number }}<template v-if="u.grade"> ({{ u.grade }})</template
                                         ><template v-if="u.battery_health || u.battery_condition">
                                             · 🔋{{ u.battery_health }}%<template v-if="u.battery_condition"> {{ u.battery_condition }}</template></template
+                                        ><template v-if="u.battery_cycle_count != null"> · Cyc {{ u.battery_cycle_count }}</template
                                         ><template v-if="u.account_status"> · {{ u.account_status }}</template
                                         ><template v-if="u.catatan"> · {{ u.catatan }}</template>
                                     </div>
@@ -549,10 +578,6 @@ onMounted(() => {
                                 <span>Total Semua Retur</span>
                                 <span class="font-medium text-orange-600">{{ formatCurrency(totalReturns) }}</span>
                             </div>
-                            <div class="flex justify-between text-sm pl-4">
-                                <span class="text-surface-500">Refund Tunai</span>
-                                <span>{{ formatCurrency(totalReturns) }}</span>
-                            </div>
                             <Divider />
                             <div class="flex justify-between font-bold text-lg">
                                 <span>Nilai Bersih</span>
@@ -573,7 +598,7 @@ onMounted(() => {
             <template #footer-extra>
                 <div class="flex flex-wrap gap-2">
                     <Button label="Print" icon="pi pi-print" severity="secondary" outlined @click="handleDetailPrint" />
-                    <Button label="PDF" icon="pi pi-file-pdf" severity="warn" outlined @click="handleDetailPdf" />
+                    <Button label="PDF" icon="pi pi-file-pdf" severity="warn" @click="handleDetailPdf"  outlined />
                     <Button label="Copy URL" icon="pi pi-link" severity="info" outlined @click="handleDetailCopyUrl" />
                 </div>
             </template>

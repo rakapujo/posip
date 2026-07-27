@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\BaseApiController;
+use App\Services\SettingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -15,7 +16,7 @@ class ResetController extends BaseApiController
      */
     public function counts()
     {
-        if (!auth()->user()->can('settings.reset')) {
+        if (! auth()->user()->can('settings.reset')) {
             return $this->forbidden();
         }
 
@@ -39,12 +40,16 @@ class ResetController extends BaseApiController
             'purchase_return' => DB::table('doc_purchase_return')->count(),
             'sales' => DB::table('doc_sales')->count(),
             'pembayaran_hutang' => DB::table('doc_pembayaran_hutang')->count(),
+            'pembayaran_piutang' => DB::table('doc_pembayaran_piutang')->count(),
+            'customer_piutang' => DB::table('customer_piutang')->count(),
+            'customer_deposit' => DB::table('customer_deposit')->count(),
             'adjustment' => DB::table('doc_adjustment')->count(),
             'transfer' => DB::table('doc_transfer')->count(),
             'repack' => DB::table('doc_repack')->count(),
             'stock_opname' => DB::table('doc_stock_opname')->count(),
             'hpp_correction' => DB::table('doc_hpp_correction')->count(),
             'price_change' => DB::table('doc_price_change')->count(),
+            'promo' => DB::table('doc_promo')->count(),
             'shift' => DB::table('pos_terminal_shifts')->count(),
             'supplier_deposit' => DB::table('supplier_deposit')->count(),
 
@@ -71,38 +76,29 @@ class ResetController extends BaseApiController
      */
     public function reset(Request $request)
     {
-        if (!auth()->user()->can('settings.reset')) {
+        if (! auth()->user()->can('settings.reset')) {
             return $this->forbidden();
         }
 
         $request->validate([
             'target' => 'required|string',
             'password' => 'required|string',
+            'backup_acknowledged' => 'required|accepted',
+        ], [
+            'backup_acknowledged.required' => 'Konfirmasi backup wajib sebelum reset.',
+            'backup_acknowledged.accepted' => 'Konfirmasi backup wajib sebelum reset.',
         ]);
 
         // Verify password
-        if (!Hash::check($request->password, auth()->user()->password)) {
+        if (! Hash::check($request->password, auth()->user()->password)) {
             return $this->error('Password salah', 422);
         }
 
         $target = $request->target;
 
-        // Audit log: who + what + when, before execution
-        activity('Reset')
-            ->causedBy(auth()->user())
-            ->withProperties([
-                'target' => $target,
-                'ip' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-            ])
-            ->log("Reset data target: {$target}");
-
-        Log::warning('Database reset executed', [
-            'user_id' => auth()->id(),
-            'user_name' => auth()->user()->name,
-            'target' => $target,
-            'ip' => $request->ip(),
-        ]);
+        if ($deny = $this->refuseIfUnsafeGranular($target)) {
+            return $deny;
+        }
 
         try {
             $this->toggleForeignKeyChecks(false);
@@ -124,7 +120,7 @@ class ResetController extends BaseApiController
                     $this->resetTransaksi();
                     break;
 
-                // ── Individual master tables ──
+                    // ── Individual master tables ──
                 case 'brand':
                     DB::table('master_brand')->truncate();
                     break;
@@ -164,7 +160,19 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'customer':
-                    DB::table('master_customer')->truncate();
+                    $this->truncateTables([
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                        'customer_piutang',
+                        'customer_deposit',
+                        'doc_sales_return_detail',
+                        'doc_sales_returns',
+                        'doc_sales_payments',
+                        'doc_sales_detail',
+                        'doc_sales',
+                        'master_customer',
+                    ]);
                     break;
 
                 case 'tipe_customer':
@@ -185,9 +193,11 @@ class ResetController extends BaseApiController
 
                 case 'produk':
                     $this->truncateTables([
-                        // Rantai hutang/deposit dulu (anak→induk) — hutang bersumber dari
-                        // PO/Intake/Retur yang ikut di-reset di bawah; tanpa ini FK pecah
-                        // (mis. supplier_hutang.serial_intake_id → doc_serial_intake).
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                        'customer_piutang',
+                        'customer_deposit',
                         'doc_pembayaran_hutang_deposit',
                         'doc_pembayaran_hutang_detail',
                         'doc_pembayaran_hutang',
@@ -226,6 +236,8 @@ class ResetController extends BaseApiController
                         'serial_unit_movements',
                         'serial_units',
                         'doc_serial_intake',
+                        'doc_promo_details',
+                        'doc_promo',
                         'master_produk',
                     ]);
                     break;
@@ -233,6 +245,11 @@ class ResetController extends BaseApiController
                 case 'pos_terminal':
                     $this->truncateTables([
                         'pos_cash_transactions',
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                        'customer_piutang',
+                        'customer_deposit',
                         'doc_sales_return_detail',
                         'doc_sales_returns',
                         'doc_sales_payments',
@@ -245,7 +262,7 @@ class ResetController extends BaseApiController
                     ]);
                     break;
 
-                // ── Individual transaction tables ──
+                    // ── Individual transaction tables ──
                 case 'purchase_order':
                     $this->truncateTables([
                         'supplier_hutang',
@@ -268,12 +285,41 @@ class ResetController extends BaseApiController
 
                 case 'sales':
                     $this->truncateTables([
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                        'customer_piutang',
+                        'customer_deposit',
                         'doc_sales_return_detail',
                         'doc_sales_returns',
                         'doc_sales_payments',
                         'doc_sales_detail',
                         'doc_sales',
                         'pos_cash_transactions',
+                    ]);
+                    break;
+
+                case 'pembayaran_piutang':
+                    $this->truncateTables([
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                    ]);
+                    break;
+
+                case 'customer_piutang':
+                    $this->truncateTables([
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                        'customer_piutang',
+                    ]);
+                    break;
+
+                case 'customer_deposit':
+                    $this->truncateTables([
+                        'doc_pembayaran_piutang_deposit',
+                        'customer_deposit',
                     ]);
                     break;
 
@@ -286,6 +332,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'adjustment':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_adjustment', 'adjustment')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_adjustment_detail',
                         'doc_adjustment',
@@ -293,6 +342,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'transfer':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_transfer', 'transfer')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_transfer_detail',
                         'doc_transfer',
@@ -300,6 +352,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'repack':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_repack', 'repack')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_repack_output',
                         'doc_repack_input',
@@ -308,6 +363,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'stock_opname':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_stock_opname', 'stock_opname')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_stock_opname_detail',
                         'doc_stock_opname',
@@ -315,6 +373,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'hpp_correction':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_hpp_correction', 'hpp_correction')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_hpp_correction_detail',
                         'doc_hpp_correction',
@@ -322,6 +383,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'price_change':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_price_change', 'price_change')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'price_change_trigger_log',
                         'doc_price_change_detail',
@@ -329,9 +393,16 @@ class ResetController extends BaseApiController
                     ]);
                     break;
 
+                case 'promo':
+                    $this->truncateTables([
+                        'doc_promo_details',
+                        'doc_promo',
+                    ]);
+                    break;
+
                 case 'serial_intake':
-                    // Hutang ber-sumber pembelian serial dulu (FK ke doc_serial_intake)
                     DB::table('supplier_hutang')->whereNotNull('serial_intake_id')->delete();
+                    DB::table('history_harga_beli')->whereNotNull('serial_intake_id')->delete();
                     $this->truncateTables([
                         'doc_serial_change_detail',
                         'doc_serial_change',
@@ -344,6 +415,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'serial_change':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_serial_change', 'serial_change')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_serial_change_detail',
                         'doc_serial_change',
@@ -351,6 +425,9 @@ class ResetController extends BaseApiController
                     break;
 
                 case 'serial_hpp_correction':
+                    if ($resp = $this->refuseIfHasNonDraft('doc_serial_hpp_correction', 'serial_hpp_correction')) {
+                        return $resp;
+                    }
                     $this->truncateTables([
                         'doc_serial_hpp_correction_detail',
                         'doc_serial_hpp_correction',
@@ -360,6 +437,11 @@ class ResetController extends BaseApiController
                 case 'shift':
                     $this->truncateTables([
                         'pos_cash_transactions',
+                        'doc_pembayaran_piutang_deposit',
+                        'doc_pembayaran_piutang_detail',
+                        'doc_pembayaran_piutang',
+                        'customer_piutang',
+                        'customer_deposit',
                         'doc_sales_return_detail',
                         'doc_sales_returns',
                         'doc_sales_payments',
@@ -373,36 +455,149 @@ class ResetController extends BaseApiController
                     DB::table('supplier_deposit')->truncate();
                     break;
 
-                // ── Inventory ──
+                    // ── Inventory ──
                 case 'inventory':
                     $this->truncateTables([
+                        'serial_unit_movements',
+                        'serial_units',
                         'stock_card',
                         'inventory_stock',
                     ]);
                     break;
 
-                // ── Settings ──
+                    // ── Settings ──
                 case 'settings':
                     $this->resetSettings();
                     break;
 
                 default:
-                    $this->toggleForeignKeyChecks(true);
                     return $this->error("Target reset '$target' tidak valid", 422);
             }
 
-            $this->toggleForeignKeyChecks(true);
+            activity('Reset')
+                ->causedBy(auth()->user())
+                ->withProperties([
+                    'target' => $target,
+                    'ip' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ])
+                ->log("Reset data target: {$target}");
+
+            Log::warning('Database reset executed', [
+                'user_id' => auth()->id(),
+                'user_name' => auth()->user()->name,
+                'target' => $target,
+                'ip' => $request->ip(),
+            ]);
 
             return $this->success(null, "Reset '$target' berhasil");
         } catch (\Exception $e) {
-            $this->toggleForeignKeyChecks(true);
             Log::error('Database reset failed', [
                 'user_id' => auth()->id(),
                 'target' => $target,
                 'error' => $e->getMessage(),
             ]);
-            return $this->error('Gagal mereset data: ' . $e->getMessage(), 500);
+
+            return $this->error('Gagal mereset data: '.$e->getMessage(), 500);
+        } finally {
+            $this->toggleForeignKeyChecks(true);
         }
+    }
+
+    /**
+     * Block granular resets that leave stock/serial/AR-AP inconsistent.
+     * Prefer group targets: transaksi / master / all.
+     */
+    private function refuseIfUnsafeGranular(string $target): ?\Illuminate\Http\JsonResponse
+    {
+        $useTransaksi = "Reset '{$target}' ditolak karena dapat merusak konsistensi stok/serial/piutang-hutang. Gunakan Reset Transaksi (atau Reset Semua).";
+        $useMaster = "Reset '{$target}' ditolak karena masih ada data terkait. Gunakan Reset Master (atau Reset Semua).";
+
+        return match ($target) {
+            'sales', 'shift' => (
+                DB::table('serial_units')->whereNotNull('sale_id')->exists()
+                || DB::table('stock_card')->exists()
+            ) ? $this->error($useTransaksi, 422) : null,
+
+            'purchase_order', 'purchase_return' => (
+                DB::table('stock_card')->exists()
+                || DB::table('serial_units')->exists()
+                || DB::table('inventory_stock')->where('qty', '!=', 0)->exists()
+            ) ? $this->error($useTransaksi, 422) : null,
+
+            'pembayaran_hutang' => DB::table('supplier_hutang')->exists()
+                ? $this->error($useTransaksi, 422) : null,
+
+            'pembayaran_piutang' => DB::table('customer_piutang')->exists()
+                ? $this->error($useTransaksi, 422) : null,
+
+            'brand', 'tipe', 'kategori', 'grup' => DB::table('master_produk')->exists()
+                ? $this->error($useMaster, 422) : null,
+
+            'tipe_customer', 'kategori_customer' => DB::table('master_customer')->exists()
+                ? $this->error($useMaster, 422) : null,
+
+            'warehouse' => (
+                DB::table('inventory_stock')->exists()
+                || DB::table('stock_card')->exists()
+                || DB::table('master_pos_terminal')->exists()
+                || DB::table('doc_sales')->exists()
+                || DB::table('doc_purchase_order')->exists()
+            ) ? $this->error($useMaster, 422) : null,
+
+            'metode_pembayaran' => (
+                DB::table('pos_terminal_payment_methods')->exists()
+                || DB::table('doc_sales_payments')->exists()
+            ) ? $this->error($useMaster, 422) : null,
+
+            'inventory' => (
+                DB::table('doc_sales')->exists()
+                || DB::table('doc_purchase_order')->exists()
+                || DB::table('doc_serial_intake')->exists()
+                || DB::table('doc_adjustment')->where('status', '!=', 'draft')->exists()
+                || DB::table('doc_transfer')->where('status', '!=', 'draft')->exists()
+                || DB::table('doc_repack')->where('status', '!=', 'draft')->exists()
+                || DB::table('doc_stock_opname')->where('status', '!=', 'draft')->exists()
+            ) ? $this->error(
+                "Reset 'inventory' ditolak: masih ada dokumen transaksi/non-draft. Gunakan Reset Transaksi dulu (mengosongkan stok + dokumen).",
+                422
+            ) : null,
+
+            // ponytail: refuse-only (no cascade repair) — use Reset Transaksi / Master / Semua
+            'serial_intake' => (
+                DB::table('doc_serial_intake')->where('status', '!=', 'draft')->exists()
+                || DB::table('stock_card')->exists()
+                || DB::table('inventory_stock')->where('qty', '!=', 0)->exists()
+                || DB::table('serial_units')->where('status', '!=', 'pending')->exists()
+            ) ? $this->error($useTransaksi, 422) : null,
+
+            'supplier', 'customer', 'pos_terminal' => (
+                DB::table('stock_card')->exists()
+                || DB::table('inventory_stock')->where('qty', '!=', 0)->exists()
+                || DB::table('serial_units')->exists()
+            ) ? $this->error($useMaster, 422) : null,
+
+            'customer_piutang' => (
+                DB::table('doc_sales')->exists()
+                || DB::table('doc_pembayaran_piutang')->exists()
+            ) ? $this->error($useTransaksi, 422) : null,
+
+            'customer_deposit' => (
+                DB::table('doc_sales')->exists()
+                || DB::table('doc_pembayaran_piutang')->exists()
+            ) ? $this->error($useTransaksi, 422) : null,
+
+            'supplier_deposit' => (
+                DB::table('doc_purchase_order')->exists()
+                || DB::table('doc_pembayaran_hutang')->exists()
+                || DB::table('supplier_hutang')->exists()
+            ) ? $this->error($useTransaksi, 422) : null,
+
+            'promo' => DB::table('doc_sales_detail')->whereNotNull('promo_id')->exists()
+                ? $this->error($useTransaksi, 422) : null,
+
+            default => null,
+        };
     }
 
     /**
@@ -412,7 +607,7 @@ class ResetController extends BaseApiController
     {
         $driver = DB::connection()->getDriverName();
         if ($driver === 'mysql' || $driver === 'mariadb') {
-            DB::statement('SET FOREIGN_KEY_CHECKS=' . ($enabled ? '1' : '0'));
+            DB::statement('SET FOREIGN_KEY_CHECKS='.($enabled ? '1' : '0'));
         }
     }
 
@@ -427,6 +622,21 @@ class ResetController extends BaseApiController
     }
 
     /**
+     * Block granular doc reset when approved/completed rows exist (avoids stock ledger desync).
+     */
+    private function refuseIfHasNonDraft(string $table, string $target): ?\Illuminate\Http\JsonResponse
+    {
+        if (DB::table($table)->where('status', '!=', 'draft')->exists()) {
+            return $this->error(
+                "Reset '{$target}' ditolak: masih ada dokumen non-draft. Gunakan reset Inventory/Transaksi, atau pastikan semua dokumen masih draft.",
+                422
+            );
+        }
+
+        return null;
+    }
+
+    /**
      * Reset all transaction-related tables
      */
     private function resetTransaksi(): void
@@ -434,6 +644,11 @@ class ResetController extends BaseApiController
         $this->truncateTables([
             // Sales & POS
             'pos_cash_transactions',
+            'doc_pembayaran_piutang_deposit',
+            'doc_pembayaran_piutang_detail',
+            'doc_pembayaran_piutang',
+            'customer_piutang',
+            'customer_deposit',
             'doc_sales_return_detail',
             'doc_sales_returns',
             'doc_sales_payments',
@@ -479,6 +694,10 @@ class ResetController extends BaseApiController
             'doc_price_change_detail',
             'doc_price_change',
 
+            // Promo
+            'doc_promo_details',
+            'doc_promo',
+
             // History
             'history_harga_beli',
 
@@ -522,11 +741,13 @@ class ResetController extends BaseApiController
         DB::table('settings')->truncate();
 
         // Re-run SettingSeeder to restore defaults
-        $seeder = new \Database\Seeders\SettingSeeder();
+        $seeder = new \Database\Seeders\SettingSeeder;
         $seeder->setContainer(app());
-        $seeder->setCommand(new class extends \Illuminate\Console\Command {
+        $seeder->setCommand(new class extends \Illuminate\Console\Command
+        {
             public function info($string, $verbosity = null) {}
         });
         $seeder->run();
+        SettingService::clearCache();
     }
 }

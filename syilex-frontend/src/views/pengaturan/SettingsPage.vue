@@ -1,13 +1,16 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { settingsApi, posTerminalsApi } from '@/api';
 import { useSettingsStore } from '@/stores/settings';
 import { useAuthStore } from '@/stores/auth';
+import { useConfirm } from 'primevue/useconfirm';
 import ImageUpload from '@/components/common/ImageUpload.vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 
 const notify = useNotification();
+const confirm = useConfirm();
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
 const canUpdate = computed(() => authStore.can('settings.update'));
@@ -29,7 +32,6 @@ async function refreshActiveShifts() {
 const prevNegativeMode = ref(null);
 const negativeModeDialog = ref(false);
 
-const printServiceDownloadUrl = '/downloads/posip-print-service-setup.exe';
 const loading = ref(true);
 const saving = ref({});
 const activeTab = ref('0');
@@ -54,10 +56,9 @@ const tabGroups = {
     1: ['regional', 'number', 'text'],
     2: ['currency'],
     3: ['tax', 'rounding'],
-    4: ['stock', 'calculation', 'product'],
+    4: ['stock', 'calculation', 'product', 'returns'],
     5: ['promo'],
     6: ['scheduler'],
-    7: ['prefix'],
     8: ['modules']
 };
 
@@ -70,11 +71,12 @@ const settings = ref({
     tax: { tax_purchase_name: 'PPN', tax_purchase_percent: 11, tax_purchase_included_in_hpp: false, tax_sales_name: 'PPN', tax_sales_percent: 11 },
     rounding: { purchase_method: 'none', purchase_precision: 0, sales_method: 'round', sales_precision: 100 },
     stock: { negative_mode: 'block' },
-    calculation: { discount_mode: 'recursive', cost_allocation_mode: 'by_value' },
+    calculation: { discount_mode: 'recursive' },
     promo: { enabled: true, allow_manual_discount: true, max_manual_discount_percent: 100, max_manual_discount_nominal: null },
     product: { price_input_mode: 'auto' },
+    returns: { sales_allow_free: true, purchase_allow_free: true },
     text: { uppercase_mode: 'code_only' },
-    scheduler: { price_change_enabled: true, price_change_cooldown: 5, price_change_max_batch: 50 },
+    scheduler: { price_change_enabled: true, price_change_max_batch: 50, activity_log_enabled: true, activity_log_cooldown: 10080, activity_log_retention_days: 365 },
     prefix: { purchase_order: 'POR', purchase_return: 'RPB', sales: 'INV', sales_return: 'RPJ', payment_hutang: 'PBH', stock_opname: 'OPN', adjustment: 'ADJ', transfer: 'TRF', repack: 'RPK', price_change: 'PCH', hpp_correction: 'HPC', promo: 'PRM' },
     modules: { elektronik_enabled: true }
 });
@@ -148,7 +150,7 @@ const priceInputModeOptions = [
 // Uppercase mode options
 const uppercaseModeOptions = [
     { label: 'Tidak ada', value: 'none' },
-    { label: 'Hanya kode', value: 'code_only' },
+    { label: 'Hanya kode (nama tetap)', value: 'code_only' },
     { label: 'Semua field', value: 'all' }
 ];
 
@@ -225,6 +227,8 @@ function cancelNegativeModeAllow() {
     negativeModeDialog.value = false;
 }
 
+const savedSnapshot = ref({});
+
 const fetchSettings = async () => {
     loading.value = true;
     try {
@@ -259,6 +263,8 @@ const fetchSettings = async () => {
             elektronikLocked.value = elektronikLockRes.data.data.locked;
             elektronikLockMessage.value = elektronikLockRes.data.data.message;
         }
+
+        savedSnapshot.value = JSON.parse(JSON.stringify(settings.value));
     } catch (error) {
         notify.loadListError('settings');
     } finally {
@@ -268,7 +274,8 @@ const fetchSettings = async () => {
 
 const saveGroup = async (group) => {
     const groupSettings = settings.value[group];
-    const settingsArray = Object.entries(groupSettings).map(([key, value]) => ({
+    const entries = Object.entries(groupSettings);
+    const settingsArray = entries.map(([key, value]) => ({
         key,
         value: value === null ? '' : value
     }));
@@ -276,27 +283,108 @@ const saveGroup = async (group) => {
     await settingsApi.updateGroup(group, settingsArray);
 };
 
-// Save all groups in a tab
-const saveTab = async (tabId) => {
-    const groups = tabGroups[tabId];
-    saving.value[tabId] = true;
-
-    try {
-        // Save all groups in this tab
-        await Promise.all(groups.map((group) => saveGroup(group)));
-
-        notify.success('Pengaturan berhasil disimpan');
-
-        // Refresh public settings bila store ATAU modul diubah (agar menu/route serial ikut update)
-        if (tabId === '0' || tabGroups[tabId].includes('modules')) {
-            settingsStore.refresh();
+function dangerConfirmMessage(tabId) {
+    const snap = savedSnapshot.value;
+    const msgs = [];
+    if (tabId === '8' && !settings.value.modules?.elektronik_enabled && snap.modules?.elektronik_enabled) {
+        msgs.push('Nonaktifkan Modul Elektronik? Menu dan fungsi serial akan disembunyikan.');
+    }
+    if (tabId === '5' && !settings.value.promo?.enabled && snap.promo?.enabled) {
+        msgs.push('Nonaktifkan promo? Diskon promo tidak akan diterapkan di checkout.');
+    }
+    if (tabId === '4') {
+        if (!settings.value.returns?.sales_allow_free && snap.returns?.sales_allow_free) {
+            msgs.push('Nonaktifkan retur jual bebas (tanpa nota)?');
         }
+        if (!settings.value.returns?.purchase_allow_free && snap.returns?.purchase_allow_free) {
+            msgs.push('Nonaktifkan retur beli bebas (tanpa PO/PBS)?');
+        }
+    }
+    return msgs.join(' ');
+}
+
+const doSaveTab = async (tabId) => {
+    const groups = tabGroups[tabId];
+    if (!groups?.length) return;
+
+    saving.value[tabId] = true;
+    try {
+        for (const group of groups) {
+            await saveGroup(group);
+        }
+        notify.success('Pengaturan berhasil disimpan');
+        await settingsStore.refresh();
+        savedSnapshot.value = JSON.parse(JSON.stringify(settings.value));
     } catch (error) {
         notify.saveError(error);
     } finally {
         saving.value[tabId] = false;
     }
 };
+
+const saveTab = (tabId) => {
+    if (!canUpdate.value) return;
+
+    const runWithDangerConfirm = () => {
+        const msg = dangerConfirmMessage(tabId);
+        if (msg) {
+            confirm.require({
+                message: msg,
+                header: 'Konfirmasi perubahan',
+                icon: 'pi pi-exclamation-triangle',
+                rejectLabel: 'Batal',
+                acceptLabel: 'Lanjut Simpan',
+                rejectProps: { severity: 'secondary', text: true },
+                acceptProps: { severity: 'danger' },
+                accept: () => doSaveTab(tabId)
+            });
+            return;
+        }
+        doSaveTab(tabId);
+    };
+
+    // Fiscal tabs: soft confirm if shifts are open (not a hard BE block).
+    const fiscalTabs = ['2', '3', '4', '5'];
+    if (fiscalTabs.includes(String(tabId)) && activeShifts.value.count > 0) {
+        confirm.require({
+            message: `Ada ${activeShifts.value.count} shift aktif. Perubahan fiskal dapat memengaruhi transaksi yang sedang berjalan. Lanjut simpan?`,
+            header: 'Shift aktif',
+            icon: 'pi pi-exclamation-triangle',
+            rejectLabel: 'Batal',
+            acceptLabel: 'Lanjut Simpan',
+            rejectProps: { severity: 'secondary', text: true },
+            acceptProps: { severity: 'warning' },
+            accept: () => runWithDangerConfirm()
+        });
+        return;
+    }
+
+    runWithDangerConfirm();
+};
+
+const isDirty = computed(() => {
+    if (!savedSnapshot.value || Object.keys(savedSnapshot.value).length === 0) return false;
+    return JSON.stringify(settings.value) !== JSON.stringify(savedSnapshot.value);
+});
+
+onBeforeRouteLeave(() => {
+    if (!isDirty.value || !canUpdate.value) {
+        return true;
+    }
+    return new Promise((resolve) => {
+        confirm.require({
+            message: 'Ada perubahan yang belum disimpan. Tinggalkan halaman?',
+            header: 'Perubahan belum disimpan',
+            icon: 'pi pi-exclamation-triangle',
+            rejectLabel: 'Tetap di sini',
+            acceptLabel: 'Tinggalkan',
+            rejectProps: { severity: 'secondary', text: true },
+            acceptProps: { severity: 'danger' },
+            accept: () => resolve(true),
+            reject: () => resolve(false)
+        });
+    });
+});
 
 // Prefix document functions
 const fetchPrefixes = async () => {
@@ -312,7 +400,7 @@ const fetchPrefixes = async () => {
 };
 
 const startEditPrefix = (item) => {
-    if (item.is_locked) return;
+    if (!canUpdate.value || item.is_locked) return;
     editingPrefix.value[item.type] = item.prefix;
 };
 
@@ -325,9 +413,9 @@ const isEditingPrefix = (item) => {
 };
 
 const savePrefix = async (item) => {
+    if (!canUpdate.value) return;
     const newPrefix = editingPrefix.value[item.type]?.trim()?.toUpperCase();
 
-    // Validate
     if (!newPrefix) {
         notify.error('Prefix tidak boleh kosong');
         return;
@@ -336,8 +424,8 @@ const savePrefix = async (item) => {
         notify.error('Prefix hanya boleh berisi huruf dan angka');
         return;
     }
-    if (newPrefix.length > 10) {
-        notify.error('Prefix maksimal 10 karakter');
+    if (newPrefix.length !== 3) {
+        notify.error('Prefix harus tepat 3 karakter');
         return;
     }
 
@@ -346,7 +434,7 @@ const savePrefix = async (item) => {
         await settingsApi.updatePrefix(item.type, newPrefix);
         notify.success('Prefix berhasil diperbarui');
         delete editingPrefix.value[item.type];
-        await fetchPrefixes(); // Refresh to get new preview
+        await fetchPrefixes();
     } catch (error) {
         notify.saveError(error);
     } finally {
@@ -396,6 +484,7 @@ const savePrefix = async (item) => {
                 <!-- STORE SETTINGS -->
                 <TabPanel value="0">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <div class="flex flex-col gap-2">
                                 <label for="store_name">Nama Toko</label>
@@ -432,17 +521,17 @@ const savePrefix = async (item) => {
                             <div class="flex flex-col md:flex-row gap-6 mt-4">
                                 <div class="flex flex-col gap-2">
                                     <label>Logo Toko</label>
-                                    <ImageUpload v-model="settings.store.logo" folder="settings" label="Upload Logo" previewWidth="200px" previewHeight="100px" />
+                                    <ImageUpload v-model="settings.store.logo" folder="settings" label="Upload Logo" previewWidth="200px" previewHeight="100px" :disabled="!canUpdate" />
                                     <small class="text-muted-color">Ukuran maksimal 800x800px, akan dikonversi ke WebP</small>
                                 </div>
                                 <div class="flex flex-col gap-2">
                                     <label>Icon Toko</label>
-                                    <ImageUpload v-model="settings.store.icon" folder="settings" label="Upload Icon" previewWidth="100px" previewHeight="100px" />
+                                    <ImageUpload v-model="settings.store.icon" folder="settings" label="Upload Icon" previewWidth="100px" previewHeight="100px" :disabled="!canUpdate" />
                                     <small class="text-muted-color">Icon untuk favicon/shortcut</small>
                                 </div>
                                 <div class="flex flex-col gap-2">
                                     <label>Background Login</label>
-                                    <ImageUpload v-model="settings.store.login_background" folder="settings" label="Upload Background" previewWidth="200px" previewHeight="120px" />
+                                    <ImageUpload v-model="settings.store.login_background" folder="settings" label="Upload Background" previewWidth="200px" previewHeight="120px" :disabled="!canUpdate" />
                                     <small class="text-muted-color">Gambar halaman login (rasio 16:9 disarankan)</small>
                                 </div>
                             </div>
@@ -450,12 +539,14 @@ const savePrefix = async (item) => {
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('0')" :loading="saving['0']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
                 <!-- REGIONAL SETTINGS -->
                 <TabPanel value="1">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <div class="font-medium text-lg mb-2">Regional</div>
                             <div class="flex flex-col md:flex-row gap-4">
@@ -510,12 +601,14 @@ const savePrefix = async (item) => {
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('1')" :loading="saving['1']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
                 <!-- CURRENCY SETTINGS -->
                 <TabPanel value="2">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <div class="flex flex-col md:flex-row gap-4">
                                 <div class="flex flex-col gap-2 w-full">
@@ -549,12 +642,14 @@ const savePrefix = async (item) => {
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('2')" :loading="saving['2']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
                 <!-- TAX SETTINGS -->
                 <TabPanel value="3">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <div class="font-medium text-lg mb-2">Pajak Pembelian</div>
                             <div class="flex flex-col md:flex-row gap-4">
@@ -633,17 +728,19 @@ const savePrefix = async (item) => {
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('3')" :loading="saving['3']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
                 <!-- STOCK & CALCULATION SETTINGS -->
                 <TabPanel value="4">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <div class="font-medium text-lg mb-2">Pengaturan Stok</div>
                             <div class="flex flex-col gap-2">
                                 <label>Mode Stok Negatif</label>
-                                <Select v-model="settings.stock.negative_mode" :options="stockModeOptions" optionLabel="label" optionValue="value" :disabled="stockModeLocked" filter filterPlaceholder="Cari..." />
+                                <Select v-model="settings.stock.negative_mode" :options="stockModeOptions" optionLabel="label" optionValue="value" :disabled="stockModeLocked || !canUpdate" filter filterPlaceholder="Cari..." />
                                 <Message v-if="stockModeLocked" severity="warn" :closable="false" class="mt-2">
                                     <i class="pi pi-lock mr-2"></i>
                                     {{ stockModeLockMessage }}
@@ -665,7 +762,7 @@ const savePrefix = async (item) => {
                             <div class="font-medium text-lg mb-2">Pengaturan Produk</div>
                             <div class="flex flex-col gap-2">
                                 <label>Mode Input Harga</label>
-                                <Select v-model="settings.product.price_input_mode" :options="priceInputModeOptions" optionLabel="label" optionValue="value" :disabled="priceModeLocked" filter filterPlaceholder="Cari..." />
+                                <Select v-model="settings.product.price_input_mode" :options="priceInputModeOptions" optionLabel="label" optionValue="value" :disabled="priceModeLocked || !canUpdate" filter filterPlaceholder="Cari..." />
                                 <Message v-if="priceModeLocked" severity="warn" :closable="false" class="mt-2">
                                     <i class="pi pi-lock mr-2"></i>
                                     {{ priceModeLockMessage }}
@@ -676,16 +773,32 @@ const savePrefix = async (item) => {
                                 </small>
                             </div>
 
+                            <Divider />
+
+                            <div class="font-medium text-lg mb-2">Retur</div>
+                            <div class="flex items-center gap-2">
+                                <ToggleSwitch v-model="settings.returns.sales_allow_free" :disabled="!canUpdate" />
+                                <label>Izinkan retur penjualan tanpa nota (mode bebas)</label>
+                            </div>
+                            <small class="text-muted-color">Jika dimatikan, retur jual wajib mengacu ke nota penjualan.</small>
+                            <div class="flex items-center gap-2 mt-3">
+                                <ToggleSwitch v-model="settings.returns.purchase_allow_free" :disabled="!canUpdate" />
+                                <label>Izinkan retur pembelian tanpa dokumen (mode bebas)</label>
+                            </div>
+                            <small class="text-muted-color">Jika dimatikan, retur beli wajib mengacu ke PO atau PBS.</small>
+
                             <div class="flex justify-end mt-4">
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('4')" :loading="saving['4']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
                 <!-- PROMO SETTINGS -->
                 <TabPanel value="5">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <div class="flex items-center gap-2">
                                 <ToggleSwitch v-model="settings.promo.enabled" />
@@ -730,16 +843,19 @@ const savePrefix = async (item) => {
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('5')" :loading="saving['5']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
                 <!-- SCHEDULER SETTINGS -->
                 <TabPanel value="6">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <Message severity="info" :closable="false" class="mb-2">
                                 <i class="pi pi-info-circle mr-2"></i>
-                                Penjadwalan otomatis untuk memproses dokumen yang sudah dijadwalkan (seperti Perubahan Harga). Sistem akan memproses dokumen secara otomatis saat ada aktivitas user.
+                                <b>Perubahan Harga</b> dijalankan oleh cron Artisan (<code>price-change:apply</code> tiap 5 menit), bukan saat ada aktivitas user.
+                                <b>Activity log cleanup</b> dipicu saat request (middleware) dengan jeda cooldown.
                             </Message>
 
                             <div class="font-medium text-lg mb-2">Perubahan Harga</div>
@@ -747,25 +863,36 @@ const savePrefix = async (item) => {
                                 <ToggleSwitch v-model="settings.scheduler.price_change_enabled" />
                                 <label class="font-medium">Aktifkan Auto-Apply Perubahan Harga</label>
                             </div>
-                            <small class="text-muted-color -mt-2"> Jika diaktifkan, dokumen perubahan harga yang sudah dijadwalkan akan diproses otomatis saat tanggal berlaku tercapai. </small>
+                            <small class="text-muted-color -mt-2"> Jika aktif, dokumen terjadwal diproses otomatis oleh cron saat tanggal berlaku tercapai. </small>
 
-                            <div class="flex flex-col md:flex-row gap-4 mt-4">
-                                <div class="flex flex-col gap-2 w-full">
-                                    <label>Cooldown (menit)</label>
-                                    <InputNumber v-model="settings.scheduler.price_change_cooldown" :min="1" :max="60" :disabled="!settings.scheduler.price_change_enabled" />
-                                    <small class="text-muted-color">Jeda minimum antar proses (default: 5 menit)</small>
-                                </div>
-                                <div class="flex flex-col gap-2 w-full">
-                                    <label>Max Dokumen per Batch</label>
-                                    <InputNumber v-model="settings.scheduler.price_change_max_batch" :min="1" :max="100" :disabled="!settings.scheduler.price_change_enabled" />
-                                    <small class="text-muted-color">Jumlah maksimal dokumen yang diproses per batch (default: 50)</small>
-                                </div>
+                            <div class="flex flex-col gap-2 w-full md:w-1/2 mt-4">
+                                <label>Max Dokumen per Batch</label>
+                                <InputNumber v-model="settings.scheduler.price_change_max_batch" :min="1" :max="500" :disabled="!settings.scheduler.price_change_enabled" />
+                                <small class="text-muted-color">Dipakai command <code>price-change:apply</code> (default setting: 50). Interval cron tetap 5 menit.</small>
+                            </div>
+
+                            <div class="font-medium text-lg mb-2 mt-6">Activity Log Cleanup</div>
+                            <div class="flex items-center gap-2">
+                                <ToggleSwitch inputId="activity_log_enabled" v-model="settings.scheduler.activity_log_enabled" />
+                                <label for="activity_log_enabled" class="font-medium">Aktifkan pembersihan activity log otomatis</label>
+                            </div>
+                            <small class="text-muted-color -mt-2">Jeda antar menjalankan cleanup (bukan lama retensi data).</small>
+                            <div class="flex flex-col gap-2 w-full md:w-1/2 mt-2">
+                                <label for="activity_log_cooldown">Cooldown cleanup (menit)</label>
+                                <InputNumber id="activity_log_cooldown" v-model="settings.scheduler.activity_log_cooldown" :min="60" :max="525600" :disabled="!settings.scheduler.activity_log_enabled" />
+                                <small class="text-muted-color">Default 10080 = 7 hari jeda antar menjalankan cleanup.</small>
+                            </div>
+                            <div class="flex flex-col gap-2 w-full md:w-1/2 mt-2">
+                                <label for="activity_log_retention_days">Retensi activity log (hari)</label>
+                                <InputNumber id="activity_log_retention_days" v-model="settings.scheduler.activity_log_retention_days" :min="30" :max="3650" :disabled="!settings.scheduler.activity_log_enabled" />
+                                <small class="text-muted-color">Log lebih tua dari nilai ini dihapus saat cleanup (30–3650; default 365).</small>
                             </div>
 
                             <div class="flex justify-end mt-4">
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('6')" :loading="saving['6']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
 
@@ -774,7 +901,7 @@ const savePrefix = async (item) => {
                     <div class="flex flex-col gap-4">
                         <p class="text-muted-color mb-2">
                             Format nomor dokumen: <code class="bg-surface-100 dark:bg-surface-800 px-2 py-1 rounded">{PREFIX}-{YYMM}-{SEQUENCE}</code>
-                            <span class="ml-2 text-sm">(Contoh: PO-2601-0001)</span>
+                            <span class="ml-2 text-sm">(Contoh: POR-2601-0001 — prefix tepat 3 karakter)</span>
                         </p>
                         <Message severity="info" :closable="false" class="mb-2">
                             <i class="pi pi-info-circle mr-2"></i>
@@ -794,14 +921,14 @@ const savePrefix = async (item) => {
                                 <template #body="{ data }">
                                     <div class="flex items-center gap-2">
                                         <template v-if="isEditingPrefix(data)">
-                                            <InputText v-model="editingPrefix[data.type]" class="w-24 p-inputtext-sm" @keyup.enter="savePrefix(data)" @keyup.escape="cancelEditPrefix(data)" :style="{ textTransform: 'uppercase' }" maxlength="10" />
+                                            <InputText v-model="editingPrefix[data.type]" class="w-24 p-inputtext-sm" @keyup.enter="savePrefix(data)" @keyup.escape="cancelEditPrefix(data)" :style="{ textTransform: 'uppercase' }" maxlength="3" />
                                             <Button icon="pi pi-check" severity="success" text rounded size="small" @click="savePrefix(data)" :loading="savingPrefix[data.type]" />
                                             <Button icon="pi pi-times" severity="secondary" text rounded size="small" @click="cancelEditPrefix(data)" :disabled="savingPrefix[data.type]" />
                                         </template>
                                         <template v-else>
                                             <code class="bg-surface-100 dark:bg-surface-800 px-2 py-1 rounded font-semibold">{{ data.prefix }}</code>
-                                            <Button v-if="!data.is_locked" icon="pi pi-pencil" severity="secondary" text rounded size="small" @click="startEditPrefix(data)" v-tooltip.top="'Edit prefix'" />
-                                            <i v-else class="pi pi-lock text-muted-color" v-tooltip.top="`Terkunci: ${data.document_count} dokumen`"></i>
+                                            <Button v-if="canUpdate && !data.is_locked" icon="pi pi-pencil" severity="secondary" text rounded size="small" @click="startEditPrefix(data)" v-tooltip.top="'Edit prefix'" />
+                                            <i v-else-if="data.is_locked" class="pi pi-lock text-muted-color" v-tooltip.top="`Terkunci: ${data.document_count} dokumen`"></i>
                                         </template>
                                     </div>
                                 </template>
@@ -832,6 +959,7 @@ const savePrefix = async (item) => {
                 <!-- MODULE SETTINGS -->
                 <TabPanel value="8">
                     <Fluid>
+                        <fieldset class="border-0 p-0 m-0 min-w-0" :disabled="!canUpdate">
                         <div class="flex flex-col gap-4">
                             <Message severity="info" :closable="false" class="mb-2">
                                 <i class="pi pi-info-circle mr-2"></i>
@@ -843,7 +971,7 @@ const savePrefix = async (item) => {
 
                             <div class="font-medium text-lg mb-2">Modul Elektronik (Serial)</div>
                             <div class="flex items-center gap-2">
-                                <ToggleSwitch v-model="settings.modules.elektronik_enabled" :disabled="!canUpdate || elektronikLocked" />
+                                <ToggleSwitch v-model="settings.modules.elektronik_enabled" :disabled="elektronikLocked" />
                                 <label class="font-medium">Aktifkan Modul Elektronik (barang serial)</label>
                             </div>
                             <small class="text-muted-color -mt-2">
@@ -855,31 +983,11 @@ const savePrefix = async (item) => {
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('8')" :loading="saving['8']" />
                             </div>
                         </div>
+                        </fieldset>
                     </Fluid>
                 </TabPanel>
             </TabPanels>
         </Tabs>
-    </div>
-
-    <!-- Print Service (Legacy, opsional) -->
-    <div class="card mt-4">
-        <div class="font-semibold text-xl mb-4">Cetak Thermal</div>
-        <p class="text-muted-color mb-4">
-            <strong>Utama:</strong> pasangkan printer langsung dari browser (Chrome/Edge) di Master → POS Terminal.
-            Struk otomatis hanya saat checkout jika <code>auto_print_receipt</code> aktif.
-        </p>
-        <p class="text-muted-color mb-4">Firefox/Safari/iOS: gunakan fallback PDF. Lihat <code>docs/print-support-matrix.md</code>.</p>
-        <div class="font-medium mb-2 text-sm">Legacy — POSIP Print Service (opsional)</div>
-        <p class="text-muted-color mb-4">Aplikasi lokal untuk printer Windows/network jika browser transport tidak tersedia. Install sekali, berjalan di background (:5123).</p>
-        <div class="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <a :href="printServiceDownloadUrl" target="_blank">
-                <Button label="Download Installer Legacy" icon="pi pi-download" severity="secondary" outlined />
-            </a>
-            <small class="text-muted-color">
-                <i class="pi pi-info-circle mr-1"></i>
-                Deprecated — prefer browser pairing. Legacy dipakai otomatis jika transport browser gagal dan ID printer terminal diisi.
-            </small>
-        </div>
     </div>
 
     <!-- Confirm Negative Stock Mode Dialog -->

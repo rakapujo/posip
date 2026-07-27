@@ -22,7 +22,7 @@ npm run lint         # ESLint
 npx playwright test  # E2E — butuh backend + DB (lihat tests/README.md)
 ```
 
-Dokumentasi lengkap: [`tests/README.md`](tests/README.md) · matrix cetak: [`../docs/print-support-matrix.md`](../docs/print-support-matrix.md)
+Dokumentasi lengkap: [`tests/README.md`](tests/README.md). Thermal: pairing di Master → POS Terminal (browser Web Serial/USB/BT).
 
 ## Build & Deploy
 

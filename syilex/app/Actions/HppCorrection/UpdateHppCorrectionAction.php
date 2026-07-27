@@ -29,7 +29,15 @@ class UpdateHppCorrectionAction
 
         return DB::transaction(function () use ($correction, $data) {
             // Check for locked products (products in OTHER drafts, not this one)
-            $productIds = collect($data['details'])->pluck('product_id');
+            $productIds = collect($data['details'])->pluck('product_id')->unique()->values();
+            $products = MasterProduk::whereIn('id', $productIds)->get()->keyBy('id');
+
+            if ($products->contains(fn ($p) => $p->is_serial)) {
+                throw ValidationException::withMessages([
+                    'details' => ['Produk serial tidak bisa dikoreksi di sini. Gunakan menu Koreksi HPP Serial (per-unit).'],
+                ]);
+            }
+
             $lockedProducts = $this->getLockedProductIds($correction->id);
 
             $conflictingProducts = $productIds->intersect($lockedProducts);
@@ -55,8 +63,7 @@ class UpdateHppCorrectionAction
 
             // Create new details
             foreach ($data['details'] as $detail) {
-                // Get current HPP from product (refresh at update time)
-                $product = MasterProduk::find($detail['product_id']);
+                $product = $products->get($detail['product_id']);
                 $hppLama = $product ? (float) $product->avg_cost : 0;
 
                 // Format notes

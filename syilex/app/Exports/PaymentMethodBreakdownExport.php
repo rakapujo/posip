@@ -44,6 +44,33 @@ class PaymentMethodBreakdownExport implements FromCollection, WithHeadings, With
             ->orderByDesc(DB::raw('SUM(p.nominal)'))
             ->get();
 
+        if (! $terminalId) {
+            $piutangRows = DB::table('doc_pembayaran_piutang')
+                ->where('status', 'completed')
+                ->where('total_bayar_cash', '>', 0)
+                ->whereBetween('tanggal', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59'])
+                ->select(
+                    'metode_pembayaran',
+                    DB::raw('COUNT(*) as trx_count'),
+                    DB::raw('COALESCE(SUM(total_bayar_cash), 0) as nominal_total')
+                )
+                ->groupBy('metode_pembayaran')
+                ->get();
+
+            foreach ($piutangRows as $pr) {
+                $isCash = ($pr->metode_pembayaran ?? 'cash') === 'cash';
+                $rows->push((object) [
+                    'kode_pembayaran' => $isCash ? 'PPI-CASH' : 'PPI-TRF',
+                    'nama_pembayaran' => $isCash ? 'Bayar Piutang (Cash)' : 'Bayar Piutang (Transfer)',
+                    'metode' => $isCash ? 'tunai' : 'non_tunai',
+                    'jenis' => 'piutang',
+                    'trx_count' => (int) $pr->trx_count,
+                    'nominal_total' => (float) $pr->nominal_total,
+                    'biaya_total' => 0,
+                ]);
+            }
+        }
+
         $grandTotal = (float) $rows->sum('nominal_total');
 
         $this->rows = $rows->map(fn ($r) => (object) [
@@ -55,7 +82,7 @@ class PaymentMethodBreakdownExport implements FromCollection, WithHeadings, With
             'nominal_total' => (float) $r->nominal_total,
             'biaya_total' => (float) $r->biaya_total,
             'percent' => $grandTotal > 0 ? round(((float) $r->nominal_total / $grandTotal) * 100, 2) : 0,
-        ]);
+        ])->sortByDesc('nominal_total')->values();
     }
 
     public function collection(): Collection

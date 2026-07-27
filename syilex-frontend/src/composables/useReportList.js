@@ -19,6 +19,7 @@ import { downloadBlob } from '@/utils/downloadBlob';
  * @param {number} [config.defaultSortOrder=-1]
  * @param {(data: Object) => void} [config.onListLoaded]
  * @param {() => string} [config.exportFilenameFn]
+ * @param {boolean} [config.autoLoad=true] — set false to skip onMounted fetch (caller loads)
  */
 export function useReportList(config) {
     const {
@@ -33,7 +34,8 @@ export function useReportList(config) {
         listErrorLabel = 'laporan',
         defaultSortField = 'tanggal',
         defaultSortOrder = -1,
-        onListLoaded = null
+        onListLoaded = null,
+        autoLoad = true
     } = config;
 
     const notify = useNotification();
@@ -178,6 +180,7 @@ export function useReportList(config) {
     }
 
     onMounted(async () => {
+        if (!autoLoad) return;
         await Promise.all([loadData(), loadDropdowns()]);
     });
 

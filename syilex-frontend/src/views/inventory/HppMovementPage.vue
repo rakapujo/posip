@@ -4,10 +4,15 @@ import { onMounted, ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useSettingsStore } from '@/stores/settings';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import MoneySummaryPanel from '@/components/common/MoneySummaryPanel.vue';
 
 const notify = useNotification();
 const route = useRoute();
 const router = useRouter();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const { formatQty, formatCurrency, formatDateTime, getPrimeDateFormat, toDateString, todayString } = useFormatters();
 
 // Data
@@ -28,7 +33,14 @@ const summary = ref({
     avg_cost_awal: 0,
     total_nilai_masuk: 0,
     total_nilai_keluar: 0,
-    avg_cost_akhir: 0
+    avg_cost_akhir: 0,
+    qty_stok: 0,
+    nilai_stok: 0,
+    delta_hpp_unit: 0,
+    selisih_vs_mutasi: 0,
+    koreksi_count: 0,
+    koreksi_last_no: null,
+    koreksi_last_type: null
 });
 
 // Export
@@ -40,6 +52,15 @@ const selectedTransactionType = ref(null);
 const startDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 const endDate = ref(new Date());
 
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedWarehouse.value) n++;
+    if (selectedTransactionType.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
+
 // Pagination & Sort
 const lazyParams = ref({
     first: 0,
@@ -49,49 +70,44 @@ const lazyParams = ref({
 });
 
 onMounted(async () => {
-    // Check if product_id is passed via route query
-    if (route.query.product_id) {
-        await loadProductById(route.query.product_id);
-    }
     if (route.query.warehouse_id) {
         selectedWarehouse.value = parseInt(route.query.warehouse_id);
     }
-
-    // Initial load
-    await loadStockCards();
-    await loadHppSummary();
+    if (route.query.product_id) {
+        await loadProductById(route.query.product_id);
+        // watch(selectedProduct) loads cards + summary
+    } else {
+        await loadStockCards();
+        await loadHppSummary();
+    }
 });
 
 // Watch for product change
 watch(selectedProduct, async (newProduct) => {
     lazyParams.value.first = 0;
 
-    // Only process if it's a valid product object with ulid
     if (newProduct && typeof newProduct === 'object' && newProduct.ulid) {
-        // If product selected but missing unit_4, fetch full details
         if (!newProduct.unit_4) {
             try {
                 const response = await produksApi.get(newProduct.ulid);
                 if (response.data.success && response.data.data.produk) {
-                    const produk = response.data.data.produk;
                     selectedProduct.value = {
                         ...newProduct,
-                        unit_4: produk.unit_4 || 'PCS'
+                        unit_4: response.data.data.produk.unit_4 || 'PCS'
                     };
                 }
             } catch (error) {
                 console.error('Failed to load product details:', error);
                 notify.apiError(error, 'Gagal load product details');
             }
+            return;
         }
         loadStockCards();
         loadHppSummary();
     } else if (!newProduct) {
-        // Product cleared - reload to show empty state
         loadStockCards();
         loadHppSummary();
     }
-    // If newProduct is a string (user typing), ignore - don't make API calls
 });
 
 async function loadProductById(productId) {
@@ -119,6 +135,70 @@ async function loadProductById(productId) {
 
 // Get product base unit for display
 const productUnit = computed(() => selectedProduct.value?.unit_4 || 'PCS');
+
+const hppSnapshotItems = computed(() => {
+    const u = productUnit.value;
+    const qty = summary.value.qty_stok ?? 0;
+    const hpp = summary.value.avg_cost_akhir ?? 0;
+    return [
+        { label: 'HPP Awal (Global)', value: `${formatCurrency(summary.value.avg_cost_awal)} / ${u}`, tone: 'info' },
+        { label: 'HPP Akhir (Global)', value: `${formatCurrency(hpp)} / ${u}`, tone: 'primary' },
+        {
+            label: 'Nilai stok sekarang',
+            value: formatCurrency(summary.value.nilai_stok ?? 0),
+            hint: `${formatQty(qty)} × ${formatCurrency(hpp)}`,
+            tone: 'warn'
+        }
+    ];
+});
+
+const mutasiItems = computed(() => [
+    {
+        label: 'Nilai mutasi masuk (saat transaksi)',
+        value: formatCurrency(summary.value.total_nilai_masuk),
+        tone: 'success'
+    },
+    {
+        label: 'Nilai mutasi keluar (saat transaksi)',
+        value: formatCurrency(summary.value.total_nilai_keluar),
+        tone: 'danger'
+    }
+]);
+
+const penjelasanItems = computed(() => {
+    const u = productUnit.value;
+    const delta = summary.value.delta_hpp_unit ?? 0;
+    const selisih = summary.value.selisih_vs_mutasi ?? 0;
+    const count = summary.value.koreksi_count ?? 0;
+    const lastNo = summary.value.koreksi_last_no;
+    const lastType = summary.value.koreksi_last_type;
+    const lastLabel = lastNo
+        ? `${lastType || 'Koreksi'} · ${lastNo}`
+        : count > 0
+          ? 'lihat baris di tabel'
+          : 'tidak ada di periode';
+
+    return [
+        {
+            label: 'Δ HPP unit',
+            value: `${formatCurrency(delta)} / ${u}`,
+            hint: 'akhir − awal',
+            tone: delta < 0 ? 'danger' : delta > 0 ? 'success' : 'default'
+        },
+        {
+            label: 'Selisih vs sejarah mutasi',
+            value: formatCurrency(selisih),
+            hint: 'stok − (masuk − keluar); bukan nilai koreksi ledger',
+            tone: selisih < 0 ? 'danger' : selisih > 0 ? 'warn' : 'default'
+        },
+        {
+            label: 'Baris koreksi di periode',
+            value: `${count} baris`,
+            hint: lastLabel,
+            tone: count > 0 ? 'info' : 'default'
+        }
+    ];
+});
 
 function onProductSearch(event) {
     const query = event.query?.trim();
@@ -208,14 +288,25 @@ async function loadStockCards() {
 
 async function loadHppSummary() {
     if (!selectedProduct.value) {
-        summary.value = { avg_cost_awal: 0, total_nilai_masuk: 0, total_nilai_keluar: 0, avg_cost_akhir: 0 };
+        summary.value = {
+            avg_cost_awal: 0,
+            total_nilai_masuk: 0,
+            total_nilai_keluar: 0,
+            avg_cost_akhir: 0,
+            qty_stok: 0,
+            nilai_stok: 0,
+            delta_hpp_unit: 0,
+            selisih_vs_mutasi: 0,
+            koreksi_count: 0,
+            koreksi_last_no: null,
+            koreksi_last_type: null
+        };
         return;
     }
 
     try {
         const params = {
-            product_id: selectedProduct.value.ulid || selectedProduct.value.id,
-            hpp_changed_only: true // Only calculate from records where HPP changed
+            product_id: selectedProduct.value.ulid || selectedProduct.value.id
         };
 
         if (selectedWarehouse.value) {
@@ -347,22 +438,32 @@ function goBack() {
 
 <template>
     <div class="card">
-        <!-- Toolbar -->
         <Toolbar class="mb-6">
             <template #start>
-                <div class="flex items-center gap-3">
-                    <Button icon="pi pi-arrow-left" text rounded @click="goBack" v-tooltip.top="'Kembali ke Stok'" aria-label="Kembali ke Stok" />
-                    <span class="text-xl font-semibold">Pergerakan HPP</span>
-                </div>
+                <Button label="Kembali" icon="pi pi-arrow-left" severity="secondary" outlined @click="goBack" />
             </template>
             <template #end>
-                <Button label="Export Excel" icon="pi pi-file-excel" severity="success" outlined @click="exportExcel" :disabled="!selectedProduct" :loading="exportingExcel" />
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedTransactionType" :options="transactionTypes" optionLabel="label" optionValue="value" placeholder="Tipe Transaksi" filter showClear @change="onFilterChange" />
+                    <div class="list-filter-control">
+                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
+                    </div>
+                    <div class="list-filter-control">
+                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
+                    </div>
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="onResetAll" />
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
         <!-- Product Selection -->
         <div class="mb-6">
-            <label class="block text-surface-700 dark:text-surface-200 font-medium mb-2"> Pilih Produk <span class="text-red-500">*</span> </label>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <h2 class="text-xl font-semibold m-0">Pergerakan HPP</h2>
+                <Button icon="pi pi-file-excel" severity="success" outlined @click="exportExcel" :disabled="!selectedProduct" :loading="exportingExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
+            </div>
+            <label class="block text-surface-700 dark:text-surface-200 font-medium mb-2">Pilih Produk <span class="text-red-500">*</span></label>
             <AutoComplete
                 v-model="selectedProduct"
                 :suggestions="productOptions"
@@ -371,6 +472,7 @@ function goBack() {
                 :loading="loadingProducts"
                 class="w-full"
                 inputClass="w-full"
+                forceSelection
                 @complete="onProductSearch"
                 dropdown
             >
@@ -378,7 +480,8 @@ function goBack() {
                     <div class="flex flex-col">
                         <div class="flex items-center gap-2">
                             <span class="font-medium">{{ option.kode_produk }} - {{ option.nama_produk }}</span>
-                            <Tag :value="option.is_serial ? 'SERIAL' : 'RETAIL'" :severity="option.is_serial ? 'help' : 'secondary'" class="text-xs" />
+                            <Tag v-if="serialEnabled" :value="option.is_serial ? 'SERIAL' : 'RETAIL'" :severity="option.is_serial ? 'help' : 'secondary'" class="text-xs" />
+                            <Tag v-else value="RETAIL" severity="secondary" class="text-xs" />
                         </div>
                         <span class="text-sm text-surface-500">{{ option.barcode }} {{ option.brand?.nama_brand ? `| ${option.brand.nama_brand}` : '' }}</span>
                     </div>
@@ -386,7 +489,7 @@ function goBack() {
                 <template #chip="{ value }">
                     <span class="inline-flex items-center gap-2"
                         >{{ value.kode_produk }} - {{ value.nama_produk }}
-                        <Tag v-if="value.is_serial" value="SERIAL" severity="help" class="text-xs" v-tooltip.top="'HPP rata-rata tertimbang — modal riil per-unit di modul serial'" />
+                        <Tag v-if="serialEnabled && value.is_serial" value="SERIAL" severity="help" class="text-xs" v-tooltip.top="'HPP rata-rata tertimbang — modal riil per-unit di modul serial'" />
                     </span>
                 </template>
             </AutoComplete>
@@ -410,48 +513,22 @@ function goBack() {
             </div>
         </div>
 
-        <!-- Info: HPP is Global -->
+        <!-- Info: HPP global + nilai mutasi ≠ nilai stok -->
         <div v-if="selectedProduct" class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mb-4">
-            <div class="flex items-center gap-2">
-                <i class="pi pi-info-circle text-amber-600 dark:text-amber-400"></i>
-                <span class="text-sm text-amber-700 dark:text-amber-300"> HPP bersifat <strong>global</strong> (tidak per gudang). Filter gudang hanya mempengaruhi total nilai masuk/keluar. </span>
+            <div class="flex items-start gap-2">
+                <i class="pi pi-info-circle text-amber-600 dark:text-amber-400 mt-0.5"></i>
+                <span class="text-sm text-amber-700 dark:text-amber-300">
+                    HPP bersifat <strong>global</strong> (tidak per gudang). Filter gudang memengaruhi list + nilai mutasi (baris koreksi tanpa gudang tetap ikut).
+                    <strong>Nilai mutasi masuk/keluar</strong> = biaya saat transaksi (sejarah); <strong>nilai stok sekarang</strong> = qty aktual × HPP akhir — keduanya bisa jauh berbeda setelah koreksi HPP.
+                </span>
             </div>
         </div>
 
-        <!-- Summary Cards -->
-        <div v-if="selectedProduct" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-                <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">HPP Awal (Global)</div>
-                <div class="text-xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.avg_cost_awal) }}</div>
-                <div class="text-xs text-blue-500 dark:text-blue-400 mt-1">per {{ productUnit }}</div>
-            </div>
-            <div class="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
-                <div class="text-green-600 dark:text-green-400 text-sm mb-1">Total Nilai Masuk</div>
-                <div class="text-xl font-bold text-green-600 dark:text-green-400">{{ formatCurrency(summary.total_nilai_masuk) }}</div>
-            </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
-                <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Nilai Keluar</div>
-                <div class="text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_nilai_keluar) }}</div>
-            </div>
-            <div class="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4">
-                <div class="text-purple-600 dark:text-purple-400 text-sm mb-1">HPP Akhir (Global)</div>
-                <div class="text-xl font-bold text-purple-600 dark:text-purple-400">{{ formatCurrency(summary.avg_cost_akhir) }}</div>
-                <div class="text-xs text-purple-500 dark:text-purple-400 mt-1">per {{ productUnit }}</div>
-            </div>
-        </div>
-
-        <!-- Filters -->
-        <div v-if="selectedProduct" class="flex flex-wrap gap-2 mb-4">
-            <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" class="w-44" filter showClear @change="onFilterChange" />
-            <Select v-model="selectedTransactionType" :options="transactionTypes" optionLabel="label" optionValue="value" placeholder="Tipe Transaksi" class="w-40" filter showClear @change="onFilterChange" />
-            <div class="w-40">
-                <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
-            </div>
-            <div class="w-40">
-                <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormat" fluid showButtonBar @date-select="onFilterChange" />
-            </div>
-            <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="onResetAll" />
-        </div>
+        <template v-if="selectedProduct">
+            <MoneySummaryPanel title="HPP & nilai stok sekarang" :items="hppSnapshotItems" :cols="3" :primary-index="2" />
+            <MoneySummaryPanel title="Nilai mutasi (saat transaksi)" :items="mutasiItems" :cols="2" />
+            <MoneySummaryPanel title="Penjelasan HPP" :items="penjelasanItems" :cols="3" :primary-index="1" />
+        </template>
 
         <!-- DataTable -->
         <DataTable
@@ -490,12 +567,32 @@ function goBack() {
             <template #footer>
                 <div class="bg-surface-100 dark:bg-surface-800 -mx-4 px-4 py-3 border-t border-surface-200 dark:border-surface-700">
                     <div class="flex justify-between items-center mb-2">
-                        <span class="text-surface-600 dark:text-surface-400">Total Nilai Masuk</span>
+                        <span class="text-surface-600 dark:text-surface-400">Nilai mutasi masuk (saat transaksi)</span>
                         <span class="text-green-600 font-semibold">{{ formatCurrency(summary.total_nilai_masuk) }}</span>
                     </div>
                     <div class="flex justify-between items-center mb-2">
-                        <span class="text-surface-600 dark:text-surface-400">Total Nilai Keluar</span>
+                        <span class="text-surface-600 dark:text-surface-400">Nilai mutasi keluar (saat transaksi)</span>
                         <span class="text-red-600 font-semibold">{{ formatCurrency(summary.total_nilai_keluar) }}</span>
+                    </div>
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-surface-600 dark:text-surface-400">Nilai stok sekarang ({{ formatQty(summary.qty_stok) }} × HPP akhir)</span>
+                        <span class="font-semibold text-yellow-600 dark:text-yellow-400">{{ formatCurrency(summary.nilai_stok) }}</span>
+                    </div>
+                    <div class="flex justify-between items-center mb-2 pt-2 border-t border-surface-200 dark:border-surface-600">
+                        <span class="text-surface-600 dark:text-surface-400">Δ HPP unit (akhir − awal)</span>
+                        <span class="font-semibold">{{ formatCurrency(summary.delta_hpp_unit) }} / {{ productUnit }}</span>
+                    </div>
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-surface-600 dark:text-surface-400">Selisih vs sejarah mutasi</span>
+                        <span class="font-semibold">{{ formatCurrency(summary.selisih_vs_mutasi) }}</span>
+                    </div>
+                    <div class="text-xs text-surface-400 mb-2 text-right">stok − (masuk − keluar); bukan nilai koreksi ledger</div>
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-surface-600 dark:text-surface-400">Baris koreksi di periode</span>
+                        <span class="font-semibold">
+                            {{ summary.koreksi_count ?? 0 }} baris
+                            <span v-if="summary.koreksi_last_no" class="text-surface-500 font-normal"> · {{ summary.koreksi_last_no }}</span>
+                        </span>
                     </div>
                     <div class="flex justify-between items-center pt-2 border-t border-surface-300 dark:border-surface-600">
                         <span class="font-bold text-purple-700 dark:text-purple-300">HPP AKHIR (GLOBAL)</span>

@@ -20,6 +20,7 @@ class DocSerialChangeDetail extends Model
         'grade',
         'battery_condition',
         'battery_health',
+        'battery_cycle_count',
         'account_status',
         'catatan',
         'before',
@@ -36,6 +37,7 @@ class DocSerialChangeDetail extends Model
         return [
             'harga_jual' => 'decimal:2',
             'battery_health' => 'decimal:2',
+            'battery_cycle_count' => 'integer',
             'before' => 'array',
         ];
     }

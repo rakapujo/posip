@@ -19,7 +19,7 @@ class SalesReturnController extends BaseApiController
      */
     public function searchSales(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.retur')) {
+        if (! auth()->user()->can('pos.retur')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -31,18 +31,36 @@ class SalesReturnController extends BaseApiController
             'include_voided' => 'nullable',
         ]);
 
+        $shift = PosTerminalShift::find($validated['shift_id']);
+        if ($denied = $this->authorizeShiftAccess($shift)) {
+            return $denied;
+        }
+
+        if ((int) $validated['terminal_id'] !== (int) $shift->terminal_id) {
+            return $this->error('Terminal tidak sesuai dengan shift', 422);
+        }
+
+        $terminal = MasterPosTerminal::find($validated['terminal_id']);
+        if (! $terminal) {
+            return $this->error('Terminal tidak ditemukan', 404);
+        }
+        if (! $terminal->izinkan_retur) {
+            return $this->error('Retur tidak diizinkan pada terminal ini', 422);
+        }
+
         $query = DocSales::with([
             'customer:id,ulid,kode_customer,nama,jenis',
             'shift:id,terminal_id,user_id,started_at',
             'shift.user:id,name',
             'details.returnDetails',
-            'returns',
+            'returns' => fn ($query) => $query->whereIn('status', ['lock', 'approved']),
         ])
-        ->orderByDesc('tanggal');
+            ->pos()
+            ->orderByDesc('tanggal');
 
         // Only filter completed if not including voided
         $includeVoided = filter_var($validated['include_voided'] ?? false, FILTER_VALIDATE_BOOLEAN);
-        if (!$includeVoided) {
+        if (! $includeVoided) {
             $query->completed();
         }
 
@@ -50,20 +68,13 @@ class SalesReturnController extends BaseApiController
             // Only sales from current shift
             $query->byShift($validated['shift_id']);
         } else {
-            // Sales from previous shifts on this terminal (NOT current shift)
-            $terminal = MasterPosTerminal::find($validated['terminal_id']);
-
-            if (!$terminal) {
-                return $this->error('Terminal tidak ditemukan', 404);
-            }
-
             // Check durasi_retur setting
             if ($terminal->durasi_retur === 0) {
                 return $this->error('Retur dari sesi sebelumnya tidak diizinkan untuk terminal ini', 422);
             }
 
             $query->byTerminal($validated['terminal_id'])
-                  ->where('shift_id', '!=', $validated['shift_id']);
+                ->where('shift_id', '!=', $validated['shift_id']);
 
             // Apply durasi_retur filter (null = unlimited)
             if ($terminal->durasi_retur !== null && $terminal->durasi_retur > 0) {
@@ -72,7 +83,7 @@ class SalesReturnController extends BaseApiController
             }
         }
 
-        if (!empty($validated['search'])) {
+        if (! empty($validated['search'])) {
             $query->search($validated['search']);
         }
 
@@ -113,7 +124,7 @@ class SalesReturnController extends BaseApiController
      */
     public function salesDetail(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('pos.retur')) {
+        if (! auth()->user()->can('pos.retur')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -121,13 +132,26 @@ class SalesReturnController extends BaseApiController
             'details.product:id,ulid,kode_produk,nama_produk,unit_1,is_serial',
             'details.returnDetails',
             'customer:id,ulid,kode_customer,nama,jenis',
-        ])->where('ulid', $ulid)->first();
+            'shift:id,user_id,terminal_id',
+            'terminal:id,izinkan_retur',
+        ])->pos()->where('ulid', $ulid)->first();
 
-        if (!$sales) {
+        if (! $sales) {
             return $this->error('Transaksi tidak ditemukan', 404);
         }
 
-        if (!$sales->isCompleted()) {
+        if ($sales->terminal && ! $sales->terminal->izinkan_retur) {
+            return $this->error('Retur tidak diizinkan pada terminal ini', 422);
+        }
+
+        $activeTerminal = MasterPosTerminal::where('active_user_id', auth()->id())->first();
+        $sameActiveTerminal = $activeTerminal && (int) $sales->terminal_id === (int) $activeTerminal->id;
+        $isShiftOwner = $sales->shift && (int) $sales->shift->user_id === (int) auth()->id();
+        if (! $sameActiveTerminal && ! $isShiftOwner && ! auth()->user()->can('terminal.force-release')) {
+            return $this->error('Anda tidak memiliki akses ke transaksi ini', 403);
+        }
+
+        if (! $sales->isCompleted()) {
             return $this->error('Transaksi sudah di-void, tidak dapat diretur', 422);
         }
 
@@ -162,11 +186,12 @@ class SalesReturnController extends BaseApiController
             }
 
             // Produk serial: unit yang MASIH terjual di baris ini (kandidat retur) untuk dipilih kasir
+            // Q5: SN tetap boleh di-retur meski Modul Elektronik OFF (blok hanya jual baru).
             if ($detail->product && $detail->product->is_serial) {
                 $detail->returnable_units = \App\Models\SerialUnit::where('sale_detail_id', $detail->id)
                     ->where('status', \App\Models\SerialUnit::STATUS_TERJUAL)
                     ->orderBy('serial_number')
-                    ->get(['ulid', 'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'account_status']);
+                    ->get(['ulid', 'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status']);
             }
 
             return $detail;
@@ -186,7 +211,7 @@ class SalesReturnController extends BaseApiController
      */
     public function store(Request $request, ProcessSalesReturnAction $action): JsonResponse
     {
-        if (!auth()->user()->can('pos.retur')) {
+        if (! auth()->user()->can('pos.retur')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -207,11 +232,35 @@ class SalesReturnController extends BaseApiController
             'items.*.serial_unit_ids.*' => 'string',
         ]);
 
-        // Verify shift is active
+        // Verify shift is active + owned
         $shift = PosTerminalShift::find($validated['shift_id']);
-        if (!$shift || !$shift->isActive()) {
+        if (! $shift || ! $shift->isActive()) {
             return $this->error('Shift tidak aktif', 422);
         }
+        if ($shift->user_id !== auth()->id()) {
+            return $this->error('Anda tidak memiliki akses ke shift ini', 403);
+        }
+        if ((int) $validated['terminal_id'] !== (int) $shift->terminal_id) {
+            return $this->error('Terminal tidak sesuai dengan shift aktif', 422);
+        }
+
+        $terminal = MasterPosTerminal::find($validated['terminal_id']);
+        if (! $terminal || ! $terminal->izinkan_retur) {
+            return $this->error('Retur tidak diizinkan pada terminal ini', 422);
+        }
+
+        $sales = DocSales::find($validated['sales_id']);
+        if (! $sales || $sales->source !== 'pos') {
+            return $this->error('Transaksi tidak ditemukan', 404);
+        }
+        if ((int) $sales->terminal_id !== (int) $validated['terminal_id']) {
+            return $this->error('Retur hanya untuk penjualan dari terminal ini', 422);
+        }
+
+        // Bind warehouse to original sale / terminal (ignore FE spoof)
+        $validated['warehouse_id'] = (int) $sales->warehouse_id;
+
+        // Q5: serial_unit_ids tetap diizinkan saat Modul Elektronik OFF (retur/void revert).
 
         if ($errors = InventoryMasterRules::salesReturnPayloadErrors($validated)) {
             return $this->validationError($errors, 'Validasi gagal');
@@ -229,25 +278,50 @@ class SalesReturnController extends BaseApiController
      */
     public function index(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.retur')) {
+        if (! auth()->user()->can('pos.retur')) {
             return $this->error('Unauthorized', 403);
         }
 
         $shiftId = $request->input('shift_id');
-        if (!$shiftId) {
+        if (! $shiftId) {
             return $this->error('shift_id is required', 422);
+        }
+
+        $shift = PosTerminalShift::find($shiftId);
+        if ($denied = $this->authorizeShiftAccess($shift)) {
+            return $denied;
         }
 
         $returns = DocSalesReturn::with([
             'sales:id,ulid,nomor_dokumen',
             'customer:id,ulid,kode_customer,nama',
         ])
-        ->byShift($shiftId)
-        ->orderByDesc('tanggal')
-        ->get();
+            ->where('source', 'pos')
+            ->where('status', 'approved')
+            ->byShift($shiftId)
+            ->orderByDesc('tanggal')
+            ->get();
 
         return $this->success([
             'returns' => $returns,
         ]);
+    }
+
+    /**
+     * Read access: shift owner or supervisor with terminal.force-release.
+     */
+    private function authorizeShiftAccess(?PosTerminalShift $shift): ?JsonResponse
+    {
+        if (! $shift) {
+            return $this->error('Shift tidak ditemukan', 404);
+        }
+        if ($shift->user_id === auth()->id()) {
+            return null;
+        }
+        if (auth()->user()->can('terminal.force-release')) {
+            return null;
+        }
+
+        return $this->error('Anda tidak memiliki akses ke shift ini', 403);
     }
 }

@@ -112,6 +112,7 @@ class SerialSampleSeeder extends Seeder
                     'grade' => $u['grade'],
                     'battery_condition' => 'Sehat',
                     'battery_health' => $u['batt'],
+                    'battery_cycle_count' => $u['cycle'] ?? 0,
                     'account_status' => $u['akun'],
                     'status' => 'tersedia',
                     'created_by' => $adminId,

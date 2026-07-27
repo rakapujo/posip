@@ -79,6 +79,7 @@ class SerialSalesCheckoutTest extends TestCase
             'default_metode_pembayaran_id' => $this->cash->id, 'active_user_id' => $this->user->id,
             'status' => 'active', 'created_by' => $this->user->id,
         ]);
+        $this->terminal->allowedPaymentMethods()->attach([$this->cash->id]);
 
         $this->shift = PosTerminalShift::create([
             'ulid' => (string) Str::ulid(), 'terminal_id' => $this->terminal->id,
@@ -113,7 +114,7 @@ class SerialSalesCheckoutTest extends TestCase
     }
 
     /** Seed unit serial konsisten (inventory_stock + stock_card + unit). @return SerialUnit[] */
-    private function seedSerialUnits(MasterWarehouse $wh, array $costs): array
+    private function seedSerialUnits(MasterWarehouse $wh, array $costs, ?float $hargaJual = 6000000): array
     {
         $count = count($costs);
         $avg = array_sum($costs) / $count;
@@ -133,7 +134,9 @@ class SerialSalesCheckoutTest extends TestCase
         foreach ($costs as $i => $c) {
             $units[] = SerialUnit::create([
                 'product_id' => $this->serial->id, 'warehouse_id' => $wh->id,
-                'serial_number' => "SN-{$wh->id}-" . ($i + 1), 'harga_modal' => $c, 'cost_per_unit' => $c, 'status' => 'tersedia',
+                'serial_number' => "SN-{$wh->id}-" . ($i + 1), 'harga_modal' => $c, 'cost_per_unit' => $c,
+                'harga_jual' => $hargaJual ?? max((float) $c, 1),
+                'status' => 'tersedia',
             ]);
         }
         return $units;
@@ -240,7 +243,7 @@ class SerialSalesCheckoutTest extends TestCase
             'warehouse_id' => $this->warehouse->id, 'customer_id' => $this->customer->id,
             'items' => [$this->serialItem([], 6000000, ['serial_unit_ids' => [], 'qty' => 1, 'qty_base' => 1, 'jumlah' => 6000000])],
             'payments' => [['metode_pembayaran_id' => $this->cash->id, 'nominal' => 6000000]],
-        ]);
+        ], ['Idempotency-Key' => (string) Str::uuid()]);
 
         $res->assertStatus(422);
         $this->assertStringContainsString('nomor seri', strtolower($res->json('message') ?? ''));
@@ -249,16 +252,16 @@ class SerialSalesCheckoutTest extends TestCase
     #[Test]
     public function http_checkout_allows_trillion_value_serial_price()
     {
-        // Harga satuan skala triliun harus lolos (batas lama 9.999.999 sudah dinaikkan)
-        $units = $this->seedSerialUnits($this->warehouse, [9000000]);
+        // Harga satuan skala triliun harus lolos (dari serial.harga_jual, bukan FE spoof)
         $harga = 1000000000000; // 1 triliun
+        $units = $this->seedSerialUnits($this->warehouse, [9000000], $harga);
 
         $res = $this->postJson('/api/v1/pos/checkout', [
             'terminal_id' => $this->terminal->id, 'shift_id' => $this->shift->id,
             'warehouse_id' => $this->warehouse->id, 'customer_id' => $this->customer->id,
             'items' => [$this->serialItem([$units[0]->ulid], $harga)],
             'payments' => [['metode_pembayaran_id' => $this->cash->id, 'nominal' => $harga]],
-        ]);
+        ], ['Idempotency-Key' => (string) Str::uuid()]);
 
         $res->assertStatus(201);
         $this->assertSame('terjual', SerialUnit::where('ulid', $units[0]->ulid)->value('status'));
@@ -482,7 +485,7 @@ class SerialSalesCheckoutTest extends TestCase
             [SerialUnit::where('ulid', $units[0]->ulid)->value('serial_number'), SerialUnit::where('ulid', $units[1]->ulid)->value('serial_number')],
             $sns
         );
-        foreach (['serial_number', 'grade', 'battery_health', 'account_status', 'catatan'] as $f) {
+        foreach (['serial_number', 'grade', 'battery_health', 'battery_cycle_count', 'account_status', 'catatan'] as $f) {
             $this->assertArrayHasKey($f, $detail['serial_units'][0]);
         }
     }

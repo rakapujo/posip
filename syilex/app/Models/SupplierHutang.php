@@ -35,6 +35,7 @@ class SupplierHutang extends Model
         'tanggal_jatuh_tempo',
         'nominal_awal',
         'nominal_terbayar',
+        'nominal_retur',
         'sisa_hutang',
         'status',
         'created_at',
@@ -59,6 +60,7 @@ class SupplierHutang extends Model
             'tanggal_jatuh_tempo' => DateOnly::class, // Keep as DATE (only need date)
             'nominal_awal' => 'decimal:2',
             'nominal_terbayar' => 'decimal:2',
+            'nominal_retur' => 'decimal:2',
             'sisa_hutang' => 'decimal:2',
             'created_at' => LocalDateTime::class,
         ];
@@ -184,6 +186,36 @@ class SupplierHutang extends Model
     }
 
     /**
+     * Exclusive aging bucket — ranges match SupplierHutangController::agingSummary().
+     */
+    public function scopeAgingBucket($query, string $bucket)
+    {
+        $today = now()->toDateString();
+
+        $query->where('sisa_hutang', '>', 0)
+            ->whereIn('status', ['unpaid', 'partial']);
+
+        return match ($bucket) {
+            'belum_tempo' => $query->where(function ($q) use ($today) {
+                $q->whereNull('tanggal_jatuh_tempo')
+                    ->orWhere('tanggal_jatuh_tempo', '>=', $today);
+            }),
+            'b1_30' => $query->whereNotNull('tanggal_jatuh_tempo')
+                ->where('tanggal_jatuh_tempo', '<', $today)
+                ->where('tanggal_jatuh_tempo', '>=', now()->subDays(30)->toDateString()),
+            'b31_60' => $query->whereNotNull('tanggal_jatuh_tempo')
+                ->where('tanggal_jatuh_tempo', '<', now()->subDays(30)->toDateString())
+                ->where('tanggal_jatuh_tempo', '>=', now()->subDays(60)->toDateString()),
+            'b61_90' => $query->whereNotNull('tanggal_jatuh_tempo')
+                ->where('tanggal_jatuh_tempo', '<', now()->subDays(60)->toDateString())
+                ->where('tanggal_jatuh_tempo', '>=', now()->subDays(90)->toDateString()),
+            'above_90' => $query->whereNotNull('tanggal_jatuh_tempo')
+                ->where('tanggal_jatuh_tempo', '<', now()->subDays(90)->toDateString()),
+            default => $query,
+        };
+    }
+
+    /**
      * Scope for searching by PO number or supplier.
      */
     public function scopeSearch($query, string $search)
@@ -191,6 +223,8 @@ class SupplierHutang extends Model
         return $query->where(function ($q) use ($search) {
             $q->whereHas('purchaseOrder', function ($poq) use ($search) {
                 $poq->where('nomor_dokumen', 'like', "%{$search}%");
+            })->orWhereHas('serialIntake', function ($siq) use ($search) {
+                $siq->where('nomor_dokumen', 'like', "%{$search}%");
             })->orWhereHas('supplier', function ($sq) use ($search) {
                 $sq->where('nama_supplier', 'like', "%{$search}%")
                    ->orWhere('kode_supplier', 'like', "%{$search}%");
@@ -252,15 +286,33 @@ class SupplierHutang extends Model
     public function recordPayment(float $amount): void
     {
         $this->nominal_terbayar += $amount;
-        $this->sisa_hutang = $this->nominal_awal - $this->nominal_terbayar;
+        $this->sisa_hutang = max(0, (float) $this->nominal_awal - (float) $this->nominal_terbayar - (float) $this->nominal_retur);
 
         if ($this->sisa_hutang <= 0) {
             $this->sisa_hutang = 0;
             $this->status = 'paid';
-        } elseif ($this->nominal_terbayar > 0) {
+        } elseif ($this->nominal_terbayar > 0 || (float) $this->nominal_retur > 0) {
             $this->status = 'partial';
         }
 
         $this->save();
+    }
+
+    /**
+     * Credit return amount against outstanding hutang. Returns amount actually credited.
+     */
+    public function recordReturnCredit(float $amount): float
+    {
+        $credited = min(max(0, $amount), (float) $this->sisa_hutang);
+        if ($credited <= 0) {
+            return 0;
+        }
+
+        $this->nominal_retur += $credited;
+        $this->sisa_hutang = max(0, (float) $this->nominal_awal - (float) $this->nominal_terbayar - (float) $this->nominal_retur);
+        $this->status = $this->sisa_hutang <= 0 ? 'paid' : 'partial';
+        $this->save();
+
+        return $credited;
     }
 }

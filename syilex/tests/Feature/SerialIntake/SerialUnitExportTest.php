@@ -59,12 +59,12 @@ class SerialUnitExportTest extends TestCase
         SerialUnit::create([
             'product_id' => $this->produk->id, 'warehouse_id' => $this->wh->id, 'intake_id' => $intake->id,
             'serial_number' => 'SN-AAA', 'harga_modal' => 15000000, 'cost_per_unit' => 15250000, 'harga_jual' => 18000000,
-            'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'account_status' => 'unlocked',
+            'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 90, 'battery_cycle_count' => 100, 'account_status' => 'unlocked',
         ]);
         SerialUnit::create([
             'product_id' => $this->produk->id, 'warehouse_id' => $this->wh->id, 'intake_id' => $intake->id,
             'serial_number' => 'SN-BBB', 'harga_modal' => 15000000, 'cost_per_unit' => 15250000, 'harga_jual' => 18000000,
-            'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 88, 'account_status' => 'unlocked',
+            'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 88, 'battery_cycle_count' => 120, 'account_status' => 'unlocked',
         ]);
     }
     #[Test]
@@ -117,7 +117,7 @@ class SerialUnitExportTest extends TestCase
         SerialUnit::create([
             'product_id' => $produk2->id, 'warehouse_id' => $this->wh->id,
             'serial_number' => 'SN-PRO-1', 'harga_modal' => 25000000, 'cost_per_unit' => 25000000, 'harga_jual' => 30000000,
-            'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 95, 'account_status' => 'unlocked',
+            'grade' => 'A', 'battery_condition' => 'Original', 'battery_health' => 95, 'battery_cycle_count' => 80, 'account_status' => 'unlocked',
         ]);
 
         return $produk2;
@@ -216,10 +216,12 @@ class SerialUnitExportTest extends TestCase
         $this->assertSame('A', $row[8]);                               // Grade
         $this->assertSame('Original', $row[9]);                         // Baterai
         $this->assertEquals(90, (float) $row[10]);                      // Health
-        $this->assertSame('unlocked', $row[11]);                        // Akun
-        $this->assertSame('Gudang Utama', $row[12]);                    // Gudang
-        $this->assertSame('PBS-0001', $row[13]);                        // Asal Dokumen
-        $this->assertSame('-', $row[15]);                               // Terjual (belum) → '-'
+        $this->assertEquals(100, (int) $row[11]);                       // Cycle
+        $this->assertSame('unlocked', $row[12]);                        // Akun
+        $this->assertSame('-', $row[13]);                               // Catatan
+        $this->assertSame('Gudang Utama', $row[14]);                    // Gudang
+        $this->assertSame('PBS-0001', $row[15]);                        // Asal Dokumen
+        $this->assertSame('-', $row[17]);                               // Terjual (belum) → '-'
     }
 
     /**

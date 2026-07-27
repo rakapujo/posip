@@ -17,7 +17,7 @@ trait AttachesSerialUnits
 {
     /** Field unit yang ditampilkan di nota. */
     private array $serialReceiptFields = [
-        'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'account_status', 'catatan',
+        'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status', 'catatan',
     ];
 
     /**

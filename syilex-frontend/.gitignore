@@ -21,3 +21,6 @@ src.backup-*/
 
 # Graphify output
 graphify-out/
+
+# Playwright E2E cached auth token (local only)
+.auth/

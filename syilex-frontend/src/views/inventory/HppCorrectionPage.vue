@@ -11,6 +11,8 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const router = useRouter();
@@ -23,6 +25,7 @@ const canCreate = computed(() => authStore.can('hpp.create'));
 const canUpdate = computed(() => authStore.can('hpp.update'));
 const canDeletePerm = computed(() => authStore.can('hpp.delete'));
 const canApprove = computed(() => authStore.can('hpp.approve'));
+const canViewHpp = computed(() => authStore.can('stok.view_hpp'));
 
 // Alasan labels
 const alasanLabels = {
@@ -32,6 +35,14 @@ const alasanLabels = {
     LAINNYA: 'Lainnya'
 };
 
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 // Initialize composable
 const {
     items: corrections,
@@ -75,15 +86,23 @@ const {
 lazyParams.value.sortField = 'tanggal_koreksi';
 
 // Detail table columns
-const detailColumns = [
-    { field: '#', header: '#', width: '40px' },
-    { field: 'product', header: 'Produk' },
-    { field: 'hpp_lama', header: 'HPP Lama', align: 'right', width: '120px' },
-    { field: 'hpp_baru', header: 'HPP Baru', align: 'right', width: '120px' },
-    { field: 'selisih', header: 'Selisih', align: 'right', width: '120px' },
-    { field: 'alasan', header: 'Alasan', width: '130px' },
-    { field: 'notes', header: 'Notes' }
-];
+const detailColumns = computed(() => {
+    const cols = [
+        { field: '#', header: '#', width: '40px' },
+        { field: 'product', header: 'Produk' }
+    ];
+    if (canViewHpp.value) {
+        cols.push(
+            { field: 'hpp_lama', header: 'HPP Lama', align: 'right', width: '120px' },
+            { field: 'hpp_baru', header: 'HPP Baru', align: 'right', width: '120px' },
+            { field: 'selisih', header: 'Selisih', align: 'right', width: '120px' }
+        );
+    } else {
+        cols.push({ field: 'hpp_baru', header: 'HPP Baru', align: 'right', width: '120px' });
+    }
+    cols.push({ field: 'alasan', header: 'Alasan', width: '130px' }, { field: 'notes', header: 'Notes' });
+    return cols;
+});
 
 // Custom: checkDraftAndCreate - check existing draft before create
 async function checkDraftAndCreate() {
@@ -204,16 +223,16 @@ const detailSummary = computed(() => {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilter" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -280,13 +299,13 @@ const detailSummary = computed(() => {
 
             <Column header="Aksi" style="min-width: 220px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'" />
-                        <Button v-if="canUpdate && canEdit(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canUpdate && canEdit(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canApprove && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -319,7 +338,7 @@ const detailSummary = computed(() => {
                 <div class="mt-4">
                     <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
                         <h4 class="text-lg font-medium m-0">Detail Produk ({{ detailData.details?.length || 0 }} item)</h4>
-                        <div v-if="detailSummary" class="text-sm">
+                        <div v-if="canViewHpp && detailSummary" class="text-sm">
                             <span :class="detailSummary.totalSelisih > 0 ? 'text-red-600' : detailSummary.totalSelisih < 0 ? 'text-green-600' : ''">
                                 Total Selisih: <strong>{{ formatDifference(detailSummary.totalSelisih) }}</strong>
                             </span>
@@ -358,27 +377,23 @@ const detailSummary = computed(() => {
 
             <template #footer-extra>
                 <div class="flex flex-wrap gap-2">
-                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportDocPdf(detailData)" />
-                    <Button
-                        v-if="canUpdate && canEdit(detailData)"
+                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" :loading="exporting" @click="exportDocPdf(detailData)"  outlined />
+                    <Button v-if="canUpdate && canEdit(detailData)"
                         label="Edit"
                         icon="pi pi-pencil"
                         severity="warning"
                         @click="
                             editItem(detailData);
                             closeDetail();
-                        "
-                    />
-                    <Button
-                        v-if="canDeletePerm && canDelete(detailData)"
+                        " />
+                    <Button v-if="canDeletePerm && canDelete(detailData)"
                         label="Hapus"
                         icon="pi pi-trash"
                         severity="danger"
                         @click="
                             confirmDelete(detailData);
                             closeDetail();
-                        "
-                    />
+                        " />
                     <Button v-if="canApprove && canApproveItem(detailData)" label="Approve" icon="pi pi-check" severity="success" :loading="processingApprove" @click="confirmApprove(detailData)" />
                 </div>
             </template>

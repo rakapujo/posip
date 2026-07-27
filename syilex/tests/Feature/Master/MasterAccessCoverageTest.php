@@ -25,6 +25,8 @@ class MasterAccessCoverageTest extends TestCase
             'supplier.view', 'supplier.create',
             'customer.view', 'customer.create',
             'produk.view', 'produk.create',
+            'brand.view', 'tipe.view', 'kategori.view', 'grup.view',
+            'warehouse.view', 'metode-bayar.view', 'promo.view',
         ] as $permission) {
             Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
         }
@@ -139,5 +141,54 @@ class MasterAccessCoverageTest extends TestCase
         $kodes = collect($response->json('data.customers'))->pluck('kode_customer')->all();
         $this->assertContains('CUS-ACT', $kodes);
         $this->assertNotContains('CUS-INA', $kodes);
+    }
+
+    public function test_brand_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/brands')
+            ->assertForbidden();
+    }
+
+    public function test_tipe_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/tipes')
+            ->assertForbidden();
+    }
+
+    public function test_kategori_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/kategoris')
+            ->assertForbidden();
+    }
+
+    public function test_grup_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/grups')
+            ->assertForbidden();
+    }
+
+    public function test_warehouse_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/warehouses')
+            ->assertForbidden();
+    }
+
+    public function test_metode_bayar_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/metode-pembayarans')
+            ->assertForbidden();
+    }
+
+    public function test_promo_index_forbidden_without_view_permission(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->getJson('/api/v1/promos')
+            ->assertForbidden();
     }
 }

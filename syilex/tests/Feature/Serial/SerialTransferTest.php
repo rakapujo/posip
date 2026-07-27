@@ -125,10 +125,15 @@ class SerialTransferTest extends TestCase
         $this->seedUnits(2, $this->wh1);
         $wh2Units = $this->seedUnits(1, $this->wh2, 'SNB');
 
-        // Draft transfer wh1→wh2 tapi unit yang dipilih ada di wh2 (salah gudang sumber)
-        $ulid = $this->createTransfer([$wh2Units[0]->ulid]);
-
-        $this->postJson("/api/v1/transfers/{$ulid}/approve")->assertStatus(422);
+        // Transfer wh1→wh2 tapi unit yang dipilih ada di wh2 → ditolak early di create
+        $this->postJson('/api/v1/transfers', [
+            'warehouse_from_id' => $this->wh1->id,
+            'warehouse_to_id' => $this->wh2->id,
+            'tanggal' => now()->toDateString(),
+            'details' => [
+                ['product_id' => $this->serial->id, 'qty' => 1, 'serial_unit_ids' => [$wh2Units[0]->ulid]],
+            ],
+        ])->assertStatus(422);
 
         // Tidak ada perubahan
         $this->assertSame($this->wh2->id, SerialUnit::where('ulid', $wh2Units[0]->ulid)->value('warehouse_id'));

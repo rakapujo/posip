@@ -513,6 +513,34 @@ class ProductPromoReportTest extends TestCase
     }
 
     /**
+     * B0.3: promo_count_desc harus di-sort GLOBAL sebelum paginate — produk dengan
+     * promo_count tinggi di halaman belakang (secara alfabet) tetap tampil duluan
+     * di page 1, bukan cuma di-sort di dalam page-nya sendiri.
+     */
+    public function test_by_product_promo_count_desc_sorts_globally_across_pages(): void
+    {
+        // ZZZ diurut kode_produk paling belakang, tapi punya 2 promo eligible → harus muncul di page 1.
+        $zzz = $this->makeProduk('ZZZ-MANY', null);
+        for ($i = 1; $i <= 3; $i++) {
+            $this->makeProduk("AAA{$i}", null); // tanpa promo, urut alfabet paling depan
+        }
+
+        $promoA = $this->makePromo('PRM-A', 'A');
+        $promoB = $this->makePromo('PRM-B', 'B');
+        $this->makePromoDetail($promoA->id, 'produk', $zzz->id);
+        $this->makePromoDetail($promoB->id, 'produk', $zzz->id);
+
+        $resp = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/product-promo/by-product?per_page=2')
+            ->assertOk();
+
+        $items = $resp->json('data.items');
+        $this->assertEquals('ZZZ-MANY', $items[0]['kode_produk']);
+        $this->assertEquals(2, $items[0]['promo_count']);
+        $this->assertEquals(4, $resp->json('data.pagination.total'));
+    }
+
+    /**
      * by-promo target produk-spesifik: target_label menyebut nama produk; min_qty terbawa.
      */
     public function test_by_promo_detail_label_dan_min_qty(): void

@@ -5,10 +5,14 @@ namespace App\Actions\SerialIntake;
 use App\Actions\Concerns\RequiresAuthenticatedUser;
 use App\Actions\Concerns\SettlesCashPayment;
 use App\Models\DocSerialIntake;
+use App\Models\HistoryHargaBeli;
 use App\Models\InventoryStock;
 use App\Models\MasterProduk;
+use App\Models\SerialUnit;
+use App\Models\SerialUnitMovement;
 use App\Models\StockCard;
 use App\Models\SupplierHutang;
+use App\Services\PurchaseMasterRules;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -19,7 +23,7 @@ use Illuminate\Validation\ValidationException;
  * Perlakuan stok/HPP = SAMA seperti pembelian (lihat ApprovePurchaseOrderAction):
  *   - inventory_stock.qty += N (lockForUpdate, updateOrCreate)
  *   - avg_cost produk di-recalc weighted-average (modal rata-rata batch)
- *   - stock_card PURCHASE dicatat dgn pola StockCard::$skipObserver (CLAUDE.md §7)
+ *   - stock_card PURCHASE dicatat dgn pola StockCard::$skipObserver (AI-AGENT.md §7)
  *   - unit: pending → tersedia (baru bisa dijual di POS)
  */
 class ApproveSerialIntakeAction
@@ -44,6 +48,10 @@ class ApproveSerialIntakeAction
             $intake = DocSerialIntake::where('id', $intake->id)->lockForUpdate()->firstOrFail();
             if (!$intake->isDraft()) {
                 throw ValidationException::withMessages(['status' => ['Intake sudah diproses, tidak bisa disetujui ulang.']]);
+            }
+
+            if ($errors = PurchaseMasterRules::serialIntakeDocumentErrors($intake)) {
+                throw ValidationException::withMessages($errors);
             }
 
             // Lock produk + stok gudang
@@ -91,8 +99,42 @@ class ApproveSerialIntakeAction
                 StockCard::$skipObserver = false;
             }
 
-            // Unit pending → tersedia
+            // Unit pending → tersedia + ledger SERIAL_INTAKE / IN
+            foreach ($units as $unit) {
+                if ($unit->status !== SerialUnit::STATUS_PENDING) {
+                    continue;
+                }
+                SerialUnitMovement::record([
+                    'serial_unit_id' => $unit->id,
+                    'doc_type' => 'SERIAL_INTAKE',
+                    'doc_id' => $intake->id,
+                    'doc_no' => $intake->nomor_dokumen,
+                    'movement_type' => 'IN',
+                    'from_warehouse_id' => null,
+                    'to_warehouse_id' => $intake->warehouse_id,
+                    'from_status' => SerialUnit::STATUS_PENDING,
+                    'to_status' => SerialUnit::STATUS_TERSEDIA,
+                    'tanggal' => $intake->tanggal,
+                    'notes' => "Pembelian Serial {$intake->nomor_dokumen}",
+                ]);
+            }
             $intake->units()->where('status', 'pending')->update(['status' => 'tersedia']);
+
+            if ($intake->supplier_id) {
+                foreach ($units as $unit) {
+                    HistoryHargaBeli::create([
+                        'product_id' => $intake->product_id,
+                        'supplier_id' => $intake->supplier_id,
+                        'serial_intake_id' => $intake->id,
+                        'tanggal' => $intake->tanggal,
+                        'unit_used' => 'UNIT',
+                        'qty_in_unit' => 1,
+                        'qty_in_base' => 1,
+                        'harga_per_unit' => $unit->cost_per_unit,
+                        'harga_per_base' => $unit->cost_per_unit,
+                    ]);
+                }
+            }
 
             // Header → approved
             $intake->update([

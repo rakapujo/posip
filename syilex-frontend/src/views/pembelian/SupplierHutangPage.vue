@@ -3,7 +3,12 @@ import { supplierHutangsApi, suppliersApi } from '@/api';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import MoneySummaryPanel from '@/components/common/MoneySummaryPanel.vue';
+import AgingBucketPanel from '@/components/common/AgingBucketPanel.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { onMounted, ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useExportPdf } from '@/composables/useExportPdf';
@@ -11,11 +16,13 @@ import { useAuthStore } from '@/stores/auth';
 
 const notify = useNotification();
 const authStore = useAuthStore();
+const router = useRouter();
 const { formatCurrency, formatDateTime, getPrimeDateFormatShort, toDateString, todayString, now, parseDateTime, isBeforeNow } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
 
 // Permissions
 const canViewNominal = computed(() => authStore.can('hutang.view_nominal'));
+const canCreatePembayaran = computed(() => authStore.can('pembayaran-hutang.create'));
 const canExport = computed(() => authStore.can('laporan.export'));
 
 // Data
@@ -23,6 +30,13 @@ const items = ref([]);
 const loading = ref(false);
 const totalRecords = ref(0);
 const summary = ref({});
+
+const summaryItems = computed(() => [
+    { label: 'Total Hutang Outstanding', value: canViewNominal.value ? formatCurrency(summary.value.total_hutang || 0) : '-', tone: 'info' },
+    { label: 'Belum Bayar', value: String(summary.value.total_unpaid || 0), tone: 'danger' },
+    { label: 'Sebagian Terbayar', value: String(summary.value.total_partial || 0), tone: 'warn' },
+    { label: 'Jatuh Tempo', value: String(summary.value.total_overdue || 0), tone: 'orange' }
+]);
 const aging = ref({ loading: false, total_hutang_outstanding: 0, total_count: 0, buckets: {} });
 const selectedAgingBucket = ref(null); // 'belum_tempo' | 'b1_30' | 'b31_60' | 'b61_90' | 'above_90'
 
@@ -86,6 +100,26 @@ onMounted(async () => {
     await Promise.all([loadData(), loadSummary(), loadAging()]);
 });
 
+function isDefaultMonthStart(d) {
+    const now = new Date();
+    return toDateString(d) === toDateString(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function isDefaultToday(d) {
+    return toDateString(d) === toDateString(new Date());
+}
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedSupplier.value) n++;
+    if (selectedStatus.value) n++;
+    if (selectedDueWithinDays.value != null) n++;
+    if (selectedOverdueWithinDays.value != null) n++;
+    if (startDate.value && !isDefaultMonthStart(startDate.value)) n++;
+    if (endDate.value && !isDefaultToday(endDate.value)) n++;
+    return n;
+});
+
 async function loadSuppliers() {
     try {
         const response = await suppliersApi.getList();
@@ -117,13 +151,15 @@ async function loadData() {
         if (selectedStatus.value) {
             params.status = selectedStatus.value;
         }
-        if (selectedDueWithinDays.value) {
-            // 'all' means all non-overdue outstanding, number means within X days
-            params.due_within_days = selectedDueWithinDays.value;
-        }
-        if (selectedOverdueWithinDays.value) {
-            // 'all' means all overdue, number means overdue within X days
-            params.overdue_within_days = selectedOverdueWithinDays.value;
+        if (selectedAgingBucket.value) {
+            params.aging_bucket = selectedAgingBucket.value;
+        } else {
+            if (selectedDueWithinDays.value) {
+                params.due_within_days = selectedDueWithinDays.value;
+            }
+            if (selectedOverdueWithinDays.value) {
+                params.overdue_within_days = selectedOverdueWithinDays.value;
+            }
         }
         if (startDate.value) {
             params.date_from = toDateString(startDate.value);
@@ -147,12 +183,7 @@ async function loadData() {
 
 async function loadSummary() {
     try {
-        const params = {};
-        if (selectedSupplier.value) {
-            params.supplier_id = selectedSupplier.value;
-        }
-
-        const response = await supplierHutangsApi.getSummary(params);
+        const response = await supplierHutangsApi.getSummary(buildFilterParams());
         if (response.data.success) {
             summary.value = response.data.data.summary;
         }
@@ -166,10 +197,7 @@ async function loadAging() {
     if (!canViewNominal.value) return;
     aging.value.loading = true;
     try {
-        const params = {};
-        if (selectedSupplier.value) params.supplier_id = selectedSupplier.value;
-
-        const response = await supplierHutangsApi.getAgingSummary(params);
+        const response = await supplierHutangsApi.getAgingSummary(buildFilterParams());
         if (response.data.success) {
             aging.value.total_hutang_outstanding = response.data.data.total_hutang_outstanding;
             aging.value.total_count = response.data.data.total_count;
@@ -184,7 +212,12 @@ async function loadAging() {
 }
 
 function selectAgingBucket(key) {
-    selectedAgingBucket.value = selectedAgingBucket.value === key ? null : key;
+    const next = selectedAgingBucket.value === key ? null : key;
+    selectedAgingBucket.value = next;
+    selectedDueWithinDays.value = null;
+    selectedOverdueWithinDays.value = null;
+    lazyParams.value.first = 0;
+    loadData();
 }
 
 // Static Tailwind class strings (JIT cannot detect template interpolation)
@@ -226,6 +259,14 @@ const agingBucketConfig = [
     }
 ];
 
+const agingBucketItems = computed(() =>
+    agingBucketConfig.map((b) => ({
+        ...b,
+        value: formatCurrency(aging.value.buckets[b.key]?.nominal || 0),
+        meta: `${aging.value.buckets[b.key]?.count || 0} hutang · ${aging.value.buckets[b.key]?.percent || 0}%`
+    }))
+);
+
 function onPage(event) {
     lazyParams.value = { ...lazyParams.value, ...event };
     loadData();
@@ -245,6 +286,7 @@ function onFilterChange() {
     lazyParams.value.first = 0;
     loadData();
     loadSummary();
+    loadAging();
 }
 
 function clearSearch() {
@@ -259,14 +301,17 @@ function resetFilters() {
     selectedStatus.value = null;
     selectedDueWithinDays.value = null;
     selectedOverdueWithinDays.value = null;
+    selectedAgingBucket.value = null;
     startDate.value = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     endDate.value = new Date();
     lazyParams.value.first = 0;
     loadData();
     loadSummary();
+    loadAging();
 }
 
 function onDueWithinChange() {
+    selectedAgingBucket.value = null;
     // Clear overdue filter when selecting due within (mutually exclusive)
     if (selectedDueWithinDays.value) {
         selectedOverdueWithinDays.value = null;
@@ -275,6 +320,7 @@ function onDueWithinChange() {
 }
 
 function onOverdueWithinChange() {
+    selectedAgingBucket.value = null;
     // Clear due within filter when selecting overdue (mutually exclusive)
     if (selectedOverdueWithinDays.value) {
         selectedDueWithinDays.value = null;
@@ -313,6 +359,19 @@ function getStatusSeverity(status) {
     }
 }
 
+function payHutang(data) {
+    if (data.status === 'paid') return;
+    const supplierId = suppliers.value.find((s) => s.ulid === data.supplier?.ulid)?.id;
+    if (!supplierId) return;
+    router.push({
+        name: 'pembelian-pembayaran-hutang-create',
+        query: {
+            supplier_id: String(supplierId),
+            hutang_ulid: data.ulid
+        }
+    });
+}
+
 function getStatusLabel(status) {
     switch (status) {
         case 'unpaid':
@@ -345,8 +404,12 @@ function buildFilterParams() {
     if (searchQuery.value?.trim()) params.search = searchQuery.value.trim();
     if (selectedSupplier.value) params.supplier_id = selectedSupplier.value;
     if (selectedStatus.value) params.status = selectedStatus.value;
-    if (selectedDueWithinDays.value) params.due_within_days = selectedDueWithinDays.value;
-    if (selectedOverdueWithinDays.value) params.overdue_within_days = selectedOverdueWithinDays.value;
+    if (selectedAgingBucket.value) {
+        params.aging_bucket = selectedAgingBucket.value;
+    } else {
+        if (selectedDueWithinDays.value) params.due_within_days = selectedDueWithinDays.value;
+        if (selectedOverdueWithinDays.value) params.overdue_within_days = selectedOverdueWithinDays.value;
+    }
     if (startDate.value) params.date_from = toDateString(startDate.value);
     if (endDate.value) params.date_to = toDateString(endDate.value);
     return params;
@@ -413,78 +476,34 @@ async function exportExcel() {
 
 <template>
     <div class="card">
-        <!-- Summary Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div class="border border-surface-200 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Total Hutang Outstanding</div>
-                <div v-if="canViewNominal" class="text-2xl font-bold text-blue-600">
-                    {{ formatCurrency(summary.total_hutang || 0) }}
-                </div>
-                <div v-else class="text-2xl font-bold text-surface-400">-</div>
-            </div>
-            <div class="border border-surface-200 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Belum Bayar</div>
-                <div class="text-2xl font-bold text-red-500">{{ summary.total_unpaid || 0 }}</div>
-            </div>
-            <div class="border border-surface-200 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Sebagian Terbayar</div>
-                <div class="text-2xl font-bold text-yellow-500">{{ summary.total_partial || 0 }}</div>
-            </div>
-            <div class="border border-surface-200 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Jatuh Tempo</div>
-                <div class="text-2xl font-bold text-orange-500">{{ summary.total_overdue || 0 }}</div>
-            </div>
-        </div>
+        <MoneySummaryPanel title="Ringkasan Hutang" :items="summaryItems" :cols="4" />
 
-        <!-- E3: Aging Bucket Summary -->
-        <div v-if="canViewNominal" class="mb-6 bg-surface-0 dark:bg-surface-900 rounded-lg border border-surface-200 dark:border-surface-700 p-4">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="font-semibold text-surface-800 dark:text-surface-100">Aging Bucket</h3>
-                <span class="text-sm text-surface-500">
-                    Total Outstanding:
-                    <span class="font-bold text-surface-900 dark:text-surface-0 ml-1">{{ formatCurrency(aging.total_hutang_outstanding) }}</span>
-                    <span class="text-surface-400 ml-2">({{ aging.total_count }} hutang)</span>
-                </span>
-            </div>
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div
-                    v-for="b in agingBucketConfig"
-                    :key="b.key"
-                    class="rounded-lg p-3 cursor-pointer transition hover:ring-2"
-                    :class="[b.bg, selectedAgingBucket === b.key ? b.ring : '']"
-                    @click="selectAgingBucket(b.key)"
-                    role="button"
-                    tabindex="0"
-                    @keydown.enter="selectAgingBucket(b.key)"
-                    :aria-label="`Filter aging ${b.label}`"
-                >
-                    <div :class="[b.text, 'text-xs font-medium mb-1 flex items-center gap-1']">
-                        {{ b.label }}
-                        <i v-if="selectedAgingBucket === b.key" class="pi pi-filter-fill text-xs"></i>
-                    </div>
-                    <div :class="[b.text, 'text-lg font-bold']">
-                        {{ formatCurrency(aging.buckets[b.key]?.nominal || 0) }}
-                    </div>
-                    <div class="text-xs text-surface-500 mt-1">{{ aging.buckets[b.key]?.count || 0 }} hutang · {{ aging.buckets[b.key]?.percent || 0 }}%</div>
-                </div>
-            </div>
-        </div>
+        <AgingBucketPanel
+            v-if="canViewNominal"
+            title="Aging Bucket"
+            total-label="Total Outstanding"
+            :total-value="formatCurrency(aging.total_hutang_outstanding)"
+            :total-meta="`${aging.total_count} hutang`"
+            :buckets="agingBucketItems"
+            :selected-key="selectedAgingBucket"
+            @select="selectAgingBucket"
+        />
 
         <Toolbar class="mb-6">
             <template #end>
-                <div class="flex flex-wrap gap-2 w-full">
-                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="flex-1 min-w-36" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="flex-1 min-w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedDueWithinDays" :options="dueWithinOptions" optionLabel="label" optionValue="value" placeholder="Tempo dalam..." class="flex-1 min-w-40" showClear @change="onDueWithinChange" />
-                    <Select v-model="selectedOverdueWithinDays" :options="overdueOptions" optionLabel="label" optionValue="value" placeholder="Overdue..." class="flex-1 min-w-36" showClear @change="onOverdueWithinChange" />
-                    <div class="flex-1 min-w-36">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedDueWithinDays" :options="dueWithinOptions" optionLabel="label" optionValue="value" placeholder="Tempo dalam..." showClear @change="onDueWithinChange" />
+                    <Select v-model="selectedOverdueWithinDays" :options="overdueOptions" optionLabel="label" optionValue="value" placeholder="Overdue..." showClear @change="onOverdueWithinChange" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
-                    <div class="flex-1 min-w-36">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -514,7 +533,7 @@ async function exportExcel() {
                     <template v-if="canExport" #extra>
                         <div class="flex gap-2">
                             <Button icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                            <Button icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                            <Button icon="pi pi-file-pdf" severity="secondary" :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  outlined />
                         </div>
                     </template>
                 </DataTableHeader>
@@ -561,6 +580,12 @@ async function exportExcel() {
                 </template>
             </Column>
 
+            <Column v-if="canViewNominal" field="nominal_retur" header="Retur" style="min-width: 120px" bodyClass="text-right">
+                <template #body="{ data }">
+                    {{ formatCurrency(data.nominal_retur || 0) }}
+                </template>
+            </Column>
+
             <Column v-if="canViewNominal" field="sisa_hutang" header="Sisa" sortable style="min-width: 130px" bodyClass="text-right">
                 <template #body="{ data }">
                     <span class="font-semibold" :class="{ 'text-red-500': data.sisa_hutang > 0 }">
@@ -589,9 +614,20 @@ async function exportExcel() {
                 </template>
             </Column>
 
-            <Column header="Aksi" style="min-width: 80px" alignFrozen="right" frozen>
+            <Column header="Aksi" style="min-width: 120px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
+                        <Button
+                            v-if="canCreatePembayaran && data.status !== 'paid'"
+                            icon="pi pi-wallet"
+                            severity="success"
+                            text
+                            rounded
+                            @click="payHutang(data)"
+                            v-tooltip.top="'Bayar'"
+                        />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>

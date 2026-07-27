@@ -22,8 +22,8 @@ class CreateHppCorrectionAction
         $this->ensureAuthenticated();
 
         return DB::transaction(function () use ($data) {
-            // Check for existing draft (only 1 draft allowed globally)
-            $existingDraft = DocHppCorrection::where('status', 'draft')->first();
+            // Lock draft slot (cegah race double-create dua draft global).
+            $existingDraft = DocHppCorrection::where('status', 'draft')->lockForUpdate()->first();
 
             if ($existingDraft) {
                 throw ValidationException::withMessages([
@@ -31,11 +31,11 @@ class CreateHppCorrectionAction
                 ]);
             }
 
-            // Check for locked products (products already in any draft)
-            $productIds = collect($data['details'])->pluck('product_id');
+            $productIds = collect($data['details'])->pluck('product_id')->unique()->values();
+            $products = MasterProduk::whereIn('id', $productIds)->get()->keyBy('id');
 
             // Guard: produk serial pakai menu Koreksi HPP Serial (per-unit), bukan koreksi HPP agregat
-            if (MasterProduk::whereIn('id', $productIds)->where('is_serial', true)->exists()) {
+            if ($products->contains(fn ($p) => $p->is_serial)) {
                 throw ValidationException::withMessages([
                     'details' => ['Produk serial tidak bisa dikoreksi di sini. Gunakan menu Koreksi HPP Serial (per-unit).'],
                 ]);
@@ -72,8 +72,7 @@ class CreateHppCorrectionAction
 
             // Create details
             foreach ($data['details'] as $detail) {
-                // Get current HPP from product
-                $product = MasterProduk::find($detail['product_id']);
+                $product = $products->get($detail['product_id']);
                 $hppLama = $product ? (float) $product->avg_cost : 0;
 
                 // Format notes

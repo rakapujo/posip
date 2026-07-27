@@ -116,7 +116,12 @@ Write-Host '[5/7] Ensuring storage directories...'
 }
 
 Write-Host '[6/7] Writing INSTALL tutorial...'
-Copy-Item (Join-Path $ProjectDir 'INSTALL-SHARED-HOSTING.md') (Join-Path $BuildDir 'INSTALL.md') -Force
+$installSrc = Join-Path $RepoRoot 'docs\ops\install-shared-hosting.md'
+if (-not (Test-Path $installSrc)) {
+    $installSrc = Join-Path $ProjectDir 'INSTALL-SHARED-HOSTING.md'
+}
+if (-not (Test-Path $installSrc)) { throw "INSTALL tutorial not found: $installSrc" }
+Copy-Item $installSrc (Join-Path $BuildDir 'INSTALL.md') -Force
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add('INSTALASI POSIP - RINGKAS') | Out-Null
 $lines.Add('=========================') | Out-Null

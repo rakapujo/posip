@@ -27,6 +27,14 @@ class ApproveHppCorrectionAction
         }
 
         return DB::transaction(function () use ($correction) {
+            // Lock header + re-check draft di dalam TX (cegah double-approve race).
+            $correction = DocHppCorrection::where('id', $correction->id)->lockForUpdate()->firstOrFail();
+            if (!$correction->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Koreksi HPP sudah diproses, tidak bisa disetujui ulang.'],
+                ]);
+            }
+
             // Load details with products
             $correction->load('details.product');
 
@@ -39,11 +47,18 @@ class ApproveHppCorrectionAction
                     ]);
                 }
 
+                if ($product->is_serial) {
+                    throw ValidationException::withMessages([
+                        'details' => ['Produk serial tidak bisa dikoreksi di sini. Gunakan menu Koreksi HPP Serial (per-unit).'],
+                    ]);
+                }
+
                 // Get current HPP at approval time (might differ from when draft was created)
                 $currentHpp = (float) $product->avg_cost;
+                $hppBaru = (float) $detail->hpp_baru;
 
                 // Update product avg_cost
-                $product->update(['avg_cost' => $detail->hpp_baru]);
+                $product->update(['avg_cost' => $hppBaru]);
 
                 // Sync to all inventory_stock records
                 $product->syncAvgCostToInventoryStocks();
@@ -55,22 +70,23 @@ class ApproveHppCorrectionAction
                     $stockCardNotes .= ': ' . $detail->notes;
                 }
 
-                // Record in stock_card (for Pergerakan HPP)
-                // warehouse_id is null because HPP is global
-                StockCard::record([
-                    'product_id' => $detail->product_id,
-                    'warehouse_id' => null,
-                    'transaction_type' => 'HPP_CORRECTION',
-                    'transaction_id' => $correction->id,
-                    'transaction_no' => $correction->nomor_dokumen,
-                    'tanggal' => $correction->tanggal_koreksi,
-                    'qty_in' => 0,
-                    'qty_out' => 0,
-                    'cost_per_unit' => $detail->hpp_baru,
-                    'avg_cost_before' => $currentHpp,
-                    'avg_cost_after' => $detail->hpp_baru,
-                    'notes' => $stockCardNotes,
-                ]);
+                // Skip kartu noop (avg tak berubah) — hindari polusi Pergerakan HPP.
+                if (abs($currentHpp - $hppBaru) >= 0.0001) {
+                    StockCard::record([
+                        'product_id' => $detail->product_id,
+                        'warehouse_id' => null,
+                        'transaction_type' => 'HPP_CORRECTION',
+                        'transaction_id' => $correction->id,
+                        'transaction_no' => $correction->nomor_dokumen,
+                        'tanggal' => $correction->tanggal_koreksi,
+                        'qty_in' => 0,
+                        'qty_out' => 0,
+                        'cost_per_unit' => $hppBaru,
+                        'avg_cost_before' => $currentHpp,
+                        'avg_cost_after' => $hppBaru,
+                        'notes' => $stockCardNotes,
+                    ]);
+                }
 
                 // Update the detail with actual hpp_lama at approval time
                 $detail->update(['hpp_lama' => $currentHpp]);

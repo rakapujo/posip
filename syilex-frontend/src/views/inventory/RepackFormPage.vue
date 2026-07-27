@@ -5,12 +5,16 @@ import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useAuthStore } from '@/stores/auth';
 
 const notify = useNotification();
 const confirm = useConfirm();
 const router = useRouter();
 const route = useRoute();
+const authStore = useAuthStore();
 const { formatQty, formatCurrency, shouldUppercase, getLocale, getPrimeDateFormatShort, toDateTimeString, now, parseDateTime, isAfterNow, getQtyMinFractionDigits, getQtyMaxFractionDigits, currencySettings } = useFormatters();
+
+const canViewHpp = computed(() => authStore.can('stok.view_hpp'));
 
 // Mode
 const isEdit = computed(() => !!route.params.ulid);
@@ -33,6 +37,8 @@ const form = ref({
     outputs: []
 });
 
+const headersReady = computed(() => !!form.value.warehouse_id);
+
 // Tipe options
 const tipeOptions = ref([
     { label: 'Pecah (1 → banyak)', value: 'pecah' },
@@ -45,8 +51,8 @@ const previousTipe = ref(null);
 // Computed: Max items based on tipe
 const maxInputs = computed(() => (form.value.tipe === 'pecah' ? 1 : Infinity));
 const maxOutputs = computed(() => (form.value.tipe === 'gabung' ? 1 : Infinity));
-const canAddInput = computed(() => form.value.inputs.length < maxInputs.value);
-const canAddOutput = computed(() => form.value.outputs.length < maxOutputs.value);
+const canAddInput = computed(() => headersReady.value && form.value.inputs.length < maxInputs.value);
+const canAddOutput = computed(() => headersReady.value && form.value.outputs.length < maxOutputs.value);
 
 // Watch tipe change - reset items when tipe changes
 watch(
@@ -194,10 +200,10 @@ const previousWarehouseId = ref(null);
 watch(
     () => form.value.warehouse_id,
     (newVal, oldVal) => {
-        if (oldVal && newVal !== oldVal && form.value.inputs.length > 0) {
+        if (oldVal && newVal !== oldVal && (form.value.inputs.length > 0 || form.value.outputs.length > 0)) {
             previousWarehouseId.value = oldVal;
             confirm.require({
-                message: 'Mengubah gudang akan mereset semua bahan input. Lanjutkan?',
+                message: 'Mengubah gudang akan mereset semua bahan input dan hasil output. Lanjutkan?',
                 header: 'Konfirmasi',
                 icon: 'pi pi-exclamation-triangle',
                 rejectLabel: 'Batal',
@@ -205,6 +211,7 @@ watch(
                 rejectClass: 'p-button-secondary p-button-outlined',
                 accept: () => {
                     form.value.inputs = [];
+                    form.value.outputs = [];
                     previousWarehouseId.value = null;
                 },
                 reject: () => {
@@ -297,7 +304,7 @@ function onOutputProductSelect(event, index) {
 }
 
 function addInput() {
-    if (!form.value.warehouse_id) {
+    if (!headersReady.value) {
         notify.selectFirst('gudang');
         return;
     }
@@ -321,6 +328,11 @@ function removeInput(index) {
 }
 
 function addOutput() {
+    if (!headersReady.value) {
+        notify.selectFirst('gudang');
+        return;
+    }
+
     if (!canAddOutput.value) {
         notify.warn(form.value.tipe === 'gabung' ? 'Tipe Gabung hanya boleh 1 produk hasil' : 'Batas maksimal hasil tercapai');
         return;
@@ -573,7 +585,16 @@ function getProductLabel(product) {
                             <h3 class="text-lg font-medium m-0 text-red-600"><i class="pi pi-arrow-down mr-2"></i>Bahan Input</h3>
                             <Tag v-if="form.tipe === 'pecah'" severity="danger" value="Max 1 Produk" />
                         </div>
-                        <Button label="Tambah" icon="pi pi-plus" size="small" severity="danger" outlined @click="addInput" :disabled="!canAddInput" />
+                        <Button
+                            label="Tambah"
+                            icon="pi pi-plus"
+                            size="small"
+                            severity="danger"
+                            outlined
+                            @click="addInput"
+                            :disabled="!canAddInput"
+                            v-tooltip.top="headersReady ? null : 'Pilih gudang dulu'"
+                        />
                     </div>
 
                     <small v-if="errors.inputs" class="text-red-500 block mb-4">{{ errors.inputs }}</small>
@@ -607,7 +628,7 @@ function getProductLabel(product) {
                                         <div class="flex flex-col">
                                             <span class="font-medium">{{ option.kode_produk }}</span>
                                             <span class="text-sm text-surface-500">{{ option.nama_produk }}</span>
-                                            <span class="text-xs text-surface-400">Stok: {{ formatQty(option.stok) }} | HPP: {{ formatCurrency(option.avg_cost) }}</span>
+                                            <span class="text-xs text-surface-400">Stok: {{ formatQty(option.stok) }}<template v-if="canViewHpp"> | HPP: {{ formatCurrency(option.avg_cost) }}</template></span>
                                         </div>
                                     </template>
                                 </AutoComplete>
@@ -651,7 +672,7 @@ function getProductLabel(product) {
                     </div>
 
                     <!-- Input Summary -->
-                    <div class="mt-4 pt-4 border-t border-red-200" v-if="form.inputs.length > 0">
+                    <div class="mt-4 pt-4 border-t border-red-200" v-if="canViewHpp && form.inputs.length > 0">
                         <div class="flex justify-between text-sm">
                             <span class="text-surface-600">Estimasi Total HPP Input:</span>
                             <span class="font-bold text-red-600">{{ formatCurrency(estimatedTotalInputCost) }}</span>
@@ -666,7 +687,16 @@ function getProductLabel(product) {
                             <h3 class="text-lg font-medium m-0 text-green-600"><i class="pi pi-arrow-up mr-2"></i>Hasil Output</h3>
                             <Tag v-if="form.tipe === 'gabung'" severity="success" value="Max 1 Produk" />
                         </div>
-                        <Button label="Tambah" icon="pi pi-plus" size="small" severity="success" outlined @click="addOutput" :disabled="!canAddOutput" />
+                        <Button
+                            label="Tambah"
+                            icon="pi pi-plus"
+                            size="small"
+                            severity="success"
+                            outlined
+                            @click="addOutput"
+                            :disabled="!canAddOutput"
+                            v-tooltip.top="headersReady ? null : 'Pilih gudang dulu'"
+                        />
                     </div>
 
                     <small v-if="errors.outputs" class="text-red-500 block mb-4">{{ errors.outputs }}</small>
@@ -730,13 +760,13 @@ function getProductLabel(product) {
                     </div>
 
                     <!-- Output Summary -->
-                    <div class="mt-4 pt-4 border-t border-green-200" v-if="form.outputs.length > 0">
+                    <div class="mt-4 pt-4 border-t border-green-200" v-if="canViewHpp && form.outputs.length > 0">
                         <div class="flex justify-between text-sm mb-2">
-                            <span class="text-surface-600">Estimasi Total HPP Output:</span>
+                            <span class="text-surface-600">Estimasi Total HPP Output (batch):</span>
                             <span class="font-bold text-green-600">{{ formatCurrency(estimatedTotalOutputCost) }}</span>
                         </div>
                         <div class="flex justify-between text-sm">
-                            <span class="text-surface-600">Estimasi HPP/Unit Output:</span>
+                            <span class="text-surface-600">Estimasi HPP/unit hasil (sama semua SKU — alokasi by-qty):</span>
                             <span class="font-bold text-green-600">{{ formatCurrency(estimatedHppPerOutput) }}</span>
                         </div>
                     </div>

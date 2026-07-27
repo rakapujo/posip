@@ -461,4 +461,92 @@ class TopCustomerReportTest extends TestCase
         $this->assertEquals('B', $items[0]['kode_customer']); // omzet terbesar
         $this->assertEquals(1, $resp->json('data.limit'));
     }
+
+    // ─── B1.3: mode=bruto|net ──────────────────────────────────────────────
+
+    private function makeRetur(int $customerId, int $salesId, float $grandTotal, string $status = 'approved'): int
+    {
+        return DB::table('doc_sales_returns')->insertGetId([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'RTR-'.fake()->unique()->numerify('######'),
+            'tanggal' => now()->toDateTimeString(),
+            'sales_id' => $salesId,
+            'terminal_id' => $this->terminalId,
+            'shift_id' => $this->shiftId,
+            'warehouse_id' => $this->warehouseId,
+            'customer_id' => $customerId,
+            'refund_method' => 'cash',
+            'source' => 'pos',
+            'status' => $status,
+            'grand_total' => $grandTotal,
+            'created_by' => $this->viewer->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_mode_default_bruto_omzet_tidak_dikurangi_retur(): void
+    {
+        $c = $this->makeCustomer('BR', 'BrutoCust');
+        $sale = $this->makeSale($c, 100_000);
+        $this->makeRetur($c, $sale, 30_000, 'approved');
+
+        $items = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/customer/top')
+            ->assertOk()->json('data.items');
+
+        $this->assertEquals(100_000, $items[0]['omzet']);
+    }
+
+    public function test_mode_net_mengurangi_omzet_dengan_retur_lock_dan_approved(): void
+    {
+        $c = $this->makeCustomer('NT', 'NetCust');
+        $sale = $this->makeSale($c, 100_000);
+        $this->makeRetur($c, $sale, 20_000, 'approved');
+        $this->makeRetur($c, $sale, 10_000, 'lock');
+        $this->makeRetur($c, $sale, 5_000, 'draft'); // diabaikan
+
+        $response = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/customer/top?mode=net')
+            ->assertOk();
+
+        $this->assertEquals('net', $response->json('data.mode'));
+        $items = $response->json('data.items');
+        $this->assertEquals(70_000, $items[0]['omzet']); // 100_000 - (20_000 + 10_000)
+        $this->assertEquals(70_000, $items[0]['avg_per_trx']); // 1 trx
+    }
+
+    public function test_mode_net_omzet_tidak_negatif_saat_retur_lebih_besar(): void
+    {
+        $c = $this->makeCustomer('NEG', 'NegCust');
+        $sale = $this->makeSale($c, 50_000);
+        $this->makeRetur($c, $sale, 999_000, 'approved');
+
+        $items = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/customer/top?mode=net')
+            ->assertOk()->json('data.items');
+
+        $this->assertEquals(0, $items[0]['omzet']);
+    }
+
+    public function test_mode_net_sort_dan_limit_konsisten_dengan_omzet_net(): void
+    {
+        // A: omzet bruto 500k, retur 450k -> net 50k
+        // B: omzet bruto 300k, tanpa retur -> net 300k
+        // Mode net harus rank B di atas A meski bruto A lebih besar.
+        $a = $this->makeCustomer('SA', 'SortA');
+        $b = $this->makeCustomer('SB', 'SortB');
+
+        $saleA = $this->makeSale($a, 500_000);
+        $this->makeRetur($a, $saleA, 450_000, 'approved');
+        $this->makeSale($b, 300_000);
+
+        $items = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/customer/top?mode=net&limit=1')
+            ->assertOk()->json('data.items');
+
+        $this->assertCount(1, $items);
+        $this->assertEquals('SB', $items[0]['kode_customer']);
+        $this->assertEquals(300_000, $items[0]['omzet']);
+    }
 }

@@ -29,28 +29,27 @@ const defaultAvatar = computed(() => {
     return { initial, color: colors[colorIndex] };
 });
 
-const userMenuItems = ref([
-    {
-        label: 'Edit Profile',
-        icon: 'pi pi-user-edit',
-        command: () => {
-            // Navigate to edit own profile
-            if (authStore.user?.ulid) {
+const userMenuItems = computed(() => {
+    const items = [];
+    if (authStore.can('user.view') && authStore.can('user.update') && authStore.user?.ulid) {
+        items.push({
+            label: 'Edit Profile',
+            icon: 'pi pi-user-edit',
+            command: () => {
                 router.push(`/app/pengaturan/user?edit=${authStore.user.ulid}`);
             }
-        }
-    },
-    {
-        separator: true
-    },
-    {
+        });
+        items.push({ separator: true });
+    }
+    items.push({
         label: 'Logout',
         icon: 'pi pi-sign-out',
         command: () => {
             confirmLogout();
         }
-    }
-]);
+    });
+    return items;
+});
 
 const confirmLogout = () => {
     confirm.require({
@@ -81,7 +80,7 @@ const confirmLogout = () => {
             </button>
             <router-link to="/app" class="layout-topbar-logo !flex-nowrap">
                 <img :src="settingsStore.storeLogo || '/logo.svg'" :alt="settingsStore.storeName" class="h-8 max-w-[120px] object-contain flex-shrink-0" />
-                <span class="whitespace-nowrap">{{ settingsStore.storeName }}</span>
+                <span class="whitespace-nowrap hidden lg:inline">{{ settingsStore.storeName }}</span>
             </router-link>
         </div>
 

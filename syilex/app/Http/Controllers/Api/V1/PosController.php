@@ -10,8 +10,8 @@ use App\Models\DocSales;
 use App\Models\DocSalesPayment;
 use App\Models\DocSalesReturn;
 use App\Models\InventoryStock;
-use App\Models\MasterMetodePembayaran;
 use App\Models\MasterCustomer;
+use App\Models\MasterMetodePembayaran;
 use App\Models\MasterPosTerminal;
 use App\Models\MasterProduk;
 use App\Models\MasterWarehouse;
@@ -21,6 +21,7 @@ use App\Models\SerialUnit;
 use App\Services\PromoService;
 use App\Services\SalesCalculationService;
 use App\Services\SettingService;
+use App\Services\TerminalMailer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -33,7 +34,7 @@ class PosController extends BaseApiController
      */
     public function activeTerminal(): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -49,18 +50,24 @@ class PosController extends BaseApiController
             'allowedPaymentMethods:id,ulid,kode_pembayaran,nama_pembayaran,metode,jenis,logo,qr_code,biaya_tambahan_tipe,biaya_tambahan_nilai',
             'activeShift:id,ulid,terminal_id,user_id,started_at,is_locked,locked_at',
         ])
-        ->where('active_user_id', $userId)
-        ->first();
+            ->where('active_user_id', $userId)
+            ->first();
 
-        if (!$terminal) {
+        if (! $terminal) {
             return $this->error('Anda tidak memiliki terminal aktif. Mulai shift terlebih dahulu.', 422);
         }
 
         // Make IDs visible for form mapping
         $terminal->makeVisible('id');
-        if ($terminal->warehouse) $terminal->warehouse->makeVisible('id');
-        if ($terminal->defaultCustomer) $terminal->defaultCustomer->makeVisible('id');
-        if ($terminal->defaultMetodePembayaran) $terminal->defaultMetodePembayaran->makeVisible('id');
+        if ($terminal->warehouse) {
+            $terminal->warehouse->makeVisible('id');
+        }
+        if ($terminal->defaultCustomer) {
+            $terminal->defaultCustomer->makeVisible('id');
+        }
+        if ($terminal->defaultMetodePembayaran) {
+            $terminal->defaultMetodePembayaran->makeVisible('id');
+        }
         if ($terminal->allowedPaymentMethods) {
             $terminal->allowedPaymentMethods->each->makeVisible('id');
         }
@@ -86,7 +93,7 @@ class PosController extends BaseApiController
      */
     public function activePromos(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -104,7 +111,13 @@ class PosController extends BaseApiController
             $customerCategoryId = $customer?->kategori_customer_id;
         }
 
-        $promos = PromoService::getActivePromos($terminalId, $customerTypeId, customerCategoryId: $customerCategoryId);
+        $promos = PromoService::getActivePromos(
+            $terminalId,
+            $customerTypeId,
+            customerCategoryId: $customerCategoryId,
+            channel: 'pos',
+        );
+        $promos->each->makeVisible(['id']);
 
         // Shift liveness flag — frontend polls this every 5 min.
         // After admin force-close: active_user_id = null → $terminal = null → false.
@@ -124,44 +137,60 @@ class PosController extends BaseApiController
      */
     public function products(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
-        $warehouseId = $request->input('warehouse_id');
+        $terminal = MasterPosTerminal::where('active_user_id', auth()->id())->first();
+        if (! $terminal) {
+            return $this->error('Tidak ada terminal aktif untuk Anda', 422);
+        }
+        // Bind to active terminal warehouse (ignore FE spoof)
+        $warehouseId = (int) $terminal->warehouse_id;
         $search = $request->input('search', '');
 
-        if (!$warehouseId) {
-            return $this->error('warehouse_id is required', 422);
+        $elektronikEnabled = SettingService::isElektronikEnabled();
+        $canViewHpp = auth()->user()->can('stok.view_hpp');
+
+        $columns = [
+            'id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'gambar',
+            'unit_1', 'unit_2', 'unit_3', 'unit_4',
+            'konversi_1', 'konversi_2', 'konversi_3', 'konversi_4',
+            'harga_1', 'harga_2', 'harga_3', 'harga_4',
+            'is_serial',
+        ];
+        if ($canViewHpp) {
+            $columns[] = 'avg_cost';
         }
 
-        $query = MasterProduk::active()
-            ->select([
-                'id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'gambar',
-                'unit_1', 'unit_2', 'unit_3', 'unit_4',
-                'konversi_1', 'konversi_2', 'konversi_3', 'konversi_4',
-                'harga_1', 'harga_2', 'harga_3', 'harga_4',
-                'avg_cost', 'is_serial',
-            ]);
+        $query = MasterProduk::active()->select($columns);
+        SettingService::constrainNonSerialWhenDisabled($query);
 
         if ($search) {
-            $query->where(function ($q) use ($search) {
+            $query->where(function ($q) use ($search, $elektronikEnabled) {
                 $q->where('kode_produk', 'like', "%{$search}%")
-                  ->orWhere('nama_produk', 'like', "%{$search}%")
-                  ->orWhere('barcode', 'like', "%{$search}%")
-                  // Produk serial: cari juga lewat nomor seri unit (tersedia) agar
-                  // ketik/scan SN memunculkan produk induknya di grid.
-                  ->orWhereHas('serialUnits', function ($s) use ($search) {
-                      $s->where('status', 'tersedia')->where(function ($q) use ($search) {
-                          $q->where('serial_number', 'like', "%{$search}%")
-                            ->orWhere('kode_internal', 'like', "%{$search}%");
-                      });
-                  });
+                    ->orWhere('nama_produk', 'like', "%{$search}%")
+                    ->orWhere('barcode', 'like', "%{$search}%");
+                if ($elektronikEnabled) {
+                    // Produk serial: cari juga lewat nomor seri unit (tersedia) agar
+                    // ketik/scan SN memunculkan produk induknya di grid.
+                    $q->orWhereHas('serialUnits', function ($s) use ($search) {
+                        $s->where('status', 'tersedia')->where(function ($q) use ($search) {
+                            $q->where('serial_number', 'like', "%{$search}%")
+                                ->orWhere('kode_internal', 'like', "%{$search}%");
+                        });
+                    });
+                }
             });
         }
 
-        $query->orderByRaw("(SELECT COALESCE(qty, 0) FROM inventory_stock WHERE product_id = master_produk.id AND warehouse_id = ?) > 0 DESC", [$warehouseId])
-            ->orderBy('nama_produk')
+        $query->leftJoin('inventory_stock as stk', function ($j) use ($warehouseId) {
+            $j->on('stk.product_id', '=', 'master_produk.id')
+                ->where('stk.warehouse_id', '=', $warehouseId);
+        })
+            ->orderByRaw('COALESCE(stk.qty, 0) > 0 DESC')
+            ->orderBy('master_produk.nama_produk')
+            ->select(array_map(fn ($c) => "master_produk.{$c}", $columns))
             ->limit(50);
 
         $products = $query->get()->makeVisible('id');
@@ -186,24 +215,38 @@ class PosController extends BaseApiController
      */
     public function productByBarcode(string $barcode, Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
-        $warehouseId = $request->input('warehouse_id');
+        $terminal = MasterPosTerminal::where('active_user_id', auth()->id())->first();
+        if (! $terminal) {
+            return $this->error('Tidak ada terminal aktif untuk Anda', 422);
+        }
+        $warehouseId = (int) $terminal->warehouse_id;
+        $canViewHpp = auth()->user()->can('stok.view_hpp');
 
-        $product = MasterProduk::active()
-            ->where('barcode', $barcode)
-            ->select([
-                'id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'gambar',
-                'unit_1', 'unit_2', 'unit_3', 'unit_4',
-                'konversi_1', 'konversi_2', 'konversi_3', 'konversi_4',
-                'harga_1', 'harga_2', 'harga_3', 'harga_4',
-                'avg_cost', 'is_serial',
-            ])
-            ->first();
+        $columns = [
+            'id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'gambar',
+            'unit_1', 'unit_2', 'unit_3', 'unit_4',
+            'konversi_1', 'konversi_2', 'konversi_3', 'konversi_4',
+            'harga_1', 'harga_2', 'harga_3', 'harga_4',
+            'is_serial',
+        ];
+        if ($canViewHpp) {
+            $columns[] = 'avg_cost';
+        }
 
-        if (!$product) {
+        $query = MasterProduk::active()
+            ->where(function ($q) use ($barcode) {
+                $q->where('barcode', $barcode)
+                    ->orWhere('kode_produk', $barcode);
+            })
+            ->select($columns);
+        SettingService::constrainNonSerialWhenDisabled($query);
+        $product = $query->first();
+
+        if (! $product) {
             return $this->error('Produk tidak ditemukan', 404);
         }
 
@@ -225,7 +268,7 @@ class PosController extends BaseApiController
      */
     public function calculate(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -260,7 +303,7 @@ class PosController extends BaseApiController
      */
     public function checkout(Request $request, CheckoutSalesAction $action): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -318,28 +361,35 @@ class PosController extends BaseApiController
 
         // Verify shift is active and belongs to current user
         $shift = PosTerminalShift::find($validated['shift_id']);
-        if (!$shift || !$shift->isActive()) {
+        if (! $shift || ! $shift->isActive()) {
             return $this->error('Shift tidak aktif', 422);
         }
         if ($shift->user_id !== auth()->id()) {
             return $this->error('Anda tidak memiliki akses ke shift ini', 403);
         }
+        if ((int) $validated['terminal_id'] !== (int) $shift->terminal_id) {
+            return $this->error('Terminal tidak sesuai dengan shift aktif', 422);
+        }
+        if ($shift->isLocked()) {
+            return $this->error('Shift sedang dikunci', 422);
+        }
 
         // Verify terminal is still assigned to current user
         $terminal = MasterPosTerminal::find($validated['terminal_id']);
-        if (!$terminal || $terminal->active_user_id !== auth()->id()) {
+        if (! $terminal || $terminal->active_user_id !== auth()->id()) {
             return $this->error('Terminal tidak lagi aktif untuk Anda. Silakan refresh halaman.', 422);
         }
 
-        // Validate warehouse is active
+        // Bind warehouse to terminal (ignore FE spoof)
+        $validated['warehouse_id'] = (int) $terminal->warehouse_id;
         $warehouse = MasterWarehouse::find($validated['warehouse_id']);
-        if (!$warehouse || !$warehouse->isActive()) {
-            return $this->error('Warehouse tidak aktif. Silakan hubungi admin.', 422);
+        if (! $warehouse || ! $warehouse->isActive() || ! $warehouse->isSaleable()) {
+            return $this->error('Warehouse tidak aktif atau tidak dapat digunakan untuk POS. Silakan hubungi admin.', 422);
         }
 
         // Validate customer is active (walk-in customers are always valid)
         $customer = MasterCustomer::find($validated['customer_id']);
-        if (!$customer || (!$customer->isActive() && !$customer->isWalkIn())) {
+        if (! $customer || (! $customer->isActive() && ! $customer->isWalkIn())) {
             return $this->error('Customer tidak aktif. Silakan pilih customer lain.', 422);
         }
 
@@ -349,7 +399,20 @@ class PosController extends BaseApiController
             ->where('status', '!=', 'active')
             ->pluck('nama_produk');
         if ($inactiveProducts->isNotEmpty()) {
-            return $this->error('Produk tidak aktif: ' . $inactiveProducts->implode(', '), 422);
+            return $this->error('Produk tidak aktif: '.$inactiveProducts->implode(', '), 422);
+        }
+
+        // Guard Modul Elektronik: saat nonaktif, tolak transaksi produk serial / serial_unit_ids
+        // sama sekali (bukan hanya wajib pilih SN) — cegah bypass via request manual.
+        if (! SettingService::isElektronikEnabled()) {
+            $serialProductNames = MasterProduk::whereIn('id', $productIds)
+                ->where('is_serial', true)
+                ->pluck('nama_produk', 'id');
+            foreach ($validated['items'] as $item) {
+                if ($serialProductNames->has($item['product_id']) || ! empty($item['serial_unit_ids'])) {
+                    return $this->error('Modul Elektronik nonaktif. Fitur serial tidak tersedia.', 422);
+                }
+            }
         }
 
         // Guard serial: produk serial WAJIB pilih nomor seri (SN) — tak boleh dijual sebagai
@@ -369,13 +432,20 @@ class PosController extends BaseApiController
             }
         }
 
-        // Validate all payment methods are active
+        // Validate all payment methods are active + on terminal allow-list
         $paymentMethodIds = array_unique(array_column($validated['payments'], 'metode_pembayaran_id'));
         $inactiveMethods = MasterMetodePembayaran::whereIn('id', $paymentMethodIds)
             ->where('status', '!=', 'active')
             ->pluck('nama_pembayaran');
         if ($inactiveMethods->isNotEmpty()) {
-            return $this->error('Metode pembayaran tidak aktif: ' . $inactiveMethods->implode(', '), 422);
+            return $this->error('Metode pembayaran tidak aktif: '.$inactiveMethods->implode(', '), 422);
+        }
+        $allowedIds = $terminal->allowedPaymentMethods()->allRelatedIds();
+        if ($allowedIds->isEmpty()) {
+            return $this->error('Terminal tidak memiliki metode pembayaran yang diizinkan.', 422);
+        }
+        if (collect($paymentMethodIds)->diff($allowedIds)->isNotEmpty()) {
+            return $this->error('Metode pembayaran tidak diizinkan pada terminal ini.', 422);
         }
 
         $sales = $action->execute($validated);
@@ -390,26 +460,26 @@ class PosController extends BaseApiController
      */
     public function history(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
         $shiftId = $request->input('shift_id');
-        if (!$shiftId) {
+        if (! $shiftId) {
             return $this->error('shift_id is required', 422);
         }
 
         // Verify shift belongs to current user
         $shift = PosTerminalShift::find($shiftId);
-        if (!$shift || $shift->user_id !== auth()->id()) {
+        if (! $shift || $shift->user_id !== auth()->id()) {
             return $this->error('Anda tidak memiliki akses ke shift ini', 403);
         }
 
         $query = DocSales::with([
             'customer:id,ulid,kode_customer,nama',
         ])
-        ->byShift($shiftId)
-        ->orderByDesc('tanggal');
+            ->byShift($shiftId)
+            ->orderByDesc('tanggal');
 
         if ($request->filled('search')) {
             $query->search($request->search);
@@ -447,23 +517,37 @@ class PosController extends BaseApiController
      */
     public function show(string $ulid): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
         $sales = DocSales::with([
             'details.product:id,ulid,kode_produk,nama_produk',
             'payments.metodePembayaran:id,ulid,kode_pembayaran,nama_pembayaran',
-            'customer:id,ulid,kode_customer,nama,telepon',
+            'customer:id,ulid,kode_customer,nama,telepon,email',
             'terminal:id,ulid,kode_terminal,nama_terminal',
             'createdBy:id,name',
             'voidedBy:id,name',
-            'returns.details.product:id,ulid,kode_produk,nama_produk',
-            'returns.createdBy:id,name',
+            'shift:id,user_id,terminal_id',
+            'returns' => fn ($query) => $query->whereIn('status', ['lock', 'approved'])->with([
+                'details.product:id,ulid,kode_produk,nama_produk',
+                'createdBy:id,name',
+            ]),
         ])->where('ulid', $ulid)->first();
 
-        if (!$sales) {
+        if (! $sales) {
             return $this->error('Transaksi tidak ditemukan', 404);
+        }
+
+        if ($sales->source !== 'pos') {
+            return $this->error('Transaksi tidak ditemukan', 404);
+        }
+
+        $isOwner = $sales->shift && (int) $sales->shift->user_id === (int) auth()->id();
+        $activeTerminal = MasterPosTerminal::where('active_user_id', auth()->id())->first();
+        $sameActiveTerminal = $activeTerminal && (int) $sales->terminal_id === (int) $activeTerminal->id;
+        if (! $isOwner && ! $sameActiveTerminal && ! auth()->user()->can('terminal.force-release')) {
+            return $this->error('Anda tidak memiliki akses ke transaksi ini', 403);
         }
 
         $this->attachSerialUnitsToSale($sales);
@@ -471,6 +555,82 @@ class PosController extends BaseApiController
         return $this->success([
             'sales' => $sales,
         ]);
+    }
+
+    /**
+     * Email a POS receipt using the sale terminal's mail configuration.
+     */
+    public function emailReceipt(string $ulid, Request $request): JsonResponse
+    {
+        if (! auth()->user()->can('pos.access')) {
+            return $this->error('Unauthorized', 403);
+        }
+
+        $validated = $request->validate([
+            'to_email' => 'required|email|max:255',
+            'message' => 'nullable|string|max:2000',
+            'pdf' => 'required|file|mimes:pdf|max:2048',
+        ]);
+
+        $sales = DocSales::with([
+            'shift:id,user_id',
+            'customer:id,nama',
+            'terminal:id,mail_driver,mail_from_address,mail_from_name,smtp_host,smtp_port,smtp_encryption,smtp_username,smtp_password,resend_api_key',
+        ])->where('ulid', $ulid)->first();
+
+        if (! $sales || $sales->source !== 'pos') {
+            return $this->error('Transaksi tidak ditemukan', 404);
+        }
+
+        $isOwner = $sales->shift && (int) $sales->shift->user_id === (int) auth()->id();
+        $activeTerminal = MasterPosTerminal::where('active_user_id', auth()->id())->first();
+        $sameActiveTerminal = $activeTerminal && (int) $sales->terminal_id === (int) $activeTerminal->id;
+        if (! $isOwner && ! $sameActiveTerminal && ! auth()->user()->can('terminal.force-release')) {
+            return $this->error('Anda tidak memiliki akses ke transaksi ini', 403);
+        }
+
+        $terminal = $sales->terminal;
+        if (! $terminal || ! $terminal->isMailConfigured()) {
+            return $this->error('Email struk belum dikonfigurasi pada terminal ini.', 422);
+        }
+
+        $store = SettingService::getStoreInfo();
+        $receiptUrl = rtrim(config('app.url'), '/') . "/struk-online/{$sales->ulid}";
+        $extraMessage = trim((string) ($validated['message'] ?? ''));
+        $viewData = [
+            'storeName' => $store['name'] ?: 'Toko',
+            'storePhone' => $store['phone'] ?? '',
+            'storeEmail' => $store['email'] ?? '',
+            'nomor' => $sales->nomor_dokumen,
+            'tanggal' => $sales->tanggal?->format('d/m/Y H:i') ?? '-',
+            'customerName' => $sales->customer?->nama ?: 'Walk-in',
+            'receiptUrl' => $receiptUrl,
+            'extraMessage' => $extraMessage !== '' ? $extraMessage : null,
+        ];
+
+        $htmlBody = view('emails.pos-receipt', $viewData)->render();
+        $textBody = view('emails.pos-receipt-text', $viewData)->render();
+        $subject = "Struk belanja Anda — {$sales->nomor_dokumen} | {$viewData['storeName']}";
+        $pdf = $request->file('pdf');
+
+        try {
+            TerminalMailer::send(
+                $terminal,
+                $validated['to_email'],
+                $subject,
+                $textBody,
+                $htmlBody,
+                [
+                    'path' => $pdf->getRealPath(),
+                    'name' => "{$sales->nomor_dokumen}.pdf",
+                    'mime' => 'application/pdf',
+                ]
+            );
+        } catch (\Throwable $e) {
+            return $this->error('Gagal mengirim: '.$e->getMessage(), 422);
+        }
+
+        return $this->success(null, 'Struk berhasil dikirim via email.');
     }
 
     /**
@@ -482,16 +642,24 @@ class PosController extends BaseApiController
             'details.product:id,ulid,kode_produk,nama_produk',
             'payments.metodePembayaran:id,ulid,kode_pembayaran,nama_pembayaran',
             'customer:id,ulid,kode_customer,nama',
+            'createdBy:id,name',
+            'piutang:id,sales_id,status,sisa_piutang',
             'voidedBy:id,name',
-            'returns.details.product:id,ulid,kode_produk,nama_produk',
-            'returns.createdBy:id,name',
+            'returns' => fn ($query) => $query->whereIn('status', ['lock', 'approved'])->with([
+                'details.product:id,ulid,kode_produk,nama_produk',
+                'createdBy:id,name',
+            ]),
         ])->where('ulid', $ulid)->first();
 
-        if (!$sales) {
+        if (! $sales) {
+            return $this->error('Struk tidak ditemukan', 404);
+        }
+        if ($sales->isDraft()) {
             return $this->error('Struk tidak ditemukan', 404);
         }
 
         $this->attachSerialUnitsToSale($sales);
+        $sales->details->each->makeHidden('hpp_at_time');
 
         // Calculate return status
         $totalBuyBase = $sales->details->sum('qty_base');
@@ -508,6 +676,18 @@ class PosController extends BaseApiController
             $returnStatus = 'completed';
         }
 
+        // Watermark pembayaran: LUNAS / BELUM LUNAS / TEMPO (dari piutang BO; POS tanpa piutang = LUNAS)
+        $paymentWatermark = 'LUNAS';
+        if ($returnStatus === 'completed' && $sales->piutang) {
+            $paymentWatermark = match ($sales->piutang->status) {
+                'paid' => 'LUNAS',
+                'unpaid' => ((int) $sales->tempo_hari > 0 ? 'TEMPO' : 'BELUM LUNAS'),
+                default => 'BELUM LUNAS',
+            };
+        } elseif (in_array($returnStatus, ['voided', 'retur_full', 'retur_partial'], true)) {
+            $paymentWatermark = null;
+        }
+
         $storeInfo = SettingService::getStoreInfo();
 
         $terminal = MasterPosTerminal::find($sales->terminal_id);
@@ -520,6 +700,7 @@ class PosController extends BaseApiController
             'sales' => $sales,
             'store' => $storeInfo,
             'receipt_status' => $returnStatus,
+            'payment_watermark' => $paymentWatermark,
             'retur_policy' => $returPolicy,
         ]);
     }
@@ -529,7 +710,7 @@ class PosController extends BaseApiController
      */
     public function void(string $ulid, Request $request, VoidSalesAction $action): JsonResponse
     {
-        if (!auth()->user()->can('pos.void')) {
+        if (! auth()->user()->can('pos.void')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -537,14 +718,18 @@ class PosController extends BaseApiController
             'reason' => 'required|string|max:500',
         ]);
 
-        $sales = DocSales::with('shift:id,user_id')->where('ulid', $ulid)->first();
+        $sales = DocSales::with('shift:id,user_id,ended_at')->where('ulid', $ulid)->first();
 
-        if (!$sales) {
+        if (! $sales) {
             return $this->error('Transaksi tidak ditemukan', 404);
         }
 
+        if ($sales->source !== 'pos') {
+            return $this->error('Hanya transaksi POS yang dapat di-void dari kasir', 422);
+        }
+
         // Verify sales belongs to current user's shift
-        if ($sales->shift && $sales->shift->user_id !== auth()->id()) {
+        if (! $sales->shift || $sales->shift->user_id !== auth()->id()) {
             return $this->error('Anda tidak memiliki akses untuk void transaksi ini', 403);
         }
 
@@ -560,24 +745,28 @@ class PosController extends BaseApiController
      */
     public function shiftReport(string $shiftUlid): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
-            return $this->error('Unauthorized', 403);
-        }
-
         $shift = PosTerminalShift::with([
             'terminal:id,ulid,kode_terminal,nama_terminal',
             'user:id,ulid,name',
             'forcedByUser:id,ulid,name',
         ])->where('ulid', $shiftUlid)->first();
 
-        if (!$shift) {
+        if (! $shift) {
             return $this->error('Shift tidak ditemukan', 404);
         }
 
-        // Access: kasir pemilik shift, ATAU admin dengan permission terminal.force-release
-        // (kasus admin mau preview shift orang lain untuk force close)
-        if ($shift->user_id !== auth()->id() && !auth()->user()->can('terminal.force-release')) {
-            return $this->error('Anda tidak memiliki akses ke shift ini', 403);
+        $user = auth()->user();
+        if ($shift->ended_at !== null) {
+            if (! $user->can('terminal.view')) {
+                return $this->error('Unauthorized', 403);
+            }
+        } else {
+            if (! $user->can('pos.access')) {
+                return $this->error('Unauthorized', 403);
+            }
+            if ($shift->user_id !== auth()->id() && ! $user->can('terminal.force-release')) {
+                return $this->error('Anda tidak memiliki akses ke shift ini', 403);
+            }
         }
 
         $shiftId = $shift->id;
@@ -610,6 +799,7 @@ class PosController extends BaseApiController
             ->groupBy('metode_pembayaran_id')
             ->map(function ($group) {
                 $first = $group->first();
+
                 return [
                     'nama' => $first->metodePembayaran?->nama_pembayaran ?? 'Unknown',
                     'is_tunai' => $first->metodePembayaran?->metode === 'tunai',
@@ -625,9 +815,13 @@ class PosController extends BaseApiController
         $totalKembalian = (float) $completedSales->sum('kembalian');
 
         // Returns summary
-        $returns = DocSalesReturn::byShift($shiftId)->with('sales:id,shift_id')->get();
-        $returSesiIni = $returns->filter(fn($r) => $r->sales && $r->sales->shift_id == $shiftId);
-        $returSesiSebelumnya = $returns->filter(fn($r) => $r->sales && $r->sales->shift_id != $shiftId);
+        $returns = DocSalesReturn::byShift($shiftId)
+            ->where('source', 'pos')
+            ->where('status', 'approved')
+            ->with('sales:id,shift_id')
+            ->get();
+        $returSesiIni = $returns->filter(fn ($r) => $r->sales && $r->sales->shift_id == $shiftId);
+        $returSesiSebelumnya = $returns->filter(fn ($r) => $r->sales && $r->sales->shift_id != $shiftId);
 
         // Cash transactions
         $cashTx = PosCashTransaction::byShift($shiftId)->get();
@@ -636,15 +830,10 @@ class PosController extends BaseApiController
         $kasMasukItems = $cashTx->where('tipe', 'kas_masuk')->values();
         $kasMasuk = (float) $kasMasukItems->sum('nominal');
 
-        // Separate manual kas_keluar from auto-created refund entries
-        $kasKeluarAll = $cashTx->where('tipe', 'kas_keluar');
-        $refundTunai = (float) $kasKeluarAll->filter(function ($tx) {
-            return str_starts_with($tx->keterangan ?? '', 'Refund retur');
-        })->sum('nominal');
-        $kasKeluarItems = $kasKeluarAll->filter(function ($tx) {
-            return !str_starts_with($tx->keterangan ?? '', 'Refund retur');
-        })->values();
+        // Manual kas_keluar vs auto-created refund entries (tipe berbeda sejak Wave B)
+        $kasKeluarItems = $cashTx->where('tipe', 'kas_keluar')->values();
         $kasKeluarManual = (float) $kasKeluarItems->sum('nominal');
+        $refundTunai = (float) $cashTx->where('tipe', 'refund_retur')->sum('nominal');
 
         // Penjualan tunai (NET = cash received - kembalian)
         $tunaiMethodIds = MasterMetodePembayaran::where('metode', 'tunai')->pluck('id')->toArray();
@@ -673,14 +862,14 @@ class PosController extends BaseApiController
             ->flatMap(fn ($d) => $d->serial_unit_ids ?? [])->filter()->unique()->values();
         $serialMap = $serialUlids->isEmpty() ? collect()
             : SerialUnit::whereIn('ulid', $serialUlids)
-                ->get(['ulid', 'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'account_status'])
+                ->get(['ulid', 'kode_internal', 'serial_number', 'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status', 'catatan'])
                 ->keyBy('ulid');
         $serialUnitsSold = [];
         foreach ($completedSales as $sale) {
             foreach ($sale->details as $d) {
                 foreach ($d->serial_unit_ids ?? [] as $u) {
                     $unit = $serialMap->get($u);
-                    if (!$unit) {
+                    if (! $unit) {
                         continue;
                     }
                     $serialUnitsSold[] = [
@@ -690,7 +879,9 @@ class PosController extends BaseApiController
                         'serial_number' => $unit->serial_number,
                         'grade' => $unit->grade,
                         'battery_health' => $unit->battery_health,
+                        'battery_cycle_count' => $unit->battery_cycle_count,
                         'account_status' => $unit->account_status,
+                        'catatan' => $unit->catatan,
                         'harga' => (float) $d->harga_satuan,
                     ];
                 }
@@ -772,17 +963,17 @@ class PosController extends BaseApiController
      */
     public function lockShift(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
         $shiftId = $request->input('shift_id');
-        if (!$shiftId) {
+        if (! $shiftId) {
             return $this->error('shift_id is required', 422);
         }
 
         $shift = PosTerminalShift::find($shiftId);
-        if (!$shift) {
+        if (! $shift) {
             return $this->error('Shift tidak ditemukan', 404);
         }
 
@@ -791,7 +982,7 @@ class PosController extends BaseApiController
             return $this->error('Anda tidak memiliki akses ke shift ini', 403);
         }
 
-        if (!$shift->isActive()) {
+        if (! $shift->isActive()) {
             return $this->error('Shift sudah berakhir', 422);
         }
 
@@ -809,7 +1000,7 @@ class PosController extends BaseApiController
      */
     public function unlockShift(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('pos.access')) {
+        if (! auth()->user()->can('pos.access')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -819,7 +1010,7 @@ class PosController extends BaseApiController
         ]);
 
         $shift = PosTerminalShift::find($validated['shift_id']);
-        if (!$shift) {
+        if (! $shift) {
             return $this->error('Shift tidak ditemukan', 404);
         }
 
@@ -828,11 +1019,11 @@ class PosController extends BaseApiController
             return $this->error('Anda tidak memiliki akses ke shift ini', 403);
         }
 
-        if (!$shift->isActive()) {
+        if (! $shift->isActive()) {
             return $this->error('Shift sudah berakhir', 422);
         }
 
-        if (!$shift->isLocked()) {
+        if (! $shift->isLocked()) {
             return $this->success([
                 'is_locked' => false,
             ], 'Layar tidak dalam keadaan terkunci');
@@ -849,11 +1040,11 @@ class PosController extends BaseApiController
         }
 
         // Try password if PIN didn't match
-        if (!$isValid && password_verify($credential, $user->password)) {
+        if (! $isValid && password_verify($credential, $user->password)) {
             $isValid = true;
         }
 
-        if (!$isValid) {
+        if (! $isValid) {
             return $this->error('PIN atau password salah', 422);
         }
 

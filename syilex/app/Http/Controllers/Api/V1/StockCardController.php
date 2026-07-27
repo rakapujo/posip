@@ -8,7 +8,6 @@ use App\Models\MasterProduk;
 use App\Models\MasterWarehouse;
 use App\Models\InventoryStock;
 use App\Exports\StockCardExport;
-use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
@@ -21,8 +20,12 @@ class StockCardController extends BaseApiController
      */
     public function index(Request $request): JsonResponse
     {
-        // Check permission
-        if (!auth()->user()->can('stok.view')) {
+        $hppChangedOnly = $request->boolean('hpp_changed_only');
+        if ($hppChangedOnly) {
+            if (!auth()->user()->can('stok.view_hpp')) {
+                return $this->error('Unauthorized', 403);
+            }
+        } elseif (!auth()->user()->can('stok.view')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -69,9 +72,16 @@ class StockCardController extends BaseApiController
             ])
             ->byProduct($product->id);
 
-        // Filter by warehouse
+        // Filter by warehouse (HPP mode includes null-WH global corrections)
         if ($request->filled('warehouse_id')) {
-            $query->byWarehouse($request->warehouse_id);
+            $warehouseId = $request->warehouse_id;
+            if ($hppChangedOnly) {
+                $query->where(function ($q) use ($warehouseId) {
+                    $q->where('warehouse_id', $warehouseId)->orWhereNull('warehouse_id');
+                });
+            } else {
+                $query->byWarehouse($warehouseId);
+            }
         }
 
         // Filter by date range
@@ -92,18 +102,18 @@ class StockCardController extends BaseApiController
         }
 
         // Filter only records where HPP changed (for Pergerakan HPP page)
-        if ($request->boolean('hpp_changed_only')) {
+        if ($hppChangedOnly) {
             $query->whereColumn('avg_cost_before', '!=', 'avg_cost_after');
         }
 
-        // Sort (default: tanggal desc, id desc) - whitelist allowed columns
-        $sortableFields = ['tanggal', 'tipe_transaksi', 'qty_masuk', 'qty_keluar', 'saldo', 'created_at'];
+        // Sort — whitelist real DB columns only
+        $sortableFields = ['tanggal', 'transaction_type', 'qty_in', 'qty_out', 'qty_balance', 'created_at'];
         $sortField = $request->input('sort_field', 'tanggal');
         $sortOrder = $request->input('sort_order', 'desc') === 'asc' ? 'asc' : 'desc';
 
         if ($sortField === 'tanggal') {
             $query->orderBy('tanggal', $sortOrder)->orderBy('id', $sortOrder);
-        } elseif (in_array($sortField, $sortableFields)) {
+        } elseif (in_array($sortField, $sortableFields, true)) {
             $query->orderBy($sortField, $sortOrder);
         } else {
             $query->orderBy('tanggal', $sortOrder)->orderBy('id', $sortOrder);
@@ -242,13 +252,14 @@ class StockCardController extends BaseApiController
             $query->byWarehouse($warehouseId);
         }
 
-        // Get opening balance (balance before start_date)
+        // Get opening balance (balance before start_date) — skip HPP-only / null-WH rows
         $openingBalance = 0;
         if ($startDate) {
             $openingQuery = StockCard::query()->byProduct($product->id);
             if ($warehouseId) {
                 $openingQuery->byWarehouse($warehouseId);
             }
+            $this->excludeNonQtyRows($openingQuery);
             $lastBefore = $openingQuery
                 ->where('tanggal', '<', $startDate . ' 00:00:00')
                 ->orderBy('tanggal', 'desc')
@@ -277,11 +288,12 @@ class StockCardController extends BaseApiController
         // Get ending balance - prefer from stock_card, fallback to inventory_stock
         $endingBalance = 0;
 
-        // First try to get from stock_card
+        // First try to get from stock_card (skip HPP-only / null-WH)
         $endingQuery = StockCard::query()->byProduct($product->id);
         if ($warehouseId) {
             $endingQuery->byWarehouse($warehouseId);
         }
+        $this->excludeNonQtyRows($endingQuery);
         if ($endDate) {
             $endingQuery->where('tanggal', '<=', $endDate . ' 23:59:59');
         }
@@ -321,8 +333,12 @@ class StockCardController extends BaseApiController
      */
     public function export(Request $request)
     {
-        // Check permission
-        if (!auth()->user()->can('stok.view')) {
+        $hppChangedOnly = $request->boolean('hpp_changed_only');
+        if ($hppChangedOnly) {
+            if (!auth()->user()->can('stok.view_hpp')) {
+                return $this->error('Unauthorized', 403);
+            }
+        } elseif (!auth()->user()->can('stok.view')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -350,7 +366,6 @@ class StockCardController extends BaseApiController
         $startDate = $request->input('start_date');
         $endDate = $request->input('end_date');
         $transactionType = $request->input('transaction_type');
-        $hppChangedOnly = $request->boolean('hpp_changed_only');
 
         $filename = 'stock_card_' . $product->kode_produk . '_' . date('Y-m-d_His') . '.xlsx';
 
@@ -387,6 +402,16 @@ class StockCardController extends BaseApiController
     }
 
     /**
+     * Exclude HPP-only rows (qty_balance=0, often null warehouse) from qty balance lookups.
+     */
+    private function excludeNonQtyRows($query)
+    {
+        return $query
+            ->whereNotIn('transaction_type', StockCard::TYPES_NO_QTY)
+            ->whereNotNull('warehouse_id');
+    }
+
+    /**
      * Get HPP movement summary (avg_cost awal/akhir, total nilai masuk/keluar).
      * HPP is GLOBAL (not per-warehouse), but warehouse filter can be used for total nilai calculations.
      */
@@ -405,6 +430,13 @@ class StockCardController extends BaseApiController
                     'total_nilai_masuk' => 0,
                     'total_nilai_keluar' => 0,
                     'avg_cost_akhir' => 0,
+                    'qty_stok' => 0,
+                    'nilai_stok' => 0,
+                    'delta_hpp_unit' => 0,
+                    'selisih_vs_mutasi' => 0,
+                    'koreksi_count' => 0,
+                    'koreksi_last_no' => null,
+                    'koreksi_last_type' => null,
                 ],
             ]);
         }
@@ -453,20 +485,18 @@ class StockCardController extends BaseApiController
         }
 
         // Build period query for total nilai (can be filtered by warehouse)
+        // HM-M1: ignore hpp_changed_only for nilai aggregates (SALES etc. still count)
         $periodQuery = StockCard::query()->byProduct($product->id);
         if ($warehouseId) {
-            $periodQuery->byWarehouse($warehouseId);
+            $periodQuery->where(function ($q) use ($warehouseId) {
+                $q->where('warehouse_id', $warehouseId)->orWhereNull('warehouse_id');
+            });
         }
         if ($startDate || $endDate) {
             $periodQuery->byDateRange($startDate, $endDate);
         }
         if ($transactionType) {
             $periodQuery->byTransactionType($transactionType);
-        }
-
-        // Filter only records where HPP actually changed (for accurate Pergerakan HPP)
-        if ($request->boolean('hpp_changed_only')) {
-            $periodQuery->whereColumn('avg_cost_before', '!=', 'avg_cost_after');
         }
 
         // Total nilai masuk (qty_in > 0)
@@ -503,12 +533,50 @@ class StockCardController extends BaseApiController
             }
         }
 
+        // Nilai stok sekarang = qty aktual × HPP akhir (bukan sejarah mutasi)
+        $stockQtyQuery = InventoryStock::where('product_id', $product->id);
+        if ($warehouseId) {
+            $stockQtyQuery->where('warehouse_id', $warehouseId);
+        }
+        $qtyStok = (int) $stockQtyQuery->sum('qty');
+        $nilaiStok = round($qtyStok * $avgCostAkhir, 2);
+
+        // A: Δ HPP unit (akhir − awal)
+        $deltaHppUnit = round($avgCostAkhir - $avgCostAwal, 4);
+
+        // B: selisih vs sejarah mutasi (bukan nilai koreksi ledger)
+        $selisihVsMutasi = round($nilaiStok - ($totalNilaiMasuk - $totalNilaiKeluar), 2);
+
+        // C: baris koreksi/reset di periode (abaikan filter tipe transaksi list)
+        $koreksiQuery = StockCard::query()->byProduct($product->id);
+        if ($warehouseId) {
+            $koreksiQuery->where(function ($q) use ($warehouseId) {
+                $q->where('warehouse_id', $warehouseId)->orWhereNull('warehouse_id');
+            });
+        }
+        if ($startDate || $endDate) {
+            $koreksiQuery->byDateRange($startDate, $endDate);
+        }
+        $koreksiQuery->whereIn('transaction_type', StockCard::TYPES_NO_QTY);
+        $koreksiCount = (int) (clone $koreksiQuery)->count();
+        $lastKoreksi = (clone $koreksiQuery)
+            ->orderBy('tanggal', 'desc')
+            ->orderBy('id', 'desc')
+            ->first(['transaction_type', 'transaction_no']);
+
         return $this->success([
             'summary' => [
                 'avg_cost_awal' => $avgCostAwal,
                 'total_nilai_masuk' => $totalNilaiMasuk,
                 'total_nilai_keluar' => $totalNilaiKeluar,
                 'avg_cost_akhir' => $avgCostAkhir,
+                'qty_stok' => $qtyStok,
+                'nilai_stok' => $nilaiStok,
+                'delta_hpp_unit' => $deltaHppUnit,
+                'selisih_vs_mutasi' => $selisihVsMutasi,
+                'koreksi_count' => $koreksiCount,
+                'koreksi_last_no' => $lastKoreksi?->transaction_no,
+                'koreksi_last_type' => $lastKoreksi?->transaction_type,
             ],
         ]);
     }

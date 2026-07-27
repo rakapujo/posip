@@ -44,6 +44,7 @@ class InventoryAccessCoverageTest extends TestCase
             'repack.view', 'repack.create', 'repack.update', 'repack.delete', 'repack.approve',
             'opname.view', 'opname.create', 'opname.update', 'opname.delete', 'opname.approve',
             'hpp.view', 'hpp.create', 'hpp.update', 'hpp.delete', 'hpp.approve',
+            'stok.view', 'stok.view_hpp',
         ] as $permission) {
             Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
         }
@@ -226,5 +227,110 @@ class InventoryAccessCoverageTest extends TestCase
         $this->actingAs($this->viewer)
             ->postJson("/api/v1/hpp-corrections/{$this->hppUlid}/approve")
             ->assertForbidden();
+    }
+
+    public function test_repack_approve_forbidden_without_approve_permission(): void
+    {
+        $this->actingAs($this->viewer)
+            ->postJson("/api/v1/repacks/{$this->repackUlid}/approve")
+            ->assertForbidden();
+    }
+
+    // ==================== Fase 1 — stok.view / stok.view_hpp coverage ====================
+
+    public function test_inventory_stocks_index_forbidden_without_stok_view(): void
+    {
+        $denied = User::factory()->create();
+
+        $this->actingAs($denied)
+            ->getJson('/api/v1/inventory/stocks')
+            ->assertForbidden();
+    }
+
+    public function test_inventory_stocks_summary_forbidden_without_stok_view(): void
+    {
+        $denied = User::factory()->create();
+
+        $this->actingAs($denied)
+            ->getJson('/api/v1/inventory/stocks/summary')
+            ->assertForbidden();
+    }
+
+    public function test_inventory_stocks_index_allowed_with_stok_view(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo('stok.view');
+
+        $this->actingAs($viewer)
+            ->getJson('/api/v1/inventory/stocks')
+            ->assertOk();
+    }
+
+    public function test_inventory_stocks_valuation_forbidden_without_stok_view_hpp(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo('stok.view'); // no stok.view_hpp
+
+        $this->actingAs($viewer)
+            ->getJson('/api/v1/inventory/stocks/valuation-by-warehouse')
+            ->assertForbidden();
+    }
+
+    public function test_inventory_stocks_valuation_allowed_with_stok_view_hpp(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo(['stok.view', 'stok.view_hpp']);
+
+        $this->actingAs($viewer)
+            ->getJson('/api/v1/inventory/stocks/valuation-by-warehouse')
+            ->assertOk();
+    }
+
+    public function test_stock_cards_index_forbidden_without_stok_view(): void
+    {
+        $denied = User::factory()->create();
+
+        $this->actingAs($denied)
+            ->getJson('/api/v1/inventory/stock-cards')
+            ->assertForbidden();
+    }
+
+    public function test_stock_cards_hpp_summary_forbidden_without_stok_view(): void
+    {
+        $denied = User::factory()->create();
+
+        $this->actingAs($denied)
+            ->getJson('/api/v1/inventory/stock-cards/hpp-summary')
+            ->assertForbidden();
+    }
+
+    public function test_stock_cards_index_allowed_with_stok_view(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo('stok.view');
+
+        $this->actingAs($viewer)
+            ->getJson('/api/v1/inventory/stock-cards')
+            ->assertOk();
+    }
+
+    public function test_stock_cards_hpp_summary_forbidden_without_stok_view_hpp(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo('stok.view'); // no stok.view_hpp
+
+        $this->actingAs($viewer)
+            ->getJson('/api/v1/inventory/stock-cards/hpp-summary')
+            ->assertForbidden();
+    }
+
+    public function test_stock_cards_hpp_summary_allowed_with_stok_view_hpp(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo(['stok.view', 'stok.view_hpp']);
+
+        $this->actingAs($viewer)
+            ->getJson('/api/v1/inventory/stock-cards/hpp-summary')
+            ->assertOk();
     }
 }

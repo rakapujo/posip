@@ -37,7 +37,7 @@ const lh = (pt) => pt * 0.42;
  * barcode/grid (generateBarcodeDataURL + calcGrid) dari useBarcodePrint.
  *
  * labelItems = string SUDAH terformat (formatting currency/percent/date di pemanggil):
- *   { kode_produk, nama_produk, kode_internal, serial_number, spek, akun, harga, pbs }
+ *   { kode_produk, nama_produk, kode_internal, serial_number, spek, akun, catatan, harga, pbs }
  */
 export function useSerialLabelPrint() {
     const generating = ref(false);
@@ -135,7 +135,14 @@ export function useSerialLabelPrint() {
             doc.text('SN ' + String(item.serial_number), cx, cy, { align: 'center', maxWidth: innerW });
         }
 
-        // 5. Keterangan (opsional, italic) — dicetak apa adanya tanpa prefix
+        // 4c. Catatan unit (dari data serial) — sebelum keterangan batch manual
+        if (item.catatan) {
+            cy += lh(mid);
+            doc.setFont('helvetica', 'normal');
+            doc.text(String(item.catatan), cx, cy, { align: 'center', maxWidth: innerW });
+        }
+
+        // 5. Keterangan batch (opsional, italic) — dicetak apa adanya tanpa prefix
         if (keterangan) {
             cy += lh(mid);
             doc.setFont('helvetica', 'italic');

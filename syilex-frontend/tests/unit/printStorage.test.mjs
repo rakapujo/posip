@@ -1,12 +1,5 @@
 import { TestRunner } from './testRunner.mjs';
-import {
-    STORAGE_KEY,
-    clearStoredPrinter,
-    getStoredPrinter,
-    isStoredForTerminal,
-    parseStoredPrinter,
-    setStoredPrinter
-} from '../../src/composables/print/printStorage.js';
+import { STORAGE_KEY, clearStoredPrinter, getStoredPrinter, isStoredForTerminal, parseStoredPrinter, setStoredPrinter } from '../../src/composables/print/printStorage.js';
 
 const store = {};
 globalThis.localStorage = {

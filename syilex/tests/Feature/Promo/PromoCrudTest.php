@@ -647,6 +647,24 @@ class PromoCrudTest extends TestCase
         \Illuminate\Support\Carbon::setTestNow();
     }
 
+    #[Test]
+    public function scope_by_display_status_upcoming_includes_out_of_hour_promo(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow(today()->setTime(14, 0, 0));
+
+        $this->makePromo([
+            'status'        => 'approved',
+            'tanggal_mulai' => today()->toDateString(),
+            'jam_mulai'     => '08:00:00',
+            'jam_selesai'   => '09:00:00',
+        ]);
+
+        $this->assertEquals(1, DocPromo::byDisplayStatus('upcoming')->count());
+        $this->assertEquals(0, DocPromo::byDisplayStatus('active')->count());
+
+        \Illuminate\Support\Carbon::setTestNow();
+    }
+
     /**
      * getDisplayStatus: promo approved dalam tanggal valid DAN dalam jam window
      * mengembalikan 'active'.

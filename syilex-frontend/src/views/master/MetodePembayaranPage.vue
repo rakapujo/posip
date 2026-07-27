@@ -7,6 +7,8 @@ import ImageUpload from '@/components/common/ImageUpload.vue';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useExportPdf } from '@/composables/useExportPdf';
@@ -20,7 +22,7 @@ const { formatCurrency, currencySettings, numberSettings, getLocale, shouldUpper
 const canCreate = computed(() => authStore.can('metode-bayar.create'));
 const canUpdate = computed(() => authStore.can('metode-bayar.update'));
 const canDelete = computed(() => authStore.can('metode-bayar.delete'));
-const canExport = computed(() => authStore.can('laporan.export'));
+const canExport = computed(() => authStore.can('metode-bayar.view'));
 const { exporting, exportListPdf } = useExportPdf();
 const exportingExcel = ref(false);
 
@@ -55,6 +57,13 @@ const metodeOptions = ref([
     { label: 'Tunai', value: 'tunai' },
     { label: 'Non-Tunai', value: 'non_tunai' }
 ]);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedMetode.value) n++;
+    if (selectedStatus.value) n++;
+    return n;
+});
 
 // Dialog states
 const metodePembayaranDialog = ref(false);
@@ -510,11 +519,11 @@ async function viewDetail(data) {
                 </template>
 
                 <template #end>
-                    <div class="flex gap-2">
-                        <Select v-model="selectedMetode" :options="metodeOptions" optionLabel="label" optionValue="value" placeholder="Filter Metode" class="w-40" filter filterPlaceholder="Cari..." @change="onFilter" />
-                        <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" class="w-40" filter filterPlaceholder="Cari..." @change="onFilter" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                        <Select v-model="selectedMetode" :options="metodeOptions" optionLabel="label" optionValue="value" placeholder="Filter Metode" filter filterPlaceholder="Cari..." @change="onFilter" />
+                        <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" filter filterPlaceholder="Cari..." @change="onFilter" />
                         <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                    </div>
+                    </ListFiltersSheet>
                 </template>
             </Toolbar>
 
@@ -540,7 +549,7 @@ async function viewDetail(data) {
                         <template #extra>
                             <div class="flex gap-2">
                                 <Button v-if="canExport" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                                <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                                <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  outlined />
                             </div>
                         </template>
                     </DataTableHeader>
@@ -577,21 +586,13 @@ async function viewDetail(data) {
                 </Column>
                 <Column :exportable="false" style="min-width: 220px" alignFrozen="right" frozen>
                     <template #body="slotProps">
-                        <Button icon="pi pi-eye" outlined rounded class="mr-2" severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button v-if="canUpdate" icon="pi pi-pencil" outlined rounded class="mr-2" @click="editItem(slotProps.data)" v-tooltip.top="'Edit'" />
-                        <Button
-                            v-if="canUpdate"
-                            icon="pi pi-power-off"
-                            outlined
-                            rounded
-                            class="mr-2"
-                            :severity="getToggleSeverity(slotProps.data.status)"
-                            @click="confirmToggleStatus(slotProps.data)"
-                            v-tooltip.top="getToggleLabel(slotProps.data.status)"
-                            :aria-label="getToggleLabel(slotProps.data.status)"
-                        />
-                        <Button v-if="canDelete" icon="pi pi-trash" outlined rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" />
-                    </template>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" rounded severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" text />
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editItem(slotProps.data)" v-tooltip.top="'Edit'" text />
+                        <Button v-if="canUpdate" icon="pi pi-power-off" rounded :severity="getToggleSeverity(slotProps.data.status)" @click="confirmToggleStatus(slotProps.data)" v-tooltip.top="getToggleLabel(slotProps.data.status)" :aria-label="getToggleLabel(slotProps.data.status)" text />
+                        <Button v-if="canDelete" icon="pi pi-trash" rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" text />
+                    </RowActionButtons>
+                </template>
                 </Column>
             </DataTable>
         </div>

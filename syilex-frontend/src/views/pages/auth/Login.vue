@@ -425,9 +425,16 @@ const handleLogin = async () => {
     background: var(--p-surface-0);
     position: relative;
     overflow-y: auto;
-    border-radius: 2rem 0 0 2rem;
-    box-shadow: -10px 0 40px rgba(0, 0, 0, 0.15);
+    border-radius: 0;
+    box-shadow: none;
     z-index: 1;
+}
+
+@media (min-width: 1100px) {
+    .form-panel {
+        border-radius: 0;
+        box-shadow: -10px 0 40px rgba(0, 0, 0, 0.15);
+    }
 }
 
 /* Mobile brand header */

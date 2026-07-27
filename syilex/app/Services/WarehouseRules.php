@@ -19,4 +19,13 @@ class WarehouseRules
 
         return null;
     }
+
+    public static function unsaleableBlockMessage(MasterWarehouse $warehouse): ?string
+    {
+        if ($warehouse->is_saleable && $warehouse->posTerminals()->exists()) {
+            return 'Tidak dapat menonaktifkan saleable: gudang masih dipakai terminal POS.';
+        }
+
+        return null;
+    }
 }

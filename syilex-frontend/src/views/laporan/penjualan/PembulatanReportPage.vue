@@ -95,21 +95,21 @@ async function exportPdf() {
 
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Jumlah Transaksi</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.jumlah_transaksi }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.jumlah_transaksi }}</div>
             </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Pembulatan Penjualan</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_pembulatan_penjualan) }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_pembulatan_penjualan) }}</div>
             </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Pembulatan Retur</div>
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_pembulatan_retur) }}</div>
+                <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_pembulatan_retur) }}</div>
             </div>
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                 <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Net Pembulatan</div>
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.net_pembulatan) }}</div>
+                <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.net_pembulatan) }}</div>
             </div>
         </div>
 

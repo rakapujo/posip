@@ -308,7 +308,8 @@ export function useTransactionList(api, options = {}) {
             draft: 'warn',
             approved: 'success',
             completed: 'success',
-            cancelled: 'danger'
+            cancelled: 'danger',
+            voided: 'danger'
         };
         return severityMap[status] || 'secondary';
     }
@@ -318,7 +319,8 @@ export function useTransactionList(api, options = {}) {
             draft: 'Draft',
             approved: 'Approved',
             completed: 'Completed',
-            cancelled: 'Cancelled'
+            cancelled: 'Cancelled',
+            voided: 'Voided'
         };
         return labelMap[status] || status;
     }

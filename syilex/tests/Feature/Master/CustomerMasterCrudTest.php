@@ -42,11 +42,13 @@ class CustomerMasterCrudTest extends TestCase
                 'kode_customer' => 'CUS-01',
                 'nama' => 'Andi Spesifik',
                 'telepon' => '08123456789',
+                'tempo_default' => 30,
                 'jenis' => 'spesifik',
                 'status' => 'active',
             ])
             ->assertCreated()
-            ->assertJsonPath('data.customer.kode_customer', 'CUS-01');
+            ->assertJsonPath('data.customer.kode_customer', 'CUS-01')
+            ->assertJsonPath('data.customer.tempo_default', 30);
 
         $ulid = MasterCustomer::where('kode_customer', 'CUS-01')->first()->ulid;
 
@@ -54,10 +56,12 @@ class CustomerMasterCrudTest extends TestCase
             ->putJson("/api/v1/customers/{$ulid}", [
                 'nama' => 'Andi Spesifik Updated',
                 'telepon' => '08123456789',
+                'tempo_default' => 45,
                 'jenis' => 'spesifik',
                 'status' => 'active',
             ])
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.customer.tempo_default', 45);
 
         $this->actingAs($this->user)
             ->patchJson("/api/v1/customers/{$ulid}/toggle-status")
@@ -67,6 +71,21 @@ class CustomerMasterCrudTest extends TestCase
         $this->actingAs($this->user)
             ->deleteJson("/api/v1/customers/{$ulid}")
             ->assertOk();
+    }
+
+    public function test_customer_rejects_negative_tempo_default(): void
+    {
+        $this->actingAs($this->user)
+            ->postJson('/api/v1/customers', [
+                'kode_customer' => 'CUS-TEMPO',
+                'nama' => 'Customer Tempo',
+                'telepon' => '08111',
+                'tempo_default' => -1,
+                'jenis' => 'spesifik',
+                'status' => 'active',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('tempo_default');
     }
 
     public function test_customer_store_rejects_inactive_tipe(): void

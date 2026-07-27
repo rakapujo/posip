@@ -857,7 +857,13 @@ export function usePosCart(terminalConfig = {}) {
                 })),
                 payments
             };
-            const res = await posApi.checkout(data);
+            const idempotencyKey =
+                typeof crypto !== 'undefined' && crypto.randomUUID
+                    ? crypto.randomUUID()
+                    : `pos-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+            const res = await posApi.checkout(data, {
+                headers: { 'Idempotency-Key': idempotencyKey }
+            });
             // Clear cart after successful checkout
             clearCart();
             clearHeaderDiscount();

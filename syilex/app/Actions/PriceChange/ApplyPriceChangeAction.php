@@ -25,13 +25,15 @@ class ApplyPriceChangeAction
     {
         $this->ensureAuthenticated();
 
-        if (!$priceChange->isScheduled()) {
-            throw ValidationException::withMessages([
-                'status' => ['Hanya dokumen dengan status scheduled yang dapat diapply.'],
-            ]);
-        }
-
         return DB::transaction(function () use ($priceChange, $triggeredBy, $triggerType) {
+            // Lock header so cancel↔apply / cron cannot race on the same doc
+            $priceChange = DocPriceChange::whereKey($priceChange->id)->lockForUpdate()->first();
+            if (! $priceChange || ! $priceChange->isScheduled()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Hanya dokumen dengan status scheduled yang dapat diapply.'],
+                ]);
+            }
+
             // Load details with products
             $priceChange->load('details.product');
 

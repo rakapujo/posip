@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Modul Serial (A+) — alur Pembelian Serial jadi draft → approved (konsisten dgn PO).
- * - status di-relax dari enum ke string (CLAUDE.md §2F: status = string di kode; enum cuma guard).
+ * - status di-relax dari enum ke string (AI-AGENT.md §2F: status = string di kode; enum cuma guard).
  *   doc_serial_intake: draft | approved | cancelled ; serial_units: pending | tersedia | terjual | rusak
  * - tambah approved_at / approved_by (audit approval seperti PO)
  * - data lama 'completed' (langsung-final) → 'approved' (sudah commit stok)

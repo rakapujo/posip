@@ -222,6 +222,54 @@ class CustomerPromoReportTest extends TestCase
         $this->assertEquals('C1', $items[0]['kode_customer']);
     }
 
+    /**
+     * B0.3: only_terjaring + per_page harus difilter SEBELUM paginate — total & last_page
+     * mengikuti jumlah customer terjaring, bukan jumlah customer keseluruhan.
+     */
+    public function test_by_customer_only_terjaring_total_correct_with_pagination(): void
+    {
+        // 3 terjaring (VIP, punya disc nota)
+        for ($i = 1; $i <= 3; $i++) {
+            $this->makeCustomer("VIP{$i}", "Vip {$i}", $this->tipeVipId);
+        }
+        // 5 tidak terjaring (Reguler, tanpa disc nota / promo)
+        for ($i = 1; $i <= 5; $i++) {
+            $this->makeCustomer("REG{$i}", "Reg {$i}", $this->tipeRegularId);
+        }
+
+        $response = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/customer-promo/by-customer?only_terjaring=1&per_page=2')
+            ->assertOk();
+
+        $this->assertCount(2, $response->json('data.items'));
+        $pg = $response->json('data.pagination');
+        $this->assertEquals(3, $pg['total']); // hanya 3 terjaring, bukan 8 total customer
+        $this->assertEquals(2, $pg['last_page']); // ceil(3/2)
+    }
+
+    /**
+     * B0.3: sort promo_desc default harus global sebelum paginate — customer dengan
+     * promo_line_count tinggi (tapi kode_customer belakang alfabet) tetap tampil di page 1.
+     */
+    public function test_by_customer_promo_desc_sorts_globally_across_pages(): void
+    {
+        $zzz = $this->makeCustomer('ZZZ-MANY', 'Many Promo', $this->tipeVipId);
+        for ($i = 1; $i <= 3; $i++) {
+            $this->makeCustomer("AAA{$i}", "Aaa {$i}", $this->tipeRegularId);
+        }
+
+        $this->makePromo('PRM-VIP', 'VIP Promo', $this->tipeVipId, null);
+
+        $response = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/customer-promo/by-customer?per_page=2')
+            ->assertOk();
+
+        $items = $response->json('data.items');
+        $this->assertEquals('ZZZ-MANY', $items[0]['kode_customer']);
+        $this->assertEquals(1, $items[0]['promo_line_count']);
+        $this->assertEquals(4, $response->json('data.pagination.total'));
+    }
+
     public function test_show_customer_returns_full_breakdown(): void
     {
         $c1Id = $this->makeCustomer('C1', 'Big Customer', $this->tipeVipId, $this->katGoldId);

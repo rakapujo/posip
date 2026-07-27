@@ -91,6 +91,7 @@ class PromoCheckoutIntegrationTest extends TestCase
             'status'                        => 'active',
             'created_by'                    => $this->user->id,
         ]);
+        $this->terminal->allowedPaymentMethods()->attach([$this->cashPayment->id]);
 
         $this->shift = PosTerminalShift::create([
             'ulid'        => (string) Str::ulid(),

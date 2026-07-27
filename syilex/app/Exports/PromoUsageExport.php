@@ -2,7 +2,9 @@
 
 namespace App\Exports;
 
+use App\Exports\Concerns\UsesExportSheetStyles;
 use App\Models\DocPromo;
+use App\Services\ReportHelperService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromCollection;
@@ -10,7 +12,6 @@ use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
-use App\Exports\Concerns\UsesExportSheetStyles;
 
 class PromoUsageExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
 {
@@ -41,16 +42,43 @@ class PromoUsageExport implements FromCollection, WithHeadings, WithMapping, Wit
             $base->where('s.terminal_id', $terminalId);
         }
 
+        // Nett = nota-allocated revenue. Return netting (lock/approved) subtracted below (S1-style, mirip GrossProfit).
+        $nett = ReportHelperService::salesLineNettExpr('d', 's');
+
         $used = (clone $base)
             ->select(
                 'd.promo_id',
                 DB::raw('COUNT(DISTINCT d.sales_id) as trx_count'),
                 DB::raw('COALESCE(SUM(d.qty_base), 0) as qty_total'),
                 DB::raw('COALESCE(SUM(d.diskon_total), 0) as diskon_total'),
-                DB::raw('COALESCE(SUM(d.jumlah), 0) as revenue_net')
+                DB::raw("COALESCE(SUM({$nett}), 0) as revenue_net")
             )
             ->groupBy('d.promo_id')
             ->get();
+
+        $retNett = ReportHelperService::returnLineDiskonProrataExpr('rd', 'sd');
+        $retRev = ReportHelperService::returnLineRevenueExpr('rd');
+
+        $retQuery = DB::table('doc_sales_return_detail as rd')
+            ->join('doc_sales_returns as r', 'r.id', '=', 'rd.return_id')
+            ->join('doc_sales_detail as sd', 'sd.id', '=', 'rd.sales_detail_id')
+            ->whereIn('r.status', ['lock', 'approved'])
+            ->whereNotNull('sd.promo_id')
+            ->whereBetween('r.tanggal', [$from.' 00:00:00', $to]);
+
+        if ($terminalId) {
+            $retQuery->where('r.terminal_id', $terminalId);
+        }
+
+        $retByPromo = $retQuery
+            ->select(
+                'sd.promo_id',
+                DB::raw("COALESCE(SUM({$retNett}), 0) as diskon_returned"),
+                DB::raw("COALESCE(SUM({$retRev}), 0) as revenue_returned")
+            )
+            ->groupBy('sd.promo_id')
+            ->get()
+            ->keyBy('promo_id');
 
         $promoIds = $used->pluck('promo_id')->filter()->all();
         $promos = DocPromo::whereIn('id', $promoIds)
@@ -58,8 +86,9 @@ class PromoUsageExport implements FromCollection, WithHeadings, WithMapping, Wit
             ->get()
             ->keyBy('id');
 
-        $rows = $used->map(function ($u) use ($promos) {
+        $rows = $used->map(function ($u) use ($promos, $retByPromo) {
             $promo = $promos->get($u->promo_id);
+            $ret = $retByPromo->get($u->promo_id);
 
             return (object) [
                 'kode_promo' => $promo?->kode_promo ?? '-',
@@ -69,8 +98,8 @@ class PromoUsageExport implements FromCollection, WithHeadings, WithMapping, Wit
                 'status' => $promo?->status,
                 'trx_count' => (int) $u->trx_count,
                 'qty_total' => (float) $u->qty_total,
-                'diskon_total' => (float) $u->diskon_total,
-                'revenue_net' => (float) $u->revenue_net,
+                'diskon_total' => (float) $u->diskon_total - (float) ($ret->diskon_returned ?? 0),
+                'revenue_net' => (float) $u->revenue_net - (float) ($ret->revenue_returned ?? 0),
             ];
         });
 

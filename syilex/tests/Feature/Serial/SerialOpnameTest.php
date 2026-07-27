@@ -32,7 +32,7 @@ class SerialOpnameTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['opname.view', 'opname.create', 'opname.approve', 'serial-intake.view'] as $perm) {
+        foreach (['opname.view', 'opname.create', 'opname.update', 'opname.approve', 'serial-intake.view', 'stok.view_hpp'] as $perm) {
             Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
         }
         $this->admin = User::factory()->create();
@@ -153,5 +153,75 @@ class SerialOpnameTest extends TestCase
         $this->assertCount(2, $serialUnits); // hanya yang ditandai hadir
         $this->assertTrue($serialUnits->every(fn ($u) => str_starts_with((string) ($u['kode_internal'] ?? ''), 'KI-')));
         $this->assertNotContains('SN-3', $serialUnits->pluck('serial_number')->all());
+    }
+
+    #[Test]
+    public function create_rejects_serial_line_without_present_key()
+    {
+        $this->seedUnits(1);
+
+        $this->postJson('/api/v1/opnames', [
+            'warehouse_id' => $this->wh->id,
+            'tanggal_opname' => now()->toDateString(),
+            'mode' => 'partial',
+            'details' => [
+                [
+                    'product_id' => $this->serial->id,
+                    'qty_physical' => 0,
+                    // serial_unit_ids_present absen → 422 (bukan silent [])
+                ],
+            ],
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['details.0.serial_unit_ids_present']);
+    }
+
+    #[Test]
+    public function approve_rejects_when_present_unit_no_longer_tersedia()
+    {
+        $units = $this->seedUnits(2);
+        $ulid = $this->createOpname([$units[0]->ulid, $units[1]->ulid]);
+
+        // Unit yang dicentang hadir terjual sebelum approve
+        $units[0]->update(['status' => 'terjual']);
+
+        $this->postJson("/api/v1/opnames/{$ulid}/approve")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['details']);
+
+        $this->assertSame('draft', \App\Models\DocStockOpname::where('ulid', $ulid)->value('status'));
+    }
+
+    #[Test]
+    public function products_helper_strips_avg_cost_without_view_hpp()
+    {
+        $this->seedUnits(1);
+
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo(['opname.create']); // tanpa stok.view_hpp
+
+        $res = $this->actingAs($viewer)
+            ->getJson("/api/v1/opnames/products?warehouse_id={$this->wh->id}&search=SER1")
+            ->assertOk();
+
+        $item = collect($res->json('data.items'))->firstWhere('id', $this->serial->id);
+        $this->assertNotNull($item);
+        $this->assertArrayNotHasKey('avg_cost', $item);
+    }
+
+    #[Test]
+    public function show_strips_avg_cost_without_view_hpp()
+    {
+        $units = $this->seedUnits(1);
+        $ulid = $this->createOpname([$units[0]->ulid]);
+
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo(['opname.view']); // tanpa stok.view_hpp
+
+        $res = $this->actingAs($viewer)
+            ->getJson("/api/v1/opnames/{$ulid}")
+            ->assertOk();
+
+        $product = $res->json('data.opname.details.0.product');
+        $this->assertArrayNotHasKey('avg_cost', $product);
     }
 }

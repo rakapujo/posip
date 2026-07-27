@@ -78,7 +78,7 @@ class StockCardTransactionTypesTest extends TestCase
     #[Test]
     public function katalog_tipe_transaksi_persis_13_entri_tanpa_tambahan_diam_diam()
     {
-        // Galak: jumlah tipe HARUS persis 13 (sesuai §2F CLAUDE.md).
+        // Galak: jumlah tipe HARUS persis 13 (sesuai §2F AI-AGENT.md).
         // Kalau ada yang menambah/menghapus tipe, test ini langsung merah.
         $this->assertCount(13, StockCard::TRANSACTION_TYPES);
 

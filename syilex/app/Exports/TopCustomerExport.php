@@ -3,6 +3,7 @@
 namespace App\Exports;
 
 use App\Exports\Concerns\UsesExportSheetStyles;
+use App\Services\ReportHelperService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromCollection;
@@ -25,14 +26,26 @@ class TopCustomerExport implements FromCollection, WithHeadings, WithMapping, Wi
         protected string $dateTo,
         protected int $limit = 50,
         protected string $sort = 'omzet_desc',
+        protected string $mode = 'bruto',
     ) {
         $from = $dateFrom;
         $to = $dateTo;
+        $applyNet = $this->mode === 'net';
+
+        // B1.3: net omzet dihitung di SQL (LEFT JOIN retur) agar sort + limit konsisten dgn list/API.
+        $omzetExpr = $applyNet
+            ? 'GREATEST(COALESCE(SUM(s.grand_total), 0) - COALESCE(MAX(cret.ret_money), 0), 0)'
+            : 'COALESCE(SUM(s.grand_total), 0)';
 
         $query = DB::table('doc_sales as s')
             ->join('master_customer as c', 'c.id', '=', 's.customer_id')
             ->leftJoin('master_tipe_customer as t', 't.id', '=', 'c.tipe_customer_id')
             ->leftJoin('master_kategori_customer as k', 'k.id', '=', 'c.kategori_customer_id')
+            ->when($applyNet, fn ($q) => $q->leftJoinSub(
+                ReportHelperService::salesReturnMoneyByCustomerSubquery($from.' 00:00:00', $to.' 23:59:59'),
+                'cret',
+                fn ($join) => $join->on('cret.customer_id', '=', 'c.id')
+            ))
             ->where('s.status', 'completed')
             ->whereBetween('s.tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
             ->select(
@@ -42,16 +55,16 @@ class TopCustomerExport implements FromCollection, WithHeadings, WithMapping, Wi
                 't.nama_tipe',
                 'k.nama_kategori',
                 DB::raw('COUNT(DISTINCT s.id) as trx_count'),
-                DB::raw('COALESCE(SUM(s.grand_total), 0) as omzet'),
+                DB::raw("{$omzetExpr} as omzet"),
                 DB::raw('MAX(s.tanggal) as last_trx_at')
             )
             ->groupBy('c.id', 'c.kode_customer', 'c.nama', 't.nama_tipe', 'k.nama_kategori');
 
         match ($sort) {
             'trx_desc' => $query->orderByDesc(DB::raw('COUNT(DISTINCT s.id)')),
-            'avg_desc' => $query->orderByDesc(DB::raw('COALESCE(SUM(s.grand_total), 0) * 1.0 / COUNT(DISTINCT s.id)')),
+            'avg_desc' => $query->orderByDesc(DB::raw("{$omzetExpr} * 1.0 / COUNT(DISTINCT s.id)")),
             'last_desc' => $query->orderByDesc(DB::raw('MAX(s.tanggal)')),
-            default => $query->orderByDesc(DB::raw('COALESCE(SUM(s.grand_total), 0)')),
+            default => $query->orderByDesc(DB::raw($omzetExpr)),
         };
 
         $results = $query->limit($limit)->get();

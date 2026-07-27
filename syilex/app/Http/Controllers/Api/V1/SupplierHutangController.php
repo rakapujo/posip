@@ -12,6 +12,55 @@ use Maatwebsite\Excel\Facades\Excel;
 class SupplierHutangController extends BaseApiController
 {
     /**
+     * Apply list filters shared by index, summary, aging, and export.
+     */
+    private function applyListFilters($query, Request $request): void
+    {
+        if ($request->filled('search')) {
+            $query->search($request->search);
+        }
+
+        if ($request->filled('supplier_id')) {
+            $query->bySupplier($request->supplier_id);
+        }
+
+        if ($request->filled('status')) {
+            if ($request->status === 'outstanding') {
+                $query->outstanding();
+            } else {
+                $query->where('status', $request->status);
+            }
+        }
+
+        if ($request->filled('due_within_days')) {
+            if ($request->due_within_days === 'all') {
+                $query->notOverdue();
+            } else {
+                $query->dueWithinDays((int) $request->due_within_days);
+            }
+        }
+
+        if ($request->filled('overdue_within_days')) {
+            if ($request->overdue_within_days === 'all') {
+                $query->overdue();
+            } else {
+                $query->overdueWithinDays((int) $request->overdue_within_days);
+            }
+        }
+
+        if ($request->filled('aging_bucket')) {
+            $allowed = ['belum_tempo', 'b1_30', 'b31_60', 'b61_90', 'above_90'];
+            if (in_array($request->aging_bucket, $allowed, true)) {
+                $query->agingBucket($request->aging_bucket);
+            }
+        }
+
+        if ($request->filled('date_from') || $request->filled('date_to')) {
+            $query->byDateRange($request->date_from, $request->date_to);
+        }
+    }
+
+    /**
      * Display a listing of hutang.
      */
     public function index(Request $request): JsonResponse
@@ -21,54 +70,12 @@ class SupplierHutangController extends BaseApiController
         }
 
         $query = SupplierHutang::with([
-            'supplier:id,ulid,kode_supplier,nama_supplier',
-            'purchaseOrder:id,ulid,nomor_dokumen,tanggal_po',
-            'serialIntake:id,ulid,nomor_dokumen,tanggal',
-        ]);
+                'supplier:id,ulid,kode_supplier,nama_supplier',
+                'purchaseOrder:id,ulid,nomor_dokumen,tanggal_po',
+                'serialIntake:id,ulid,nomor_dokumen,tanggal',
+            ]);
 
-        // Search
-        if ($request->filled('search')) {
-            $query->search($request->search);
-        }
-
-        // Filter by supplier
-        if ($request->filled('supplier_id')) {
-            $query->bySupplier($request->supplier_id);
-        }
-
-        // Filter by status
-        if ($request->filled('status')) {
-            if ($request->status === 'outstanding') {
-                $query->outstanding();
-            } else {
-                $query->where('status', $request->status);
-            }
-        }
-
-        // Filter by due within X days (not yet overdue)
-        if ($request->filled('due_within_days')) {
-            if ($request->due_within_days === 'all') {
-                // Show all outstanding that are NOT overdue (due date >= today)
-                $query->notOverdue();
-            } else {
-                $query->dueWithinDays((int) $request->due_within_days);
-            }
-        }
-
-        // Filter by overdue within X days
-        if ($request->filled('overdue_within_days')) {
-            if ($request->overdue_within_days === 'all') {
-                // Show all overdue (due date < today)
-                $query->overdue();
-            } else {
-                $query->overdueWithinDays((int) $request->overdue_within_days);
-            }
-        }
-
-        // Filter by date range
-        if ($request->filled('date_from') || $request->filled('date_to')) {
-            $query->byDateRange($request->date_from, $request->date_to);
-        }
+        $this->applyListFilters($query, $request);
 
         // Sort
         $sortField = $request->input('sort_field', 'tanggal');
@@ -91,7 +98,7 @@ class SupplierHutangController extends BaseApiController
         // Hide sensitive fields if not allowed
         $transformedItems = collect($items->items())->map(function ($item) use ($canViewNominal) {
             if (!$canViewNominal) {
-                $item->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang']);
+                $item->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang', 'nominal_retur']);
             }
             return $item;
         });
@@ -134,11 +141,17 @@ class SupplierHutangController extends BaseApiController
         $canViewNominal = auth()->user()->can('hutang.view_nominal');
 
         if (!$canViewNominal) {
-            $hutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang']);
+            $hutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang', 'nominal_retur']);
             if ($hutang->purchaseOrder) {
                 $hutang->purchaseOrder->makeHidden(['grand_total']);
                 foreach ($hutang->purchaseOrder->details as $detail) {
                     $detail->makeHidden(['subtotal']);
+                }
+            }
+            if ($hutang->serialIntake) {
+                $hutang->serialIntake->makeHidden(['grand_total']);
+                foreach ($hutang->serialIntake->units ?? [] as $unit) {
+                    $unit->makeHidden(['cost_per_unit']);
                 }
             }
         }
@@ -160,11 +173,7 @@ class SupplierHutangController extends BaseApiController
         $canViewNominal = auth()->user()->can('hutang.view_nominal');
 
         $query = SupplierHutang::query();
-
-        // Filter by supplier
-        if ($request->filled('supplier_id')) {
-            $query->bySupplier($request->supplier_id);
-        }
+        $this->applyListFilters($query, $request);
 
         $totalHutang = $canViewNominal ? $query->clone()->sum('sisa_hutang') : null;
         $totalUnpaid = $query->clone()->unpaid()->count();
@@ -209,13 +218,11 @@ class SupplierHutangController extends BaseApiController
 
         $today = now()->toDateString();
 
-        $q = \DB::table('supplier_hutang as h')
-            ->where('h.sisa_hutang', '>', 0)
-            ->when($request->filled('supplier_id'),
-                fn ($qq) => $qq->where('h.supplier_id', $request->supplier_id));
+        $q = SupplierHutang::query()
+            ->where('sisa_hutang', '>', 0);
+        $this->applyListFilters($q, $request);
 
-        // SQLite-friendly computation — fetch rows lalu bucket di PHP
-        $rows = $q->select('h.id', 'h.supplier_id', 'h.sisa_hutang', 'h.tanggal_jatuh_tempo')->get();
+        $rows = $q->select('id', 'supplier_id', 'sisa_hutang', 'tanggal_jatuh_tempo')->get();
 
         $buckets = [
             'belum_tempo' => ['count' => 0, 'nominal' => 0.0],
@@ -281,8 +288,8 @@ class SupplierHutangController extends BaseApiController
      */
     public function export(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
-            return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
+        if (! auth()->user()->can('hutang.view') || ! auth()->user()->can('laporan.export')) {
+            return $this->forbidden('Anda tidak memiliki akses untuk export hutang supplier.');
         }
 
         $canViewNominal = auth()->user()->can('hutang.view_nominal');
@@ -316,6 +323,7 @@ class SupplierHutangController extends BaseApiController
 
         $hutangs = SupplierHutang::with([
                 'purchaseOrder:id,ulid,nomor_dokumen,tanggal_po',
+                'serialIntake:id,ulid,nomor_dokumen,tanggal',
             ])
             ->bySupplier($request->supplier_id)
             ->outstanding()
@@ -327,7 +335,7 @@ class SupplierHutangController extends BaseApiController
 
         if (!$canViewNominal) {
             $hutangs->each(function ($hutang) {
-                $hutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang']);
+                $hutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_hutang', 'nominal_retur']);
             });
         }
 

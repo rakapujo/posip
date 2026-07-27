@@ -1,11 +1,17 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { resetApi } from '@/api/modules/reset';
 import { useNotification } from '@/composables/useNotification';
 import { useConfirm } from 'primevue/useconfirm';
+import { useSettingsStore } from '@/stores/settings';
+import { useAuthStore } from '@/stores/auth';
 
+const router = useRouter();
 const notify = useNotification();
 const confirm = useConfirm();
+const settingsStore = useSettingsStore();
+const authStore = useAuthStore();
 const counts = ref({});
 const loading = ref(false);
 const resetting = ref(false);
@@ -13,6 +19,7 @@ const resetting = ref(false);
 // Password dialog
 const passwordDialog = ref(false);
 const password = ref('');
+const backupAcknowledged = ref(false);
 const pendingTarget = ref('');
 const pendingLabel = ref('');
 
@@ -27,6 +34,9 @@ const restoreDialog = ref(false);
 const restorePassword = ref('');
 const restoreFile = ref(null);
 const restoring = ref(false);
+const restoreAcknowledged = ref(false);
+
+const isBusy = computed(() => resetting.value || downloading.value || restoring.value);
 
 const loadCounts = async () => {
     loading.value = true;
@@ -55,6 +65,7 @@ const requestBackup = () => {
 };
 
 const executeBackup = async () => {
+    if (isBusy.value) return;
     if (!backupPassword.value) {
         notify.warn('Masukkan password untuk konfirmasi');
         return;
@@ -107,6 +118,7 @@ const executeBackup = async () => {
 const requestRestore = () => {
     restorePassword.value = '';
     restoreFile.value = null;
+    restoreAcknowledged.value = false;
     restoreDialog.value = true;
 };
 
@@ -150,8 +162,13 @@ const formatFileSize = (bytes) => {
 };
 
 const executeRestore = async () => {
+    if (isBusy.value) return;
     if (!restoreFile.value) {
         notify.warn('Pilih file backup .zip atau .sql terlebih dahulu');
+        return;
+    }
+    if (!restoreAcknowledged.value) {
+        notify.warn('Centang konfirmasi bahwa Anda memahami restore menimpa data');
         return;
     }
     if (!restorePassword.value) {
@@ -164,17 +181,28 @@ const executeRestore = async () => {
         const formData = new FormData();
         formData.append('file', restoreFile.value);
         formData.append('password', restorePassword.value);
+        formData.append('backup_acknowledged', '1');
 
         await resetApi.restoreBackup(formData);
 
-        notify.success('Database berhasil direstore dari backup');
+        notify.success('Database berhasil direstore. Silakan login ulang.');
         restoreDialog.value = false;
         restoreFile.value = null;
         restorePassword.value = '';
-        await loadCounts();
-        await loadBackupInfo();
+        restoreAcknowledged.value = false;
+
+        try {
+            localStorage.removeItem('posip_public_settings');
+            Object.keys(localStorage)
+                .filter((k) => k.startsWith('pos_cart_autosave_') || k.startsWith('pos_held_'))
+                .forEach((k) => localStorage.removeItem(k));
+        } catch {
+            /* ignore */
+        }
+        authStore.clearAuth();
+        await router.replace({ name: 'login' });
     } catch (e) {
-        const msg = e.response?.data?.message || 'Gagal restore database';
+        const msg = e.response?.data?.message || e.response?.data?.errors?.backup_acknowledged?.[0] || 'Gagal restore database';
         notify.error(msg);
     } finally {
         restoring.value = false;
@@ -208,7 +236,7 @@ const quickResets = [
         key: 'transaksi',
         label: 'Reset Transaksi',
         icon: 'pi pi-file',
-        desc: 'Hapus semua transaksi (PO, penjualan, retur, adjustment, transfer, dll). Stok & kartu stok juga akan direset',
+        desc: 'Hapus semua transaksi (PO, penjualan, retur, promo, adjustment, transfer, serial, dll). Stok, kartu stok & unit serial juga direset',
         severity: 'warn'
     }
 ];
@@ -219,36 +247,37 @@ const masterTables = [
     { key: 'tipe', label: 'Tipe', icon: 'pi pi-circle' },
     { key: 'kategori', label: 'Kategori', icon: 'pi pi-folder' },
     { key: 'grup', label: 'Grup', icon: 'pi pi-circle' },
-    { key: 'supplier', label: 'Supplier', icon: 'pi pi-truck' },
-    { key: 'customer', label: 'Customer', icon: 'pi pi-users' },
+    { key: 'supplier', label: 'Supplier', icon: 'pi pi-truck', hint: 'Ditolak bila stok/serial masih ada — gunakan Reset Master' },
+    { key: 'customer', label: 'Customer', icon: 'pi pi-users', hint: 'Ikut hapus sales/piutang; ditolak bila stok/serial ada' },
     { key: 'tipe_customer', label: 'Tipe Customer', icon: 'pi pi-id-card' },
     { key: 'kategori_customer', label: 'Kategori Customer', icon: 'pi pi-id-card' },
     { key: 'warehouse', label: 'Warehouse', icon: 'pi pi-building' },
     { key: 'metode_pembayaran', label: 'Metode Pembayaran', icon: 'pi pi-credit-card' },
-    { key: 'produk', label: 'Produk', icon: 'pi pi-box' },
-    { key: 'pos_terminal', label: 'POS Terminal', icon: 'pi pi-desktop' }
+    { key: 'produk', label: 'Produk', icon: 'pi pi-box', hint: 'Ikut hapus transaksi + promo' },
+    { key: 'pos_terminal', label: 'POS Terminal', icon: 'pi pi-desktop', hint: 'Ditolak bila stok/serial masih ada' }
 ];
 
 const transaksiTables = [
     { key: 'purchase_order', label: 'Purchase Order', icon: 'pi pi-shopping-cart' },
     { key: 'purchase_return', label: 'Retur Pembelian', icon: 'pi pi-replay' },
-    { key: 'sales', label: 'Penjualan', icon: 'pi pi-receipt' },
+    { key: 'sales', label: 'Penjualan (+ piutang, deposit, retur, pembayaran)', icon: 'pi pi-receipt' },
     { key: 'pembayaran_hutang', label: 'Pembayaran Hutang', icon: 'pi pi-money-bill' },
     { key: 'supplier_deposit', label: 'Deposit Supplier', icon: 'pi pi-dollar' },
-    { key: 'adjustment', label: 'Adjustment', icon: 'pi pi-sliders-h' },
-    { key: 'transfer', label: 'Transfer', icon: 'pi pi-arrows-h' },
-    { key: 'repack', label: 'Repack', icon: 'pi pi-sync' },
-    { key: 'stock_opname', label: 'Stock Opname', icon: 'pi pi-clipboard' },
-    { key: 'hpp_correction', label: 'Koreksi HPP', icon: 'pi pi-pencil' },
-    { key: 'price_change', label: 'Perubahan Harga', icon: 'pi pi-tag' },
+    { key: 'adjustment', label: 'Adjustment (hanya draft)', icon: 'pi pi-sliders-h' },
+    { key: 'transfer', label: 'Transfer (hanya draft)', icon: 'pi pi-arrows-h' },
+    { key: 'repack', label: 'Repack (hanya draft)', icon: 'pi pi-sync' },
+    { key: 'stock_opname', label: 'Stock Opname (hanya draft)', icon: 'pi pi-clipboard' },
+    { key: 'hpp_correction', label: 'Koreksi HPP (hanya draft)', icon: 'pi pi-pencil' },
+    { key: 'price_change', label: 'Perubahan Harga (hanya draft)', icon: 'pi pi-tag' },
+    { key: 'promo', label: 'Promo', icon: 'pi pi-percentage' },
     { key: 'serial_intake', label: 'Pembelian Serial', icon: 'pi pi-qrcode' },
-    { key: 'serial_change', label: 'Perubahan Data Serial', icon: 'pi pi-pencil' },
-    { key: 'serial_hpp_correction', label: 'Koreksi HPP Serial', icon: 'pi pi-dollar' },
-    { key: 'shift', label: 'Shift', icon: 'pi pi-clock' }
+    { key: 'serial_change', label: 'Perubahan Data Serial (hanya draft)', icon: 'pi pi-pencil' },
+    { key: 'serial_hpp_correction', label: 'Koreksi HPP Serial (hanya draft)', icon: 'pi pi-dollar' },
+    { key: 'shift', label: 'Shift (+ semua penjualan & piutang)', icon: 'pi pi-clock' }
 ];
 
 const inventoryTables = [
-    { key: 'inventory', label: 'Stok & Kartu Stok', icon: 'pi pi-database', countKeys: ['inventory_stock', 'stock_card'] },
+    { key: 'inventory', label: 'Stok, Kartu Stok & Unit Serial', icon: 'pi pi-database', countKeys: ['inventory_stock', 'stock_card', 'serial_units'] },
     { key: 'settings', label: 'Settings', icon: 'pi pi-cog', countKeys: ['settings'] }
 ];
 
@@ -257,6 +286,16 @@ const getTableCount = (item) => {
         return item.countKeys.reduce((sum, k) => sum + getCount(k), 0);
     }
     return getCount(item.key);
+};
+
+const inventoryBlocked = computed(
+    () => getCount('sales') > 0 || getCount('purchase_order') > 0 || getCount('serial_intake') > 0
+);
+
+const isInventoryResetDisabled = (item) => {
+    if (getTableCount(item) === 0) return true;
+    if (item.key === 'inventory' && inventoryBlocked.value) return true;
+    return false;
 };
 
 // ── Reset flow ──
@@ -273,12 +312,18 @@ const requestReset = (targetKey, targetLabel) => {
             pendingTarget.value = targetKey;
             pendingLabel.value = targetLabel;
             password.value = '';
+            backupAcknowledged.value = false;
             passwordDialog.value = true;
         }
     });
 };
 
 const executeReset = async () => {
+    if (isBusy.value) return;
+    if (!backupAcknowledged.value) {
+        notify.warn('Centang konfirmasi bahwa Anda sudah backup');
+        return;
+    }
     if (!password.value) {
         notify.warn('Masukkan password untuk konfirmasi');
         return;
@@ -288,14 +333,24 @@ const executeReset = async () => {
     try {
         await resetApi.reset({
             target: pendingTarget.value,
-            password: password.value
+            password: password.value,
+            backup_acknowledged: true
         });
         notify.success(`${pendingLabel.value} berhasil direset`);
         passwordDialog.value = false;
         password.value = '';
+        backupAcknowledged.value = false;
         await loadCounts();
+        if (['settings', 'all'].includes(pendingTarget.value)) {
+            try {
+                localStorage.removeItem('posip_public_settings');
+            } catch {
+                /* ignore */
+            }
+            await settingsStore.refresh();
+        }
     } catch (e) {
-        const msg = e.response?.data?.message || 'Gagal mereset data';
+        const msg = e.response?.data?.message || e.response?.data?.errors?.backup_acknowledged?.[0] || 'Gagal mereset data';
         notify.error(msg);
     } finally {
         resetting.value = false;
@@ -368,8 +423,9 @@ const formatNumber = (n) => {
                 <div v-for="item in masterTables" :key="item.key" class="border border-surface-200 dark:border-surface-700 rounded-lg p-4 flex flex-col items-center text-center">
                     <i :class="item.icon" class="text-xl text-surface-400 mb-2"></i>
                     <span class="font-medium text-sm mb-1">{{ item.label }}</span>
+                    <p v-if="item.hint" class="text-xs text-surface-400 mb-2 m-0 leading-snug">{{ item.hint }}</p>
                     <Tag :value="loading ? '...' : formatNumber(getCount(item.key))" :severity="getCount(item.key) > 0 ? 'info' : 'secondary'" class="mb-3" />
-                    <Button label="Reset" severity="danger" size="small" text :disabled="getCount(item.key) === 0" @click="requestReset(item.key, item.label)" :loading="resetting && pendingTarget === item.key" />
+                    <Button label="Reset" severity="danger" size="small" text :disabled="getCount(item.key) === 0 || isBusy" @click="requestReset(item.key, item.label)" :loading="resetting && pendingTarget === item.key" />
                 </div>
             </div>
         </div>
@@ -388,12 +444,15 @@ const formatNumber = (n) => {
 
         <div class="mb-2">
             <h3 class="text-lg font-medium mb-3">Inventory & Settings</h3>
+            <Message severity="warn" :closable="false" class="mb-3">
+                Reset <b>Stok / Kartu Stok</b> saja ditolak bila masih ada dokumen penjualan/PO/serial atau inventory non-draft. Kosongkan via <b>Reset Transaksi</b> terlebih dahulu.
+            </Message>
             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 <div v-for="item in inventoryTables" :key="item.key" class="border border-surface-200 dark:border-surface-700 rounded-lg p-4 flex flex-col items-center text-center">
                     <i :class="item.icon" class="text-xl text-surface-400 mb-2"></i>
                     <span class="font-medium text-sm mb-1">{{ item.label }}</span>
                     <Tag :value="loading ? '...' : formatNumber(getTableCount(item))" :severity="getTableCount(item) > 0 ? 'info' : 'secondary'" class="mb-3" />
-                    <Button label="Reset" severity="danger" size="small" text :disabled="getTableCount(item) === 0" @click="requestReset(item.key, item.label)" :loading="resetting && pendingTarget === item.key" />
+                    <Button label="Reset" severity="danger" size="small" text :disabled="isBusy || isInventoryResetDisabled(item)" @click="requestReset(item.key, item.label)" :loading="resetting && pendingTarget === item.key" />
                 </div>
             </div>
         </div>
@@ -410,13 +469,28 @@ const formatNumber = (n) => {
                 >.
             </p>
         </div>
+        <div class="mb-3 flex items-start gap-2">
+            <Checkbox v-model="backupAcknowledged" :binary="true" inputId="reset_backup_ack" :disabled="resetting" />
+            <label for="reset_backup_ack" class="text-sm text-surface-600 dark:text-surface-300 cursor-pointer m-0">
+                Saya sudah download backup database dan memahami data yang direset tidak dapat dikembalikan.
+            </label>
+        </div>
         <div class="mb-2">
-            <label class="block text-sm font-medium mb-1">Password</label>
-            <Password v-model="password" :feedback="false" toggleMask class="w-full" inputClass="w-full" @keyup.enter="executeReset" :disabled="resetting" />
+            <label for="reset_confirm_password" class="block text-sm font-medium mb-1">Password</label>
+            <Password
+                inputId="reset_confirm_password"
+                v-model="password"
+                :feedback="false"
+                toggleMask
+                class="w-full"
+                inputClass="w-full"
+                @keyup.enter="executeReset"
+                :disabled="resetting"
+            />
         </div>
         <template #footer>
             <Button label="Batal" severity="secondary" outlined @click="passwordDialog = false" :disabled="resetting" />
-            <Button label="Reset" severity="danger" icon="pi pi-trash" @click="executeReset" :loading="resetting" :disabled="!password" />
+            <Button label="Reset" severity="danger" icon="pi pi-trash" @click="executeReset" :loading="resetting" :disabled="!password || !backupAcknowledged" />
         </template>
     </Dialog>
 
@@ -455,13 +529,20 @@ const formatNumber = (n) => {
             <p class="text-xs text-surface-400 mt-1 mb-0">Maksimal 2GB. File .zip (DB + file upload) atau .sql (DB saja) dari backup POSIP.</p>
         </div>
 
+        <div class="mb-4 flex items-start gap-2">
+            <Checkbox v-model="restoreAcknowledged" :binary="true" inputId="restore_backup_ack" :disabled="restoring" />
+            <label for="restore_backup_ack" class="text-sm text-surface-600 dark:text-surface-300 cursor-pointer m-0">
+                Saya memahami restore menimpa seluruh database saat ini, dan sudah memastikan file backup benar.
+            </label>
+        </div>
+
         <div class="mb-2">
             <label class="block text-sm font-medium mb-1">Password</label>
             <Password v-model="restorePassword" :feedback="false" toggleMask class="w-full" inputClass="w-full" @keyup.enter="executeRestore" :disabled="restoring" />
         </div>
         <template #footer>
             <Button label="Batal" severity="secondary" outlined @click="restoreDialog = false" :disabled="restoring" />
-            <Button label="Import Database" severity="warn" icon="pi pi-upload" @click="executeRestore" :loading="restoring" :disabled="!restoreFile || !restorePassword" />
+            <Button label="Import Database" severity="warn" icon="pi pi-upload" @click="executeRestore" :loading="restoring" :disabled="!restoreFile || !restorePassword || !restoreAcknowledged" />
         </template>
     </Dialog>
 </template>

@@ -51,3 +51,7 @@ installer/*.zip
 **/sipos-shared-hosting.zip
 **/posip-installer.zip
 **/posip-shared-hosting.zip
+
+# Nested skill repos (install separately)
+.cursor/skills/product-ui-design/
+

@@ -11,6 +11,8 @@ import { useConfirm } from 'primevue/useconfirm';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
 const router = useRouter();
@@ -42,6 +44,14 @@ const customStatusOptions = [
     { label: 'Applied', value: 'applied' }
 ];
 
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 // Initialize composable
 const {
     items: priceChanges,
@@ -352,16 +362,16 @@ async function downloadDetailPdf(data) {
             </template>
 
             <template #end>
-                <div class="flex flex-wrap gap-2">
-                    <Select v-model="selectedStatus" :options="customStatusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilter" />
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="customStatusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -434,15 +444,15 @@ async function downloadDetailPdf(data) {
 
             <Column header="Aksi" style="min-width: 260px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <div class="flex gap-1">
-                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded @click="downloadDetailPdf(data)" v-tooltip.top="'Download PDF'" />
-                        <Button v-if="canUpdate && canEdit(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'" />
-                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'" />
-                        <Button v-if="canApprovePerm && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'" />
-                        <Button v-if="canApprovePerm && canCancelItem(data)" icon="pi pi-times" severity="warn" text rounded @click="confirmCancel(data)" v-tooltip.top="'Batalkan Jadwal'" />
-                        <Button v-if="canApplyPerm && canApplyItem(data)" icon="pi pi-play" severity="danger" text rounded @click="confirmApply(data)" v-tooltip.top="'Apply Sekarang'" />
-                    </div>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
+                        <Button icon="pi pi-file-pdf" severity="help" text rounded @click="downloadDetailPdf(data)" v-tooltip.top="'Download PDF'"  />
+                        <Button v-if="canUpdate && canEdit(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
+                        <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
+                        <Button v-if="canApprovePerm && canApproveItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmApprove(data)" v-tooltip.top="'Approve'"  />
+                        <Button v-if="canApprovePerm && canCancelItem(data)" icon="pi pi-times" severity="warn" text rounded @click="confirmCancel(data)" v-tooltip.top="'Batalkan Jadwal'"  />
+                        <Button v-if="canApplyPerm && canApplyItem(data)" icon="pi pi-play" severity="danger" text rounded @click="confirmApply(data)" v-tooltip.top="'Apply Sekarang'"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -574,27 +584,23 @@ async function downloadDetailPdf(data) {
 
             <template #footer-extra>
                 <div class="flex flex-wrap gap-2">
-                    <Button label="Download PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exportingDetail" @click="downloadDetailPdf(detailData)" />
-                    <Button
-                        v-if="canUpdate && canEdit(detailData)"
+                    <Button label="Download PDF" icon="pi pi-file-pdf" severity="help" :loading="exportingDetail" @click="downloadDetailPdf(detailData)"  outlined  />
+                    <Button v-if="canUpdate && canEdit(detailData)"
                         label="Edit"
                         icon="pi pi-pencil"
                         severity="warning"
                         @click="
                             editItem(detailData);
                             closeDetail();
-                        "
-                    />
-                    <Button
-                        v-if="canDeletePerm && canDelete(detailData)"
+                        " />
+                    <Button v-if="canDeletePerm && canDelete(detailData)"
                         label="Hapus"
                         icon="pi pi-trash"
                         severity="danger"
                         @click="
                             confirmDelete(detailData);
                             closeDetail();
-                        "
-                    />
+                        " />
                     <Button v-if="canApprovePerm && canApproveItem(detailData)" label="Approve" icon="pi pi-check" severity="success" :loading="processingApprove" @click="confirmApprove(detailData)" />
                     <Button v-if="canApprovePerm && canCancelItem(detailData)" label="Batalkan Jadwal" icon="pi pi-times" severity="warn" :loading="processingCancel" @click="confirmCancel(detailData)" />
                     <Button v-if="canApplyPerm && canApplyItem(detailData)" label="Apply Sekarang" icon="pi pi-play" severity="danger" :loading="processingApply" @click="confirmApply(detailData)" />

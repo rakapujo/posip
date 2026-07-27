@@ -9,6 +9,7 @@ use App\Services\SettingService;
 use App\Services\SupplierRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Maatwebsite\Excel\Facades\Excel;
 
 class SupplierController extends BaseApiController
@@ -82,7 +83,7 @@ class SupplierController extends BaseApiController
                 'string',
                 'max:20',
                 'regex:/^[A-Za-z0-9-]+$/',
-                'unique:master_supplier,kode_supplier',
+                Rule::unique('master_supplier', 'kode_supplier')->whereNull('deleted_at'),
             ],
             'nama_supplier' => 'required|string|max:100',
             'nama_pic' => 'required|string|max:100',
@@ -253,10 +254,13 @@ class SupplierController extends BaseApiController
             return $this->error($message, 422);
         }
 
-        // Permanently delete
+        // Soft-delete: free unique kode, then archive (no restore UI)
+        $suffix = '-D'.$supplier->id;
+        $base = substr($supplier->kode_supplier, 0, max(1, 20 - strlen($suffix)));
+        $supplier->update(['kode_supplier' => $base.$suffix]);
         $supplier->delete();
 
-        return $this->success(null, 'Supplier berhasil dihapus permanen');
+        return $this->success(null, 'Supplier berhasil diarsipkan');
     }
 
     /**

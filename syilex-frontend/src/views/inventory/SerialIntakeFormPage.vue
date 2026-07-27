@@ -2,10 +2,13 @@
 import { serialIntakesApi, warehousesApi, suppliersApi, produksApi, serialUnitsApi } from '@/api';
 import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import ProductUnitPickerDrawer from '@/components/common/ProductUnitPickerDrawer.vue';
 
 const notify = useNotification();
+const confirm = useConfirm();
 const router = useRouter();
 const route = useRoute();
 const isEdit = computed(() => !!route.params.ulid);
@@ -27,11 +30,13 @@ const {
 } = useFormatters();
 
 // Options
-const produkOptions = ref([]);
+const selectedProduct = ref(null); // { ulid, kode_produk, nama_produk, ... }
 const warehouses = ref([]);
 const suppliers = ref([]);
 const loading = ref(false);
 const saving = ref(false);
+const pickerVisible = ref(false);
+const pickerQuery = ref('');
 
 // Form
 const form = ref({
@@ -61,6 +66,8 @@ const form = ref({
     biaya_lain_nilai: 0,
     units: []
 });
+
+const canAddLines = computed(() => !!form.value.product_id && !!form.value.warehouse_id && !!form.value.supplier_id);
 
 const errors = ref({});
 
@@ -141,12 +148,12 @@ function normSn(s) {
 
 onMounted(async () => {
     loading.value = true;
-    await Promise.all([loadProduk(), loadWarehouses(), loadSuppliers()]);
+    await Promise.all([loadWarehouses(), loadSuppliers()]);
     if (isEdit.value) {
         await loadIntake();
     }
     loading.value = false;
-    if (form.value.units.length === 0) addEmptyRow();
+    if (form.value.units.length === 0 && canAddLines.value) addEmptyRow();
     recalc();
 });
 
@@ -160,6 +167,7 @@ async function loadIntake() {
             router.push({ name: 'inventory-serial-intake' });
             return;
         }
+        selectedProduct.value = d.product ? { ulid: d.product.ulid, kode_produk: d.product.kode_produk, nama_produk: d.product.nama_produk, is_serial: true } : null;
         form.value = {
             product_id: d.product?.ulid ?? null,
             warehouse_id: d.warehouse?.ulid ?? null,
@@ -193,6 +201,7 @@ async function loadIntake() {
                 grade: u.grade || null,
                 battery_condition: u.battery_condition || null,
                 battery_health: u.battery_health != null ? Number(u.battery_health) : null,
+                battery_cycle_count: u.battery_cycle_count != null ? Number(u.battery_cycle_count) : null,
                 account_status: u.account_status || null,
                 catatan: u.catatan || ''
             }))
@@ -203,18 +212,60 @@ async function loadIntake() {
     }
 }
 
-async function loadProduk() {
-    try {
-        const res = await produksApi.getAll({ is_serial: 1, status: 'active', per_page: 200, sort_field: 'nama_produk', sort_order: 'asc' });
-        if (res.data.success) {
-            produkOptions.value = res.data.data.produks.map((p) => ({
-                label: `${p.kode_produk} — ${p.nama_produk}`,
-                value: p.ulid
-            }));
-        }
-    } catch (error) {
-        notify.apiError(error, 'Gagal memuat produk serial');
+function openProductPicker() {
+    // Jangan timpa pickerQuery: input form sudah v-model ke pickerQuery.
+    // Saat ganti produk (sudah terpilih), isi query dari produk current jika field kosong.
+    if (selectedProduct.value && !(pickerQuery.value || '').trim()) {
+        pickerQuery.value = selectedProduct.value.kode_produk || selectedProduct.value.nama_produk || '';
     }
+    pickerVisible.value = true;
+}
+
+async function fetchPickerProducts(q) {
+    const res = await produksApi.getAll({
+        is_serial: 1,
+        status: 'active',
+        search: q,
+        per_page: 50,
+        sort_field: 'nama_produk',
+        sort_order: 'asc'
+    });
+    if (!res.data.success) return [];
+    return (res.data.data.produks || []).map((p) => ({
+        ...p,
+        id: p.id ?? p.ulid,
+        is_serial: true
+    }));
+}
+
+function applyPickerSelect({ product }) {
+    const ulid = product.ulid || product.id;
+    if (!ulid) return;
+
+    const apply = () => {
+        selectedProduct.value = {
+            ulid,
+            kode_produk: product.kode_produk,
+            nama_produk: product.nama_produk,
+            is_serial: true
+        };
+        form.value.product_id = ulid;
+        if (errors.value.product_id) delete errors.value.product_id;
+    };
+
+    const hasSn = form.value.units.some((u) => (u.serial_number || '').trim() || (u.kode_internal || '').trim());
+    if (form.value.product_id && form.value.product_id !== ulid && hasSn) {
+        confirm.require({
+            message: 'Ganti produk? Baris nomor seri yang sudah diisi tetap ada — pastikan cocok dengan produk baru.',
+            header: 'Ganti Produk Serial',
+            icon: 'pi pi-exclamation-triangle',
+            acceptLabel: 'Ganti',
+            rejectLabel: 'Batal',
+            accept: apply
+        });
+        return;
+    }
+    apply();
 }
 
 async function loadWarehouses() {
@@ -236,6 +287,10 @@ async function loadSuppliers() {
 }
 
 function addEmptyRow() {
+    if (!canAddLines.value) {
+        notify.selectFirst('produk, gudang & supplier');
+        return;
+    }
     form.value.units.push({
         _uid: ++rowUid,
         serial_number: '',
@@ -245,6 +300,7 @@ function addEmptyRow() {
         grade: null,
         battery_condition: null,
         battery_health: null,
+        battery_cycle_count: null,
         account_status: null,
         catatan: ''
     });
@@ -254,11 +310,10 @@ function removeUnit(index) {
     form.value.units.splice(index, 1);
 }
 
-// Generate kode internal baris ke-`index`: KI-####### lanjut dari nomor tertinggi di server,
-// dengan mempertimbangkan kode KI-####### yang sudah ada di form (cegah dobel antar-baris).
-const kodeGenLoading = ref(false);
+// Generate kode internal per baris
+const kodeGenLoading = ref({});
 async function generateKode(index) {
-    kodeGenLoading.value = true;
+    kodeGenLoading.value[index] = true;
     try {
         const res = await serialUnitsApi.peekKode();
         const data = res.data?.data || {};
@@ -279,7 +334,7 @@ async function generateKode(index) {
     } catch (e) {
         notify.apiError(e, 'Gagal generate kode internal');
     } finally {
-        kodeGenLoading.value = false;
+        kodeGenLoading.value[index] = false;
     }
 }
 
@@ -309,6 +364,7 @@ function validate() {
         if (!u.grade) errors.value[`units.${i}.grade`] = 'Grade wajib';
         if (!u.battery_condition) errors.value[`units.${i}.batcond`] = 'Baterai status wajib';
         if (u.battery_health == null || u.battery_health === '') errors.value[`units.${i}.bathealth`] = 'Health wajib';
+        if (u.battery_cycle_count == null || u.battery_cycle_count === '') errors.value[`units.${i}.batcycle`] = 'Cycle wajib';
         if (!u.account_status) errors.value[`units.${i}.akun`] = 'Status akun wajib';
     });
 
@@ -355,6 +411,7 @@ async function save() {
                 grade: u.grade || null,
                 battery_condition: u.battery_condition || null,
                 battery_health: u.battery_health != null && u.battery_health !== '' ? Number(u.battery_health) : null,
+                battery_cycle_count: u.battery_cycle_count != null && u.battery_cycle_count !== '' ? Number(u.battery_cycle_count) : null,
                 account_status: u.account_status || null,
                 catatan: u.catatan || null
             }))
@@ -395,7 +452,17 @@ function cancel() {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
             <div>
                 <label class="block font-medium mb-1">Produk Serial <span class="text-red-500">*</span></label>
-                <Select v-model="form.product_id" :options="produkOptions" optionLabel="label" optionValue="value" filter placeholder="Pilih produk serial" class="w-full" :class="{ 'p-invalid': errors.product_id }" />
+                <div v-if="selectedProduct" class="flex items-center gap-2 p-2 border border-surface-200 dark:border-surface-700 rounded-lg">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium truncate">{{ selectedProduct.nama_produk }}</div>
+                        <div class="text-xs text-surface-500">{{ selectedProduct.kode_produk }}</div>
+                    </div>
+                    <Button icon="pi pi-search" size="small" outlined @click="openProductPicker" aria-label="Ganti produk" />
+                </div>
+                <div v-else class="flex gap-2">
+                    <InputText v-model="pickerQuery" class="flex-1" placeholder="Ketik lalu Enter / cari…" :class="{ 'p-invalid': errors.product_id }" @keydown.enter.prevent="openProductPicker" />
+                    <Button icon="pi pi-search" @click="openProductPicker" aria-label="Cari produk serial" />
+                </div>
                 <small v-if="errors.product_id" class="text-red-500">{{ errors.product_id }}</small>
             </div>
             <div>
@@ -438,16 +505,16 @@ function cancel() {
                 </div>
                 <div>
                     <label class="block text-sm mb-1">No. Referensi <span class="text-surface-400">(bukti/kwitansi)</span></label>
-                    <InputText v-model="form.cash_no_referensi" class="w-full" placeholder="No. bukti/kwitansi" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" maxlength="100" />
+                    <InputText v-model="form.cash_no_referensi" class="w-full" placeholder="No. bukti/kwitansi" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" maxlength="50" />
                 </div>
                 <template v-if="form.cash_metode === 'transfer'">
                     <div>
                         <label class="block text-sm mb-1">Nama Bank</label>
-                        <InputText v-model="form.cash_bank_nama" class="w-full" maxlength="100" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
+                        <InputText v-model="form.cash_bank_nama" class="w-full" maxlength="50" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
                     </div>
                     <div>
                         <label class="block text-sm mb-1">No. Rekening</label>
-                        <InputText v-model="form.cash_bank_rekening" class="w-full" maxlength="50" />
+                        <InputText v-model="form.cash_bank_rekening" class="w-full" maxlength="30" />
                     </div>
                 </template>
             </div>
@@ -458,7 +525,14 @@ function cancel() {
         <!-- Daftar unit -->
         <div class="flex items-center justify-between mb-3">
             <h6 class="font-medium m-0">Daftar Unit (Nomor Seri)</h6>
-            <Button label="Tambah Baris" icon="pi pi-plus" size="small" @click="addEmptyRow" />
+            <Button
+                label="Tambah Baris"
+                icon="pi pi-plus"
+                size="small"
+                @click="addEmptyRow"
+                :disabled="!canAddLines"
+                v-tooltip.top="canAddLines ? null : 'Pilih produk, gudang & supplier dulu'"
+            />
         </div>
 
         <small v-if="errors.units" class="text-red-500 block mb-2">{{ errors.units }}</small>
@@ -473,7 +547,7 @@ function cancel() {
                 <template #body="{ data, index }">
                     <div class="flex gap-1 items-start">
                         <InputText v-model="data.kode_internal" class="flex-1" style="text-transform: uppercase" placeholder="Generate / ketik" :class="{ 'p-invalid': errors[`units.${index}.kode`] }" maxlength="40" />
-                        <Button icon="pi pi-bolt" severity="secondary" outlined :loading="kodeGenLoading" title="Generate kode internal" @click="generateKode(index)" />
+                        <Button icon="pi pi-bolt" severity="secondary" outlined :loading="!!kodeGenLoading[index]" title="Generate kode internal" @click="generateKode(index)" />
                     </div>
                     <small v-if="errors[`units.${index}.kode`]" class="text-red-500">{{ errors[`units.${index}.kode`] }}</small>
                 </template>
@@ -542,6 +616,11 @@ function cancel() {
                     />
                 </template>
             </Column>
+            <Column header="Cycle *" style="min-width: 110px">
+                <template #body="{ data, index }">
+                    <InputNumber v-model="data.battery_cycle_count" v-select-on-focus :min="0" :useGrouping="false" fluid :locale="getLocale" :minFractionDigits="0" :maxFractionDigits="0" :class="{ 'p-invalid': errors[`units.${index}.batcycle`] }" />
+                </template>
+            </Column>
             <Column header="Status Akun *" style="min-width: 140px">
                 <template #body="{ data, index }">
                     <Select v-model="data.account_status" :options="accountStatusOptions" optionLabel="label" optionValue="value" placeholder="Pilih" class="w-full" :class="{ 'p-invalid': errors[`units.${index}.akun`] }" />
@@ -560,7 +639,15 @@ function cancel() {
         </DataTable>
 
         <div class="flex items-center gap-3 mb-4">
-            <Button label="Tambah Baris" icon="pi pi-plus" severity="secondary" outlined @click="addEmptyRow" />
+            <Button
+                label="Tambah Baris"
+                icon="pi pi-plus"
+                severity="secondary"
+                outlined
+                @click="addEmptyRow"
+                :disabled="!canAddLines"
+                v-tooltip.top="canAddLines ? null : 'Pilih produk, gudang & supplier dulu'"
+            />
             <span class="text-sm text-surface-500">Total {{ formatNumber(form.units.length) }} unit</span>
         </div>
 
@@ -669,7 +756,19 @@ function cancel() {
 
         <div class="flex justify-end gap-2">
             <Button label="Batal" severity="secondary" outlined @click="cancel" :disabled="saving" />
-            <Button label="Simpan" icon="pi pi-save" @click="save" :loading="saving" />
+            <Button label="Simpan" icon="pi pi-save" @click="save" :loading="saving" :disabled="loading || saving" />
         </div>
+
+        <ProductUnitPickerDrawer
+            v-model:visible="pickerVisible"
+            :query="pickerQuery"
+            title="Pilih Produk Serial"
+            :fetch-products="fetchPickerProducts"
+            :expand-units="false"
+            :serial-only="true"
+            :show-konversi="false"
+            :show-price="false"
+            @select="applyPickerSelect"
+        />
     </div>
 </template>

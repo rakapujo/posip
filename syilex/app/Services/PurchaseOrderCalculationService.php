@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\MasterProduk;
+use Illuminate\Validation\ValidationException;
+
 /**
  * Service for handling all PurchaseOrder calculations.
  *
@@ -261,15 +264,29 @@ class PurchaseOrderCalculationService
     public static function calculateTotals(array $data): array
     {
         $details = $data['details'] ?? [];
+        $productIds = collect($details)->pluck('product_id')->filter()->unique()->values()->all();
+        $products = MasterProduk::whereIn('id', $productIds)->get()->keyBy('id');
 
         // Calculate each detail's discounts and subtotals
         $calculatedDetails = [];
         $totalSubtotal = 0;
 
-        foreach ($details as $detail) {
-            // Calculate qty_in_base
+        foreach ($details as $index => $detail) {
+            $product = $products->get($detail['product_id'] ?? null);
+            if (! $product) {
+                throw ValidationException::withMessages([
+                    "details.{$index}.product_id" => ['Produk tidak ditemukan.'],
+                ]);
+            }
+
+            // Calculate qty_in_base — konversi dari master, bukan client
             $qtyInUnit = (float) ($detail['qty_in_unit'] ?? 0);
-            $unitKonversi = (int) ($detail['unit_konversi'] ?? 1);
+            $unitUsed = (string) ($detail['unit_used'] ?? '');
+            $unitKonversi = PurchaseMasterRules::resolveUnitKonversi(
+                $product,
+                $unitUsed,
+                "details.{$index}.unit_used"
+            );
             $qtyInBase = $qtyInUnit * $unitKonversi;
 
             // Calculate harga_bruto

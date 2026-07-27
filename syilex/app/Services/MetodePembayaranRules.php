@@ -106,6 +106,42 @@ class MetodePembayaranRules
     }
 
     /**
+     * Validate + normalize one import row for metode pembayaran.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array{0: ?string, 1: array<string, mixed>} [error|null, data]
+     */
+    public static function validateImportRow(array $data): array
+    {
+        $metode = $data['metode'] ?? 'tunai';
+        if (! in_array($metode, ['tunai', 'non_tunai'], true)) {
+            return ['Metode harus tunai atau non_tunai', $data];
+        }
+
+        if ($metode === 'non_tunai') {
+            $allowedJenis = ['bank', 'qris', 'credit_card', 'debit_card', 'e_wallet', 'lainnya'];
+            if (! in_array($data['jenis'] ?? null, $allowedJenis, true)) {
+                return ['Jenis non-tunai wajib (bank/qris/credit_card/debit_card/e_wallet/lainnya)', $data];
+            }
+            $tipe = $data['biaya_tambahan_tipe'] ?? 'none';
+            if (! in_array($tipe, ['none', 'percent', 'nominal'], true)) {
+                return ['Tipe biaya tambahan tidak valid', $data];
+            }
+            $nilai = (float) ($data['biaya_tambahan_nilai'] ?? 0);
+            if ($tipe !== 'none' && $nilai < 0) {
+                return ['Nilai biaya tambahan tidak boleh negatif', $data];
+            }
+            if ($tipe === 'percent' && $nilai > 100) {
+                return ['Biaya tambahan persen maksimal 100', $data];
+            }
+            $data['biaya_tambahan_tipe'] = $tipe;
+            $data['biaya_tambahan_nilai'] = $tipe === 'none' ? 0 : $nilai;
+        }
+
+        return [null, self::normalize($data)];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private static function nonTunaiRules(Request $request): array

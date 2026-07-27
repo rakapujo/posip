@@ -2,7 +2,8 @@
 
 namespace App\Exports;
 
-use App\Models\DocPromo;
+use App\Exports\Concerns\UsesExportSheetStyles;
+use App\Services\Reports\CustomerPromoReportResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromCollection;
@@ -10,7 +11,6 @@ use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
-use App\Exports\Concerns\UsesExportSheetStyles;
 
 class CustomerPromoByCustomerExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
 {
@@ -28,7 +28,7 @@ class CustomerPromoByCustomerExport implements FromCollection, WithHeadings, Wit
         protected ?string $search = null,
         protected bool $onlyTerjaring = false,
     ) {
-        $promos = $this->fetchScopedPromos($status);
+        $promos = CustomerPromoReportResolver::fetchScopedPromos($status, brief: true);
 
         $q = DB::table('master_customer as c')
             ->leftJoin('master_tipe_customer as t', 't.id', '=', 'c.tipe_customer_id')
@@ -57,7 +57,11 @@ class CustomerPromoByCustomerExport implements FromCollection, WithHeadings, Wit
         $this->rows = $q->orderBy('c.kode_customer')->limit(5000)->get()->map(function ($c) use ($promos) {
             $hasTipeDisc = $c->tipe_disc_tipe && $c->tipe_disc_tipe !== 'none' && (float) $c->tipe_disc_nilai > 0;
             $hasKatDisc = $c->kat_disc_tipe && $c->kat_disc_tipe !== 'none' && (float) $c->kat_disc_nilai > 0;
-            $promoCount = $this->eligiblePromosFor($c->tipe_customer_id, $c->kategori_customer_id, $promos)->count();
+            $promoCount = CustomerPromoReportResolver::eligiblePromosFor(
+                $c->tipe_customer_id,
+                $c->kategori_customer_id,
+                $promos
+            )->count();
             $terjaring = $hasTipeDisc || $hasKatDisc || $promoCount > 0;
 
             return (object) [
@@ -71,36 +75,6 @@ class CustomerPromoByCustomerExport implements FromCollection, WithHeadings, Wit
         })->filter(function ($row) use ($onlyTerjaring) {
             return ! $onlyTerjaring || $row->terjaring;
         })->values();
-    }
-
-    private function fetchScopedPromos(string $status): Collection
-    {
-        $query = DocPromo::query();
-
-        match ($status) {
-            'active_now' => $query->effective(),
-            'approved_all' => $query->where('status', 'approved'),
-            default => $query->effective(),
-        };
-
-        return $query->select('id', 'customer_type_id', 'customer_category_id')->get();
-    }
-
-    private function eligiblePromosFor(?int $tipeId, ?int $kategoriId, Collection $promos): Collection
-    {
-        return $promos->filter(function ($p) use ($tipeId, $kategoriId) {
-            if ($p->customer_type_id === null && $p->customer_category_id === null) {
-                return true;
-            }
-            if ($p->customer_type_id !== null && (int) $p->customer_type_id === (int) $tipeId) {
-                return true;
-            }
-            if ($p->customer_category_id !== null && (int) $p->customer_category_id === (int) $kategoriId) {
-                return true;
-            }
-
-            return false;
-        });
     }
 
     public function collection(): Collection

@@ -3,10 +3,27 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\BaseApiController;
+use App\Models\InventoryStock;
+use App\Models\MasterCustomer;
+use App\Models\MasterGrup;
+use App\Models\MasterKategori;
+use App\Models\MasterMetodePembayaran;
+use App\Models\MasterSupplier;
+use App\Models\MasterTipe;
+use App\Models\MasterWarehouse;
+use App\Services\CustomerRules;
+use App\Services\GrupRules;
+use App\Services\KategoriRules;
+use App\Services\MetodePembayaranRules;
+use App\Services\ProdukRules;
 use App\Services\SettingService;
+use App\Services\SupplierRules;
+use App\Services\TipeRules;
+use App\Services\WarehouseRules;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
@@ -58,7 +75,7 @@ class ImportController extends BaseApiController
                 'kode_field' => 'kode_supplier',
                 'columns' => ['kode_supplier', 'nama_supplier', 'nama_pic', 'telepon', 'email', 'alamat', 'npwp', 'bank_nama', 'bank_rekening', 'bank_atas_nama', 'tempo_default', 'status'],
                 'headings' => ['Kode Supplier', 'Nama Supplier', 'PIC', 'Telepon', 'Email', 'Alamat', 'NPWP', 'Bank', 'No. Rekening', 'Atas Nama', 'Tempo (Hari)', 'Status'],
-                'required' => ['kode_supplier', 'nama_supplier'],
+                'required' => ['kode_supplier', 'nama_supplier', 'nama_pic', 'telepon'],
             ],
             'warehouse' => [
                 'permission' => 'warehouse.create',
@@ -88,8 +105,8 @@ class ImportController extends BaseApiController
                 'permission' => 'customer.create',
                 'table' => 'master_customer',
                 'kode_field' => 'kode_customer',
-                'columns' => ['kode_customer', 'nama', 'telepon', 'email', 'alamat', 'nik', 'npwp', 'jenis', 'kode_tipe', 'kode_kategori', 'status'],
-                'headings' => ['Kode Customer', 'Nama', 'Telepon', 'Email', 'Alamat', 'NIK', 'NPWP', 'Jenis', 'Kode Tipe', 'Kode Kategori', 'Status'],
+                'columns' => ['kode_customer', 'nama', 'telepon', 'email', 'alamat', 'nik', 'npwp', 'jenis', 'kode_tipe', 'kode_kategori', 'tempo_default', 'status'],
+                'headings' => ['Kode Customer', 'Nama', 'Telepon', 'Email', 'Alamat', 'NIK', 'NPWP', 'Jenis', 'Kode Tipe', 'Kode Kategori', 'Tempo Default', 'Status'],
                 'required' => ['kode_customer', 'nama', 'telepon'],
                 'lookups' => [
                     'kode_tipe' => ['table' => 'master_tipe_customer', 'kode_field' => 'kode_tipe', 'target_field' => 'tipe_customer_id', 'optional' => true],
@@ -133,12 +150,36 @@ class ImportController extends BaseApiController
 
         $config = $configs[$entity];
 
+        if (! auth()->user()->can('import.master')) {
+            return $this->forbidden('Anda tidak memiliki akses import master.');
+        }
+
         if (!auth()->user()->can($config['permission'])) {
             return $this->forbidden();
         }
 
         $headings = $config['headings'];
         $samples = $this->getSampleData($entity);
+
+        // Gate Modul Elektronik: sembunyikan kolom is_serial dari template import produk
+        // saat modul nonaktif (kolom tak berguna — semua produk dipaksa non-serial).
+        if ($entity === 'produk' && ! SettingService::isElektronikEnabled()) {
+            $isSerialIdx = array_search('is_serial', $config['columns'], true);
+            if ($isSerialIdx !== false) {
+                // Buang baris sample produk serial (Serial = Ya) — tak relevan saat modul OFF.
+                $samples = array_values(array_filter(
+                    $samples,
+                    fn ($row) => strtolower(trim((string) ($row[$isSerialIdx] ?? ''))) !== 'ya'
+                ));
+                $samples = array_map(function ($row) use ($isSerialIdx) {
+                    unset($row[$isSerialIdx]);
+
+                    return array_values($row);
+                }, $samples);
+                unset($headings[$isSerialIdx]);
+                $headings = array_values($headings);
+            }
+        }
 
         return Excel::download(
             new \App\Exports\ImportTemplateExport($headings, $samples),
@@ -175,6 +216,14 @@ class ImportController extends BaseApiController
         $file = $request->file('file');
         $mode = $request->input('mode');
 
+        // Upsert mengubah data existing — butuh permission update, bukan hanya create.
+        if ($mode === 'upsert') {
+            $updatePerm = str_replace('.create', '.update', $config['permission']);
+            if ($updatePerm === $config['permission'] || ! auth()->user()->can($updatePerm)) {
+                return $this->forbidden('Mode upsert membutuhkan izin update master terkait.');
+            }
+        }
+
         try {
             // Read Excel file
             $spreadsheet = IOFactory::load($file->getPathname());
@@ -185,21 +234,36 @@ class ImportController extends BaseApiController
                 return $this->error('File kosong atau hanya berisi header', 422);
             }
 
+            // Cap baris agar file 5MB berisi puluhan ribu row tidak jadi DoS.
+            $maxRows = 10000;
+            if (count($rows) - 1 > $maxRows) {
+                return $this->error("Maksimal {$maxRows} baris data per import.", 422);
+            }
+
             // Remove header row
             $headerRow = array_shift($rows);
 
-            // Validate header matches expected columns
-            $expectedHeadings = $config['headings'];
-            $headerClean = array_map('trim', array_slice($headerRow, 0, count($expectedHeadings)));
-
-            // Allow header with "No" column prefix (from export): header sudah di-shift di atas,
-            // tinggal buang kolom "No" dari tiap baris data (JANGAN shift $rows lagi — itu akan
-            // membuang baris data pertama).
-            if (strtolower(trim($headerRow[0] ?? '')) === 'no') {
+            // Allow header with "No" column prefix (from export)
+            $hasNoCol = strtolower(trim((string) ($headerRow[0] ?? ''))) === 'no';
+            if ($hasNoCol) {
+                array_shift($headerRow);
                 $rows = array_map(function ($row) {
                     array_shift($row);
                     return $row;
                 }, $rows);
+            }
+
+            $expectedHeadings = $config['headings'];
+            $headerClean = array_map(
+                fn ($h) => strtolower(trim((string) $h)),
+                array_slice($headerRow, 0, count($expectedHeadings))
+            );
+            $expectedClean = array_map(fn ($h) => strtolower(trim((string) $h)), $expectedHeadings);
+            if ($headerClean !== $expectedClean) {
+                return $this->error(
+                    'Header Excel tidak cocok dengan template. Download ulang template import untuk entity ini.',
+                    422
+                );
             }
 
             $results = [
@@ -209,44 +273,81 @@ class ImportController extends BaseApiController
                 'errors' => [],
             ];
 
-            // Build lookup caches
+            // Build lookup caches (aktif + non soft-deleted)
             $lookupCaches = [];
             if (isset($config['lookups'])) {
                 foreach ($config['lookups'] as $field => $lookup) {
-                    $lookupCaches[$field] = DB::table($lookup['table'])
-                        ->pluck('id', $lookup['kode_field'])
-                        ->toArray();
+                    $q = DB::table($lookup['table'])->where('status', 'active');
+                    if ($this->tableHasDeletedAt($lookup['table'])) {
+                        $q->whereNull('deleted_at');
+                    }
+                    $lookupCaches[$field] = $q->pluck('id', $lookup['kode_field'])->toArray();
                 }
             }
 
             // Chunking: proses per batch 500 row supaya transaction kecil + memory efisien.
-            // File 50K row tidak akan crash memory, dan gagal di tengah tidak kehilangan progress.
             $chunkSize = 500;
-            $chunks = array_chunk($rows, $chunkSize, true); // preserve keys untuk index row number
+            $chunks = array_chunk($rows, $chunkSize, true);
 
             foreach ($chunks as $chunk) {
+                $chunkResults = [
+                    'created' => 0,
+                    'updated' => 0,
+                    'skipped' => 0,
+                    'errors' => [],
+                ];
                 DB::beginTransaction();
                 try {
-                    $this->processImportChunk($chunk, $config, $lookupCaches, $entity, $mode, $results);
+                    $this->processImportChunk($chunk, $config, $lookupCaches, $entity, $mode, $chunkResults);
                     DB::commit();
+                    $results['created'] += $chunkResults['created'];
+                    $results['updated'] += $chunkResults['updated'];
+                    $results['skipped'] += $chunkResults['skipped'];
+                    $results['errors'] = array_merge($results['errors'], $chunkResults['errors']);
+                } catch (QueryException $e) {
+                    DB::rollBack();
+                    Log::warning('Import chunk QueryException', ['entity' => $entity, 'error' => $e->getMessage()]);
+                    $results['errors'][] = "Batch gagal (chunk size {$chunkSize}): gagal menulis data (cek duplikat kode/barcode).";
                 } catch (\Throwable $e) {
                     DB::rollBack();
-                    $results['errors'][] = "Batch gagal (chunk size {$chunkSize}): {$e->getMessage()}";
-                    // Continue ke chunk berikutnya — jangan abort semuanya.
+                    Log::warning('Import chunk failed', ['entity' => $entity, 'error' => $e->getMessage()]);
+                    $results['errors'][] = "Batch gagal (chunk size {$chunkSize}): terjadi kesalahan saat memproses.";
                 }
             }
 
             $message = "{$results['created']} dibuat";
-            if ($results['updated'] > 0) $message .= ", {$results['updated']} diupdate";
-            if ($results['skipped'] > 0) $message .= ", {$results['skipped']} dilewati";
-            if (count($results['errors']) > 0) $message .= ", " . count($results['errors']) . " error";
+            if ($results['updated'] > 0) {
+                $message .= ", {$results['updated']} diupdate";
+            }
+            if ($results['skipped'] > 0) {
+                $message .= ", {$results['skipped']} dilewati";
+            }
+            if (count($results['errors']) > 0) {
+                $message .= ', '.count($results['errors']).' error';
+            }
+
+            activity('Import')
+                ->causedBy(auth()->user())
+                ->withProperties([
+                    'entity' => $entity,
+                    'mode' => $mode,
+                    'created' => $results['created'],
+                    'updated' => $results['updated'],
+                    'skipped' => $results['skipped'],
+                    'errors' => count($results['errors']),
+                ])
+                ->log("Import {$entity} ({$mode})");
 
             return $this->success($results, $message);
 
         } catch (\Exception $e) {
-            // Safety rollback jika transaction masih terbuka (jarang terjadi).
-            try { DB::rollBack(); } catch (\Throwable $_) {}
-            return $this->error('Gagal import: ' . $e->getMessage(), 500);
+            try {
+                DB::rollBack();
+            } catch (\Throwable $_) {
+            }
+            Log::error('Import failed', ['error' => $e->getMessage()]);
+
+            return $this->error('Gagal import. Periksa file dan coba lagi.', 500);
         }
     }
 
@@ -315,7 +416,7 @@ class ImportController extends BaseApiController
                         if ($id === null) {
                             $isOptional = $lookup['optional'] ?? false;
                             if (!$isOptional) {
-                                $results['errors'][] = "Baris {$rowNum}: {$field} '{$data[$field]}' tidak ditemukan";
+                                $results['errors'][] = "Baris {$rowNum}: {$field} '{$data[$field]}' tidak ditemukan atau tidak aktif";
                                 $lookupError = true;
                             }
                         } else {
@@ -328,16 +429,43 @@ class ImportController extends BaseApiController
                     unset($data[$field]);
                 }
             }
-            if ($lookupError) continue;
+            if ($lookupError) {
+                continue;
+            }
 
             // Entity-specific processing
             $data = $this->processEntityData($entity, $data);
+            if (isset($data['__error'])) {
+                $results['errors'][] = "Baris {$rowNum}: {$data['__error']}";
+                continue;
+            }
 
             // Format code and name
             $data[$kodeField] = SettingService::formatCode($data[$kodeField]);
             foreach ($data as $key => $value) {
                 if (str_starts_with($key, 'nama_') || $key === 'nama') {
                     $data[$key] = SettingService::formatName($value);
+                }
+            }
+
+            // Produk: auto price dulu (mode auto), lalu validate units/prices + refs + barcode
+            if ($entity === 'produk' && empty($data['is_serial'])) {
+                if (trim((string) ($data['unit_1'] ?? '')) === '' || (float) ($data['harga_1'] ?? 0) <= 0) {
+                    $results['errors'][] = "Baris {$rowNum}: Unit 1 dan Harga 1 wajib diisi (> 0)";
+                    continue;
+                }
+                if (SettingService::getPriceInputMode() === 'auto') {
+                    $data = ProdukRules::calculateAutoPrices($data);
+                }
+                $validationResult = ProdukRules::validateUnitsAndPrices($data);
+                if ($validationResult !== true) {
+                    $results['errors'][] = "Baris {$rowNum}: {$validationResult}";
+                    continue;
+                }
+                if ($ref = ProdukRules::masterReferenceErrors($data['kategori_id'] ?? null, $data['grup_id'] ?? null)) {
+                    $msg = collect($ref)->flatten()->first();
+                    $results['errors'][] = "Baris {$rowNum}: {$msg}";
+                    continue;
                 }
             }
 
@@ -348,33 +476,169 @@ class ImportController extends BaseApiController
             // Upsert
             $existing = DB::table($config['table'])->where($kodeField, $data[$kodeField])->first();
 
-            // Produk: is_serial IMMUTABLE (cegah desync) — tolak flip status serial produk existing.
+            // Produk: is_serial IMMUTABLE
             if ($entity === 'produk' && $existing && (bool) $existing->is_serial !== (bool) ($data['is_serial'] ?? false)) {
                 $results['errors'][] = "Baris {$rowNum}: status Serial produk '{$data[$kodeField]}' tidak bisa diubah via import (immutable).";
                 $results['skipped']++;
                 continue;
             }
 
+            if ($entity === 'produk') {
+                $barcodeErr = ProdukRules::barcodeDuplicateMessage(
+                    $data['barcode'] ?? null,
+                    $existing->id ?? null
+                );
+                if ($barcodeErr) {
+                    $results['errors'][] = "Baris {$rowNum}: {$barcodeErr}";
+                    continue;
+                }
+            }
+
             if ($existing) {
                 if ($mode === 'upsert') {
+                    if ($block = $this->upsertGuardError($entity, $existing, $data)) {
+                        $results['errors'][] = "Baris {$rowNum}: {$block}";
+                        continue;
+                    }
+
                     $updateData = $data;
                     unset($updateData[$kodeField], $updateData['created_by']);
+                    if ($entity === 'produk') {
+                        unset($updateData['avg_cost']);
+                    }
                     $updateData['updated_at'] = now();
+                    if (in_array($entity, ['produk', 'customer', 'supplier'], true)
+                        && ! empty($existing->deleted_at)) {
+                        $updateData['deleted_at'] = null;
+                    }
 
                     DB::table($config['table'])->where('id', $existing->id)->update($updateData);
                     $results['updated']++;
+
+                    // Reactivate → seed inventory_stock (DB::table bypasses observers)
+                    if (($data['status'] ?? '') === 'active') {
+                        if ($entity === 'produk') {
+                            InventoryStock::initializeForProduct((int) $existing->id);
+                        }
+                        if ($entity === 'warehouse') {
+                            InventoryStock::initializeForWarehouse((int) $existing->id);
+                        }
+                    }
                 } else {
                     $results['skipped']++;
                 }
             } else {
+                if ($entity === 'customer' && ($data['jenis'] ?? '') === 'walk_in') {
+                    $results['errors'][] = "Baris {$rowNum}: Customer walk-in tidak boleh dibuat via import (hanya spesifik).";
+                    continue;
+                }
+
                 $data['ulid'] = (string) \Symfony\Component\Uid\Ulid::generate();
                 $data['created_at'] = now();
                 $data['updated_at'] = now();
 
-                DB::table($config['table'])->insert($data);
+                try {
+                    DB::table($config['table'])->insert($data);
+                } catch (QueryException $e) {
+                    Log::warning('Import row insert failed', ['row' => $rowNum, 'error' => $e->getMessage()]);
+                    $results['errors'][] = "Baris {$rowNum}: gagal menyimpan (kemungkinan kode/barcode duplikat).";
+                    continue;
+                }
+                $newId = (int) DB::table($config['table'])->where($kodeField, $data[$kodeField])->value('id');
+
+                if ($entity === 'produk' && $newId && ($data['status'] ?? '') === 'active') {
+                    InventoryStock::initializeForProduct($newId);
+                }
+                if ($entity === 'warehouse' && $newId && ($data['status'] ?? '') === 'active') {
+                    InventoryStock::initializeForWarehouse($newId);
+                }
+
                 $results['created']++;
             }
         }
+    }
+
+    /**
+     * Guards before upsert update (deactivation, walk-in, saleable).
+     */
+    private function upsertGuardError(string $entity, object $existing, array $data): ?string
+    {
+        $newStatus = $data['status'] ?? 'active';
+        $wasActive = ($existing->status ?? '') === 'active';
+        $deactivating = $wasActive && $newStatus === 'inactive';
+
+        return match ($entity) {
+            'warehouse' => (function () use ($existing, $data, $deactivating) {
+                $wh = MasterWarehouse::find($existing->id);
+                if (! $wh) {
+                    return null;
+                }
+                if ($deactivating && ($m = WarehouseRules::deactivationBlockMessage($wh))) {
+                    return $m;
+                }
+                $newSaleable = (bool) ($data['is_saleable'] ?? false);
+                if ($wh->is_saleable && ! $newSaleable && ($m = WarehouseRules::unsaleableBlockMessage($wh))) {
+                    return $m;
+                }
+
+                return null;
+            })(),
+            'customer' => (function () use ($existing, $data, $deactivating) {
+                $c = MasterCustomer::find($existing->id);
+                if (! $c) {
+                    return null;
+                }
+                if ($m = CustomerRules::walkInTypeChangeBlockMessage($c, $data['jenis'] ?? $c->jenis)) {
+                    return $m;
+                }
+                if ($deactivating && ($m = CustomerRules::deactivationBlockMessage($c))) {
+                    return $m;
+                }
+
+                return null;
+            })(),
+            'supplier' => (function () use ($existing, $deactivating) {
+                if (! $deactivating) {
+                    return null;
+                }
+                $s = MasterSupplier::find($existing->id);
+
+                return $s ? SupplierRules::deactivationBlockMessage($s) : null;
+            })(),
+            'metode_pembayaran' => (function () use ($existing, $deactivating) {
+                if (! $deactivating) {
+                    return null;
+                }
+                $m = MasterMetodePembayaran::find($existing->id);
+
+                return $m ? MetodePembayaranRules::deactivationBlockMessage($m) : null;
+            })(),
+            'tipe' => (function () use ($existing, $deactivating) {
+                if (! $deactivating) {
+                    return null;
+                }
+                $t = MasterTipe::find($existing->id);
+
+                return $t ? TipeRules::deactivationBlockMessage($t) : null;
+            })(),
+            'kategori' => (function () use ($existing, $deactivating) {
+                if (! $deactivating) {
+                    return null;
+                }
+                $k = MasterKategori::find($existing->id);
+
+                return $k ? KategoriRules::deactivationBlockMessage($k) : null;
+            })(),
+            'grup' => (function () use ($existing, $deactivating) {
+                if (! $deactivating) {
+                    return null;
+                }
+                $g = MasterGrup::find($existing->id);
+
+                return $g ? GrupRules::deactivationBlockMessage($g) : null;
+            })(),
+            default => null,
+        };
     }
 
     /**
@@ -410,6 +674,7 @@ class ImportController extends BaseApiController
             case 'customer':
                 $jenis = strtolower($data['jenis'] ?? 'spesifik');
                 $data['jenis'] = in_array($jenis, ['walk_in', 'walk in', 'walkin']) ? 'walk_in' : 'spesifik';
+                $data['tempo_default'] = (int) ($data['tempo_default'] ?? 0);
                 break;
 
             case 'metode_pembayaran':
@@ -424,14 +689,20 @@ class ImportController extends BaseApiController
                     'e-wallet' => 'e_wallet', 'e_wallet' => 'e_wallet', 'ewallet' => 'e_wallet',
                     'lainnya' => 'lainnya', 'other' => 'lainnya',
                 ];
-                $data['jenis'] = $jenisMap[strtolower($data['jenis'] ?? '')] ?? null;
+                $data['jenis'] = $jenisMap[strtolower($data['jenis'] ?? '')] ?? ($data['jenis'] ?? null);
 
                 $biayaTipeMap = [
                     'nominal' => 'nominal',
-                    'persen' => 'persen', 'percent' => 'persen', '%' => 'persen',
+                    'persen' => 'percent', 'percent' => 'percent', '%' => 'percent',
+                    'none' => 'none', 'tidak ada' => 'none',
                 ];
-                $data['biaya_tambahan_tipe'] = $biayaTipeMap[strtolower($data['biaya_tambahan_tipe'] ?? '')] ?? 'none';
+                $data['biaya_tambahan_tipe'] = $biayaTipeMap[strtolower($data['biaya_tambahan_tipe'] ?? 'none')] ?? 'none';
                 $data['biaya_tambahan_nilai'] = is_numeric($data['biaya_tambahan_nilai'] ?? '') ? (float) $data['biaya_tambahan_nilai'] : 0;
+
+                [$err, $data] = MetodePembayaranRules::validateImportRow($data);
+                if ($err) {
+                    $data['__error'] = $err;
+                }
                 break;
 
             case 'produk':
@@ -560,12 +831,12 @@ class ImportController extends BaseApiController
                 ['KC005', 'Online Shop', 'Toko online', 'Nonaktif'],
             ],
             'customer' => [
-                // headings: Kode, Nama, Telepon, Email, Alamat, NIK, NPWP, Jenis, Kode Tipe, Kode Kategori, Status
-                ['CST001', 'Toko Makmur', '081234567890', 'makmur@email.com', 'Jl. Pasar No. 1', '', '', 'Spesifik', 'TC001', 'KC001', 'Aktif'],
-                ['CST002', 'Resto Sederhana', '081298765432', '', 'Jl. Kuliner No. 5', '', '', 'Spesifik', 'TC002', 'KC002', 'Aktif'],
-                ['CST003', 'Budi Santoso', '087812345678', 'budi@email.com', 'Jl. Merdeka No. 3', '3201234567890001', '', 'Spesifik', 'TC003', '', 'Aktif'],
-                ['CST004', 'Walk-In Customer', '000000000000', '', '', '', '', 'Walk_in', '', '', 'Aktif'],
-                ['CST005', 'Hotel Nusantara', '089912345678', 'info@hotelnusantara.com', 'Jl. Sudirman No. 10', '', '03.456.789.0-123.000', 'Spesifik', 'TC004', 'KC003', 'Nonaktif'],
+                // headings: Kode, Nama, Telepon, Email, Alamat, NIK, NPWP, Jenis, Kode Tipe, Kode Kategori, Tempo Default, Status
+                ['CST001', 'Toko Makmur', '081234567890', 'makmur@email.com', 'Jl. Pasar No. 1', '', '', 'Spesifik', 'TC001', 'KC001', 30, 'Aktif'],
+                ['CST002', 'Resto Sederhana', '081298765432', '', 'Jl. Kuliner No. 5', '', '', 'Spesifik', 'TC002', 'KC002', 14, 'Aktif'],
+                ['CST003', 'Budi Santoso', '087812345678', 'budi@email.com', 'Jl. Merdeka No. 3', '3201234567890001', '', 'Spesifik', 'TC003', '', 0, 'Aktif'],
+                ['CST004', 'Walk-In Customer', '000000000000', '', '', '', '', 'Walk_in', '', '', 0, 'Aktif'],
+                ['CST005', 'Hotel Nusantara', '089912345678', 'info@hotelnusantara.com', 'Jl. Sudirman No. 10', '', '03.456.789.0-123.000', 'Spesifik', 'TC004', 'KC003', 45, 'Nonaktif'],
             ],
             'metode_pembayaran' => [
                 // headings: Kode, Nama, Metode, Jenis, Nama Akun, Nomor Akun, Biaya Tipe, Biaya Nilai, Status
@@ -588,5 +859,15 @@ class ImportController extends BaseApiController
             ],
             default => [],
         };
+    }
+
+    private function tableHasDeletedAt(string $table): bool
+    {
+        static $cache = [];
+        if (! array_key_exists($table, $cache)) {
+            $cache[$table] = \Schema::hasColumn($table, 'deleted_at');
+        }
+
+        return $cache[$table];
     }
 }

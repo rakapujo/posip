@@ -31,26 +31,28 @@ class LockPurchaseReturnAction
     {
         $this->ensureAuthenticated();
 
-        // Validate status
-        if (!$retur->canLock()) {
-            throw ValidationException::withMessages([
-                'status' => ['Hanya retur dengan status draft dan memiliki detail yang dapat dikunci.'],
-            ]);
-        }
-
         return DB::transaction(function () use ($retur) {
+            $retur = DocPurchaseReturn::lockForUpdate()->findOrFail($retur->id);
+            if (! $retur->canLock()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Hanya retur dengan status draft dan memiliki detail yang dapat dikunci.'],
+                ]);
+            }
+
             // Load details with products and PO details
             $retur->load('details.product', 'details.purchaseOrderDetail');
 
             // Get all product IDs
-            $productIds = $retur->details->pluck('product_id')->toArray();
+            $productIds = $retur->details->pluck('product_id')->unique()->toArray();
 
-            // Defense-in-depth: tolak baris produk ganda (controller juga memblok lewat
-            // hasDuplicateProducts). Tanpa ini, dua baris produk-sama men-decrement
-            // inventory_stock dua kali tapi stock_card di-dedup → invariant §2C pecah.
-            if (count($productIds) !== count(array_unique($productIds))) {
+            // Defense-in-depth: tolak baris produk+satuan ganda (controller juga memblok
+            // lewat hasDuplicateProducts). Produk sama dengan satuan BERBEDA (mis. PCS +
+            // BOX) tetap diizinkan — running stock per product_id di bawah (mirip
+            // ApprovePurchaseOrderAction) menangani multi-baris produk yang sama dengan benar.
+            $comboKeys = $retur->details->map(fn ($d) => $d->product_id.'-'.$d->unit_used);
+            if ($comboKeys->count() !== $comboKeys->unique()->count()) {
                 throw ValidationException::withMessages([
-                    'details' => ['Tidak boleh ada produk yang sama lebih dari satu baris.'],
+                    'details' => ['Tidak boleh ada produk dengan satuan yang sama dalam satu retur.'],
                 ]);
             }
 
@@ -111,18 +113,24 @@ class LockPurchaseReturnAction
                 ->get()
                 ->keyBy('id');
 
-            // Check negative stock
+            // Check negative stock using running qty (multi-line same SKU).
             $negativeStockAllowed = SettingService::isNegativeStockAllowed();
             $errors = [];
+            $runningCheck = [];
+            foreach ($stocks as $productId => $stock) {
+                $runningCheck[$productId] = (float) $stock->qty;
+            }
 
             foreach ($retur->details as $detail) {
-                $currentStock = $stocks[$detail->product_id]->qty ?? 0;
                 $qtyOut = (int) $detail->qty_in_base;
-                $newStock = $currentStock - $qtyOut;
+                $available = $runningCheck[$detail->product_id] ?? 0;
+                $newStock = $available - $qtyOut;
 
-                if ($newStock < 0 && !$negativeStockAllowed) {
+                if ($newStock < 0 && ! $negativeStockAllowed) {
                     $productName = $detail->product->nama_produk ?? 'Unknown';
-                    $errors[] = "Stok {$productName} tidak mencukupi. Tersedia: {$currentStock}, Dibutuhkan: {$qtyOut}";
+                    $errors[] = "Stok {$productName} tidak mencukupi. Tersedia: {$available}, Dibutuhkan: {$qtyOut}";
+                } else {
+                    $runningCheck[$detail->product_id] = $newStock;
                 }
             }
 
@@ -157,7 +165,10 @@ class LockPurchaseReturnAction
                             $detail->serial_unit_ids,
                             $detail->product_id,
                             $retur->warehouse_id,
-                            $qtyOut
+                            $qtyOut,
+                            'serial_unit_ids',
+                            null,
+                            $retur->serial_intake_id ? (int) $retur->serial_intake_id : null,
                         );
                         $count = $serialUnits->count();
                         $costPerUnit = $count > 0 ? (float) $serialUnits->sum('cost_per_unit') / $count : $currentHpp;
@@ -166,7 +177,7 @@ class LockPurchaseReturnAction
                     // Calculate new warehouse stock (decrease)
                     $newWarehouseStock = $currentWarehouseStock - $qtyOut;
 
-                    // HPP does NOT change on PURCHASE_RETURN (per CLAUDE.md)
+                    // HPP does NOT change on PURCHASE_RETURN (per AI-AGENT.md)
                     $newHpp = $currentHpp;
 
                     // Update or create inventory_stock
@@ -187,15 +198,11 @@ class LockPurchaseReturnAction
                     // Build notes for stock card
                     $combinedNotes = $retur->notes ?: null;
 
-                    // Check if stock card already exists (prevent duplicates)
-                    $existingStockCard = StockCard::where('transaction_id', $retur->id)
-                        ->where('product_id', $detail->product_id)
-                        ->where('transaction_type', 'PURCHASE_RETURN')
-                        ->exists();
-
-                    if ($existingStockCard) {
-                        continue; // Skip if already recorded
-                    }
+                    // NOTE: sengaja TIDAK dedup by (transaction_id, product_id, transaction_type)
+                    // di sini — produk sama boleh muncul di >1 baris dengan unit berbeda
+                    // (PCS + BOX), masing-masing baris WAJIB punya stock_card sendiri agar
+                    // SUM(qty_out) match dengan total decrement inventory_stock (lihat §2C).
+                    // Mirip pola ApprovePurchaseOrderAction yang juga record per detail line.
 
                     // Record stock card (valuasi serial pakai cost_per_unit unit)
                     StockCard::record([

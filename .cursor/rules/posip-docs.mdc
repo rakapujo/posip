@@ -1,0 +1,26 @@
+---
+description: POSIP docs & agent entry — where to read/write documentation
+alwaysApply: true
+---
+
+# POSIP docs map
+
+## Baca berurutan (agent)
+
+1. `docs/ai/rules.md`
+2. `docs/ai/business-rules.md`
+3. Area: `docs/ai/frontend.md` atau `docs/ai/backend.md`
+4. Domain bila perlu: `docs/domain/` (serial, promo, api, architecture)
+5. Audit per menu (berjalan): `docs/quality/audits/` — mulai `01-dashboard.md`
+
+## Tulis / update docs
+
+- Hub: `docs/README.md`
+- Konvensi header Status/SSoT: `docs/CONVENTIONS.md`
+- Temuan audit menu → `docs/quality/audits/NN-slug.md` (jangan hanya di chat)
+- Archive (jangan jadikan SSoT): `docs/archive/`
+
+## Entry root
+
+- `AGENTS.md` · `AI-AGENT.md` → `docs/ai/README.md`
+- Rules Cursor: `.cursor/rules/` (folder ini)

@@ -363,4 +363,49 @@ class RepackCrudTest extends TestCase
 
         $this->assertSame(0, Artisan::call('data:verify', ['--fail-on-mismatch' => true]));
     }
+
+    /**
+     * Approve tanpa baris inventory_stock bahan → 422 (bukan 500 null→qty).
+     */
+    #[Test]
+    public function approve_input_tanpa_baris_stok_tidak_crash()
+    {
+        InventoryStock::where('product_id', $this->inputProduct->id)
+            ->where('warehouse_id', $this->warehouse->id)
+            ->delete();
+
+        SettingService::set('stock.negative_mode', 'block', 'string');
+
+        $repack = $this->createAction->execute($this->baseData());
+
+        try {
+            (new ApproveRepackAction())->execute($repack);
+            $this->fail('Approve tanpa stok bahan seharusnya 422.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('stock', $e->errors());
+        }
+
+        $this->assertSame('draft', $repack->fresh()->status);
+    }
+
+    /**
+     * Produk di-flip serial setelah draft → approve 422 via blockSerial document errors.
+     */
+    #[Test]
+    public function approve_tolak_jika_produk_jadi_serial_setelah_draft()
+    {
+        $repack = $this->createAction->execute($this->baseData());
+        $this->inputProduct->update(['is_serial' => true]);
+
+        foreach (['repack.approve'] as $perm) {
+            \Spatie\Permission\Models\Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        }
+        $this->user->givePermissionTo('repack.approve');
+
+        $this->postJson("/api/v1/repacks/{$repack->ulid}/approve")
+            ->assertStatus(422);
+
+        $this->assertSame('draft', $repack->fresh()->status);
+        $this->assertSame(0, StockCard::whereIn('transaction_type', ['REPACK_OUT', 'REPACK_IN'])->count());
+    }
 }

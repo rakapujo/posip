@@ -72,6 +72,16 @@ async function loadByKategori() {
     }
 }
 
+async function loadDropdowns() {
+    try {
+        const [tipeRes, kategoriRes] = await Promise.all([tipeCustomersApi.getList(), kategoriCustomersApi.getList()]);
+        if (tipeRes.data.success) tipeCustomers.value = tipeRes.data.data.tipe_customers ?? [];
+        if (kategoriRes.data.success) kategoriCustomers.value = kategoriRes.data.data.kategori_customers ?? [];
+    } catch (e) {
+        notify.apiError(e, 'Gagal load filter');
+    }
+}
+
 async function loadByCustomer() {
     byCustomer.value.loading = true;
     try {
@@ -82,6 +92,8 @@ async function loadByCustomer() {
         };
         if (searchQuery.value) params.search = searchQuery.value;
         if (onlyTerjaring.value) params.only_terjaring = 1;
+        if (selectedTipeCustomer.value) params.tipe_id = selectedTipeCustomer.value;
+        if (selectedKategoriCustomer.value) params.kategori_id = selectedKategoriCustomer.value;
 
         const r = await reportsApi.customerPromo.byCustomer(params);
         if (r.data.success) {
@@ -121,6 +133,7 @@ async function viewCustomerDetail(row) {
 }
 
 onMounted(() => {
+    loadDropdowns();
     loadSummary();
     loadByTipe();
 });
@@ -134,6 +147,8 @@ async function exportByCustomerExcel() {
             only_terjaring: onlyTerjaring.value ? 1 : 0
         };
         if (searchQuery.value) params.search = searchQuery.value;
+        if (selectedTipeCustomer.value) params.tipe_id = selectedTipeCustomer.value;
+        if (selectedKategoriCustomer.value) params.kategori_id = selectedKategoriCustomer.value;
         const response = await reportsApi.customerPromo.exportByCustomer(params);
         downloadBlob(response.data, 'laporan_customer_promo.xlsx');
     } catch (e) {
@@ -338,11 +353,13 @@ async function exportByKategoriExcel() {
 
         <!-- Tab: Per Customer -->
         <div v-else>
-            <div class="flex gap-2 mb-3">
-                <IconField class="flex-1">
+            <div class="flex gap-2 mb-3 flex-wrap items-center">
+                <IconField class="flex-1 min-w-[200px]">
                     <InputIcon class="pi pi-search" />
                     <InputText v-model="searchQuery" placeholder="Cari customer..." @input="onFilterChange" class="w-full" />
                 </IconField>
+                <Select v-model="selectedTipeCustomer" :options="tipeCustomers" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe Customer" class="w-44" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedKategoriCustomer" :options="kategoriCustomers" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori Customer" class="w-44" filter showClear @change="onFilterChange" />
                 <div class="flex items-center gap-2 px-3 bg-surface-100 dark:bg-surface-800 rounded">
                     <Checkbox v-model="onlyTerjaring" :binary="true" inputId="onlyTerjaring" @change="onFilterChange" />
                     <label for="onlyTerjaring" class="text-sm cursor-pointer">Hanya yang terjaring</label>

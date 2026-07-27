@@ -36,7 +36,7 @@ class HppCorrectionController extends BaseApiController
             'notes' => 'nullable|string|max:1000',
             'details' => 'required|array|min:1',
             'details.*.product_id' => 'required|exists:master_produk,id',
-            'details.*.hpp_baru' => 'required|numeric|gt:0',
+            'details.*.hpp_baru' => 'required|numeric|gte:0',
             'details.*.alasan' => 'required|in:KOREKSI_HARGA_BELI,KOREKSI_DATA,MIGRASI_SISTEM,LAINNYA',
             'details.*.notes' => 'nullable|string|max:255',
         ];
@@ -54,7 +54,7 @@ class HppCorrectionController extends BaseApiController
             'details.*.product_id.required' => 'Produk wajib dipilih.',
             'details.*.product_id.exists' => 'Produk tidak valid.',
             'details.*.hpp_baru.required' => 'HPP Baru wajib diisi.',
-            'details.*.hpp_baru.gt' => 'HPP Baru harus lebih dari 0.',
+            'details.*.hpp_baru.gte' => 'HPP Baru tidak boleh negatif.',
             'details.*.alasan.required' => 'Alasan wajib dipilih.',
             'details.*.alasan.in' => 'Alasan tidak valid.',
         ];
@@ -206,6 +206,9 @@ class HppCorrectionController extends BaseApiController
             $detail->makeVisible('product_id');
             if ($detail->product) {
                 $detail->product->makeVisible('id');
+                if (!auth()->user()->can('stok.view_hpp')) {
+                    $detail->product->makeHidden(['avg_cost']);
+                }
             }
         }
 
@@ -328,7 +331,7 @@ class HppCorrectionController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('hpp.create')) {
+        if (!auth()->user()->canAny(['hpp.create', 'hpp.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -337,6 +340,7 @@ class HppCorrectionController extends BaseApiController
         ]);
 
         $search = $request->search;
+        $canHpp = auth()->user()->can('stok.view_hpp');
 
         $query = MasterProduk::active()
             ->where('is_serial', false) // produk serial pakai menu Koreksi HPP Serial (per-unit)
@@ -358,15 +362,19 @@ class HppCorrectionController extends BaseApiController
 
         $products = $query->limit(20)->get();
 
-        $items = $products->map(function ($product) {
-            return [
+        $items = $products->map(function ($product) use ($canHpp) {
+            $row = [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'avg_cost' => (float) $product->avg_cost,
             ];
+            if ($canHpp) {
+                $row['avg_cost'] = (float) $product->avg_cost;
+            }
+
+            return $row;
         });
 
         return $this->success([
@@ -415,6 +423,10 @@ class HppCorrectionController extends BaseApiController
      */
     public function getAlasanOptions(): JsonResponse
     {
+        if (!auth()->user()->can('hpp.view')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'alasan_options' => self::ALASAN_OPTIONS,
         ]);

@@ -336,4 +336,104 @@ class TransferCrudTest extends TestCase
 
         $this->assertSame(0, DocTransfer::count());
     }
+
+    /**
+     * Kartu stok yang sudah ada SEBELUM mutate → approve 422 (bukan skip-after-mutate).
+     */
+    #[Test]
+    public function approve_tolak_jika_kartu_stok_sudah_ada_sebelum_mutate()
+    {
+        $transfer = $this->createAction->execute($this->baseData());
+
+        StockCard::$skipObserver = true;
+        StockCard::record([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouseFrom->id,
+            'transaction_type' => 'TRANSFER_OUT',
+            'transaction_id' => $transfer->id,
+            'transaction_no' => $transfer->nomor_dokumen,
+            'tanggal' => $transfer->tanggal,
+            'qty_in' => 0,
+            'qty_out' => 20,
+            'cost_per_unit' => 5000,
+            'avg_cost_before' => 5000,
+            'avg_cost_after' => 5000,
+        ]);
+        StockCard::$skipObserver = false;
+
+        try {
+            (new ApproveTransferAction())->execute($transfer->fresh());
+            $this->fail('Approve seharusnya ditolak karena kartu sudah ada.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('status', $e->errors());
+        }
+
+        $this->assertSame('draft', $transfer->fresh()->status);
+        $this->assertSame(100, (int) InventoryStock::where('product_id', $this->product->id)
+            ->where('warehouse_id', $this->warehouseFrom->id)->value('qty'));
+    }
+
+    /**
+     * Create dengan serial_unit_ids palsu ditolak early.
+     */
+    #[Test]
+    public function create_serial_dengan_unit_palsu_ditolak()
+    {
+        $serial = MasterProduk::factory()->create([
+            'nama_produk' => 'Serial Transfer',
+            'avg_cost' => 5000,
+            'is_serial' => true,
+            'status' => 'active',
+        ]);
+
+        try {
+            $this->createAction->execute([
+                'warehouse_from_id' => $this->warehouseFrom->id,
+                'warehouse_to_id' => $this->warehouseTo->id,
+                'tanggal' => '2026-04-12 10:00:00',
+                'details' => [[
+                    'product_id' => $serial->id,
+                    'qty' => 1,
+                    'serial_unit_ids' => ['01FAKEULID0000000000000000'],
+                ]],
+            ]);
+            $this->fail('Create dengan unit palsu seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertNotEmpty($e->errors());
+        }
+
+        $this->assertSame(0, DocTransfer::count());
+    }
+
+    /**
+     * Approve tanpa baris inventory_stock di asal → treat qty 0 (bukan 500), hormati negative setting.
+     */
+    #[Test]
+    public function approve_produk_tanpa_baris_stok_asal_tidak_crash()
+    {
+        $orphan = MasterProduk::factory()->create([
+            'nama_produk' => 'Tanpa Stock Row',
+            'avg_cost' => 1000,
+            'status' => 'active',
+        ]);
+        // Tidak buat InventoryStock untuk orphan
+
+        SettingService::set('stock.negative_mode', 'block', 'string');
+
+        $transfer = $this->createAction->execute([
+            'warehouse_from_id' => $this->warehouseFrom->id,
+            'warehouse_to_id' => $this->warehouseTo->id,
+            'tanggal' => '2026-04-12 10:00:00',
+            'details' => [['product_id' => $orphan->id, 'qty' => 1]],
+        ]);
+
+        try {
+            (new ApproveTransferAction())->execute($transfer);
+            $this->fail('Approve tanpa stok seharusnya 422.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('stock', $e->errors());
+        }
+
+        $this->assertSame('draft', $transfer->fresh()->status);
+    }
 }

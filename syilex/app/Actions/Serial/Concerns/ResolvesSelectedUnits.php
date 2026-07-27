@@ -15,12 +15,12 @@ use Illuminate\Validation\ValidationException;
 trait ResolvesSelectedUnits
 {
     /**
-     * @param  array  $ulids          Daftar ulid unit yang dipilih (dari frontend).
-     * @param  int    $productId      Produk yang diharapkan untuk semua unit.
-     * @param  int    $warehouseId    Gudang sumber yang diharapkan.
+     * @param  array  $ulids  Daftar ulid unit yang dipilih (dari frontend).
+     * @param  int  $productId  Produk yang diharapkan untuk semua unit.
+     * @param  int  $warehouseId  Gudang sumber yang diharapkan.
      * @param  int|null  $expectedCount  Bila diisi, jumlah unit harus persis sama (= qty detail).
-     * @param  string $field          Nama field untuk pesan error.
-     * @return Collection<int, SerialUnit>  Unit terkunci, terurut sesuai input.
+     * @param  string  $field  Nama field untuk pesan error.
+     * @return Collection<int, SerialUnit> Unit terkunci, terurut sesuai input.
      *
      * @throws ValidationException
      */
@@ -29,7 +29,9 @@ trait ResolvesSelectedUnits
         int $productId,
         int $warehouseId,
         ?int $expectedCount = null,
-        string $field = 'serial_unit_ids'
+        string $field = 'serial_unit_ids',
+        ?Collection $lockedUnits = null,
+        ?int $expectedIntakeId = null,
     ): Collection {
         $ulids = array_values(array_unique(array_filter($ulids, fn ($u) => $u !== null && $u !== '')));
 
@@ -39,10 +41,9 @@ trait ResolvesSelectedUnits
             ]);
         }
 
-        $units = SerialUnit::whereIn('ulid', $ulids)
-            ->lockForUpdate()
-            ->get()
-            ->keyBy('ulid');
+        $units = $lockedUnits
+            ? $lockedUnits->filter(fn ($unit) => in_array($unit->ulid, $ulids, true))->keyBy('ulid')
+            : SerialUnit::whereIn('ulid', $ulids)->lockForUpdate()->get()->keyBy('ulid');
 
         $errors = [];
 
@@ -59,6 +60,8 @@ trait ResolvesSelectedUnits
                 $errors[] = "Unit {$unit->kode_internal} (SN {$unit->serial_number}) tidak berada di gudang sumber.";
             } elseif ($unit->status !== SerialUnit::STATUS_TERSEDIA) {
                 $errors[] = "Unit {$unit->kode_internal} (SN {$unit->serial_number}) berstatus '{$unit->status}', tidak tersedia.";
+            } elseif ($expectedIntakeId && (int) $unit->intake_id !== $expectedIntakeId) {
+                $errors[] = "Unit {$unit->kode_internal} (SN {$unit->serial_number}) bukan dari PBS yang direferensikan.";
             }
         }
 

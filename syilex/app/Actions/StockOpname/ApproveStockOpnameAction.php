@@ -34,6 +34,14 @@ class ApproveStockOpnameAction
         }
 
         return DB::transaction(function () use ($opname) {
+            // Lock header + re-check draft di dalam TX (cegah double-approve race).
+            $opname = DocStockOpname::where('id', $opname->id)->lockForUpdate()->firstOrFail();
+            if (!$opname->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Stock opname sudah diproses, tidak bisa disetujui ulang.'],
+                ]);
+            }
+
             // Load details with products
             $opname->load('details.product');
 
@@ -77,27 +85,35 @@ class ApproveStockOpnameAction
                         'notes' => "Opname: sistem={$currentQty}, fisik={$detail->qty_physical}",
                     ]);
 
-                    // Collect items with difference for adjustment
-                    if ($detail->qty_difference !== 0) {
-                        $serialUnitIds = null;
-
-                        if ($detail->product->is_serial) {
-                            // Selisih LEBIH untuk serial dilarang (unit baru hanya via Pembelian Serial)
-                            if ($detail->qty_difference > 0) {
-                                throw ValidationException::withMessages([
-                                    'details' => ["Produk serial {$detail->product->nama_produk} tidak boleh selisih lebih saat opname. Daftarkan unit lewat Pembelian Serial."],
-                                ]);
-                            }
-                            // Selisih KURANG: unit hilang = tersedia di gudang \ yang dicentang hadir
-                            $tersedia = SerialUnit::byProduct($detail->product_id)
-                                ->byWarehouse($opname->warehouse_id)
-                                ->tersedia()
-                                ->pluck('ulid')
-                                ->all();
-                            $present = $detail->serial_unit_ids_present ?? [];
+                    $serialUnitIds = null;
+                    if ($detail->product->is_serial) {
+                        $tersedia = SerialUnit::byProduct($detail->product_id)
+                            ->byWarehouse($opname->warehouse_id)
+                            ->tersedia()
+                            ->pluck('ulid')
+                            ->all();
+                        $present = $detail->serial_unit_ids_present ?? [];
+                        // Present harus subset tersedia (unit terjual/keluar di tengah draft → 422)
+                        $extra = array_values(array_diff($present, $tersedia));
+                        if (count($extra) > 0) {
+                            throw ValidationException::withMessages([
+                                'details' => ["Produk serial {$detail->product->nama_produk}: unit yang dicentang hadir sudah tidak tersedia. Refresh checklist lalu simpan ulang."],
+                            ]);
+                        }
+                        // Selisih LEBIH untuk serial dilarang (unit baru hanya via Pembelian Serial)
+                        if ($detail->qty_difference > 0) {
+                            throw ValidationException::withMessages([
+                                'details' => ["Produk serial {$detail->product->nama_produk} tidak boleh selisih lebih saat opname. Daftarkan unit lewat Pembelian Serial."],
+                            ]);
+                        }
+                        // Selisih KURANG: unit hilang = tersedia \ hadir
+                        if ($detail->qty_difference !== 0) {
                             $serialUnitIds = array_values(array_diff($tersedia, $present));
                         }
+                    }
 
+                    // Collect items with difference for adjustment
+                    if ($detail->qty_difference !== 0) {
                         $adjustmentDetails[] = [
                             'product_id' => $detail->product_id,
                             'jenis' => $detail->qty_difference > 0 ? 'debit' : 'kredit',

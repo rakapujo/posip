@@ -78,7 +78,7 @@ const p = computed(() => props.data?.penjualan || {});
 </script>
 
 <template>
-    <Dialog v-model:visible="dialogVisible" :header="dialogHeader" modal :style="{ width: '540px', maxHeight: '90vh' }" :closable="closable" :contentStyle="{ overflowY: 'auto' }">
+    <Dialog v-model:visible="dialogVisible" :header="dialogHeader" modal :style="{ width: '540px', maxHeight: '90vh' }" :breakpoints="{ '960px': '95vw' }" :closable="closable" :contentStyle="{ overflowY: 'auto' }">
         <!-- Loading State -->
         <div v-if="loading" class="text-center py-8">
             <i class="pi pi-spin pi-spinner text-2xl"></i>
@@ -227,7 +227,9 @@ const p = computed(() => props.data?.penjualan || {});
                         <div class="text-xs text-surface-500 mt-0.5 flex flex-wrap gap-x-3">
                             <span v-if="u.grade">Grade: {{ u.grade }}</span>
                             <span v-if="u.battery_health !== null && u.battery_health !== undefined">Baterai: {{ u.battery_health }}%</span>
+                            <span v-if="u.battery_cycle_count !== null && u.battery_cycle_count !== undefined">Cycle: {{ u.battery_cycle_count }}</span>
                             <span v-if="u.account_status">Akun: {{ u.account_status }}</span>
+                            <span v-if="u.catatan">Cat: {{ u.catatan }}</span>
                         </div>
                     </div>
                 </div>

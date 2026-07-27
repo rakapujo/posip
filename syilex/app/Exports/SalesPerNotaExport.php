@@ -2,27 +2,38 @@
 
 namespace App\Exports;
 
+use App\Exports\Concerns\UsesExportSheetStyles;
 use App\Models\SerialUnit;
 use App\Services\ReportHelperService;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromQuery;
+use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
-use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use App\Exports\Concerns\UsesExportSheetStyles;
 
-class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class SalesPerNotaExport implements FromQuery, ShouldAutoSize, WithHeadings, WithMapping, WithStyles
 {
     use UsesExportSheetStyles;
 
     protected string $dateFrom;
+
     protected string $dateTo;
+
     protected ?int $terminalId;
+
     protected ?int $userId;
+
     protected ?int $metodeBayarId;
+
     protected ?string $status;
+
     protected ?string $search;
+
+    protected ?string $source;
+
+    protected ?int $warehouseId;
+
     protected int $rowNumber = 0;
 
     /** Map: sales_id (int) => "SN1, SN2" gabungan nomor seri unit terjual pada nota itu. */
@@ -31,6 +42,9 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
     /** Map: sales_id (int) => "KI1, KI2" gabungan kode internal unit terjual pada nota itu. */
     protected ?array $kodeMap = null;
 
+    /** Map: sales_id (int) => catatan unit (hanya yang terisi), dipisah koma. */
+    protected ?array $catatanMap = null;
+
     public function __construct(
         string $dateFrom,
         string $dateTo,
@@ -38,21 +52,25 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
         ?int $userId = null,
         ?int $metodeBayarId = null,
         ?string $status = null,
-        ?string $search = null
+        ?string $search = null,
+        ?string $source = null,
+        ?int $warehouseId = null,
     ) {
         $this->dateFrom = $dateFrom;
-        $this->dateTo = $dateTo . ' 23:59:59';
+        $this->dateTo = $dateTo.' 23:59:59';
         $this->terminalId = $terminalId;
         $this->userId = $userId;
         $this->metodeBayarId = $metodeBayarId;
         $this->status = $status;
         $this->search = $search;
+        $this->source = in_array($source, ['pos', 'manual'], true) ? $source : null;
+        $this->warehouseId = $warehouseId;
     }
 
     public function query()
     {
         $query = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->leftJoin('master_customer as mc', 'mc.id', '=', 'ds.customer_id')
             ->join('users as u', 'u.id', '=', 'ds.created_by')
             ->where('ds.tanggal', '>=', $this->dateFrom)
@@ -79,22 +97,28 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
         if ($this->terminalId) {
             $query->where('ds.terminal_id', $this->terminalId);
         }
+        if ($this->warehouseId) {
+            $query->where('ds.warehouse_id', $this->warehouseId);
+        }
+        if ($this->source) {
+            $query->where('ds.source', $this->source);
+        }
         if ($this->userId) {
             $query->where('ds.created_by', $this->userId);
         }
         if ($this->metodeBayarId) {
             $query->whereExists(function ($q) {
                 $q->select(DB::raw(1))
-                  ->from('doc_sales_payments')
-                  ->whereColumn('doc_sales_payments.sales_id', 'ds.id')
-                  ->where('doc_sales_payments.metode_pembayaran_id', $this->metodeBayarId);
+                    ->from('doc_sales_payments')
+                    ->whereColumn('doc_sales_payments.sales_id', 'ds.id')
+                    ->where('doc_sales_payments.metode_pembayaran_id', $this->metodeBayarId);
             });
         }
         if ($this->search) {
             $search = $this->search;
             $query->where(function ($q) use ($search) {
                 $q->where('ds.nomor_dokumen', 'like', "%{$search}%")
-                  ->orWhere('mc.nama', 'like', "%{$search}%");
+                    ->orWhere('mc.nama', 'like', "%{$search}%");
             });
         }
 
@@ -104,15 +128,15 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
                 $query->where('ds.status', 'voided');
             } elseif ($this->status === 'completed') {
                 $query->where('ds.status', 'completed')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id') . ' = 0');
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id').' = 0');
             } elseif ($this->status === 'retur_partial') {
                 $query->where('ds.status', 'completed')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id') . ' > 0')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id') . ' < ' . ReportHelperService::sqlSalesBoughtBase('ds.id'));
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id').' > 0')
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id').' < '.ReportHelperService::sqlSalesBoughtBase('ds.id'));
             } elseif ($this->status === 'retur_full') {
                 $query->where('ds.status', 'completed')
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id') . ' >= ' . ReportHelperService::sqlSalesBoughtBase('ds.id'))
-                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id') . ' > 0');
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id').' >= '.ReportHelperService::sqlSalesBoughtBase('ds.id'))
+                    ->whereRaw(ReportHelperService::sqlSalesReturnedBase('ds.id').' > 0');
             }
         }
 
@@ -124,7 +148,7 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
         return [
             'No', 'Tanggal', 'No. Invoice', 'Customer', 'Terminal', 'Kasir',
             'Subtotal', 'Diskon', 'Stlh Diskon', 'Pajak', 'Biaya Kirim', 'Biaya Lain',
-            'Pembulatan', 'Grand Total', 'Status', 'Kode Internal', 'Nomor Seri',
+            'Pembulatan', 'Grand Total', 'Status', 'Kode Internal', 'Nomor Seri', 'Catatan Serial',
         ];
     }
 
@@ -144,6 +168,14 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
         return $this->kodeMap[$salesId] ?? '';
     }
 
+    /** Gabungan catatan unit terjual per nota (kosong di-skip). */
+    protected function catatanMapFor(int $salesId): string
+    {
+        $this->buildSerialMaps();
+
+        return $this->catatanMap[$salesId] ?? '';
+    }
+
     /**
      * Bangun (sekali) map sales_id => gabungan kode internal & nomor seri.
      * Satu pass: kumpulkan semua serial_unit_ids dari detail nota dalam rentang tanggal,
@@ -156,6 +188,7 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
         }
         $this->serialMap = [];
         $this->kodeMap = [];
+        $this->catatanMap = [];
 
         // Ambil detail bersama serial_unit_ids untuk nota dalam rentang tanggal yang diekspor.
         $details = DB::table('doc_sales_detail as dsd')
@@ -180,19 +213,20 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
             }
         }
 
-        // SATU query lookup kode_internal + serial_number.
+        // SATU query lookup kode_internal + serial_number + catatan.
         $unitByUlid = empty($allUlids)
             ? collect()
             : SerialUnit::whereIn('ulid', array_keys($allUlids))
-                ->get(['ulid', 'kode_internal', 'serial_number'])
+                ->get(['ulid', 'kode_internal', 'serial_number', 'catatan'])
                 ->keyBy('ulid');
 
         foreach ($perSale as $sid => $ulids) {
             $sn = [];
             $ki = [];
+            $cat = [];
             foreach ($ulids as $ulid) {
                 $unit = $unitByUlid->get($ulid);
-                if (!$unit) {
+                if (! $unit) {
                     continue;
                 }
                 if ($unit->serial_number !== null && $unit->serial_number !== '') {
@@ -201,9 +235,13 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
                 if ($unit->kode_internal !== null && $unit->kode_internal !== '') {
                     $ki[] = $unit->kode_internal;
                 }
+                if ($unit->catatan !== null && $unit->catatan !== '') {
+                    $cat[] = $unit->catatan;
+                }
             }
             $this->serialMap[(int) $sid] = implode(', ', $sn);
             $this->kodeMap[(int) $sid] = implode(', ', $ki);
+            $this->catatanMap[(int) $sid] = implode(', ', $cat);
         }
     }
 
@@ -227,7 +265,7 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
             $row->tanggal,
             $row->nomor_dokumen,
             $row->customer_nama ?? 'Walk-in',
-            $row->nama_terminal,
+            $row->nama_terminal ?? 'Backoffice',
             $row->kasir,
             $row->subtotal,
             $row->total_diskon,
@@ -240,7 +278,7 @@ class SalesPerNotaExport implements FromQuery, WithHeadings, WithMapping, WithSt
             $status,
             $this->kodeMapFor((int) $row->sales_id),
             $this->serialMapFor((int) $row->sales_id),
+            $this->catatanMapFor((int) $row->sales_id),
         ];
     }
-
 }

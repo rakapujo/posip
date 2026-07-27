@@ -47,6 +47,7 @@ class ProductPromoReportController extends BaseApiController
             ->whereNull('p.deleted_at')
             ->select(
                 'p.id', 'p.ulid', 'p.kode_produk', 'p.nama_produk', 'p.status',
+                'p.kategori_id', 'p.grup_id',
                 'b.nama_brand', 't.nama_tipe', 'k.nama_kategori', 'g.nama_grup'
             );
 
@@ -79,13 +80,13 @@ class ProductPromoReportController extends BaseApiController
         match ($sort) {
             'kode_asc' => $productsQuery->orderBy('p.kode_produk'),
             'nama_asc' => $productsQuery->orderBy('p.nama_produk'),
-            default => $productsQuery->orderBy('p.kode_produk'), // promo_count_desc handled post-fetch
+            // promo_count_desc: hitung dulu di PHP (dari $productPromoMap), sort global sebelum paginate.
+            default => $productsQuery->orderBy('p.kode_produk'),
         };
 
         $perPage = max(1, min(100, (int) $request->input('per_page', 25)));
-        $paginator = $productsQuery->paginate($perPage);
 
-        $items = collect($paginator->items())->map(function ($p) use ($productPromoMap, $promos, $detailsByPromo) {
+        $items = $productsQuery->get()->map(function ($p) use ($productPromoMap, $promos, $detailsByPromo) {
             $promoIdsForProduct = $productPromoMap[$p->id] ?? [];
             $promoList = collect($promoIdsForProduct)->map(function ($pid) use ($promos, $detailsByPromo, $p) {
                 $promo = $promos->firstWhere('id', $pid);
@@ -123,18 +124,22 @@ class ProductPromoReportController extends BaseApiController
             ];
         });
 
-        // Post-fetch sort kalau promo_count_desc (karena hasil per page harus di-sort dari items aktual)
         if ($sort === 'promo_count_desc') {
             $items = $items->sortByDesc('promo_count')->values();
         }
 
+        $total = $items->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $currentPage = max(1, min($lastPage, (int) $request->input('page', 1)));
+        $paged = $items->slice(($currentPage - 1) * $perPage, $perPage)->values();
+
         return $this->success([
-            'items' => $items,
+            'items' => $paged,
             'pagination' => [
-                'current_page' => $paginator->currentPage(),
-                'last_page' => $paginator->lastPage(),
-                'per_page' => $paginator->perPage(),
-                'total' => $paginator->total(),
+                'current_page' => $currentPage,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
             ],
         ]);
     }
@@ -149,10 +154,15 @@ class ProductPromoReportController extends BaseApiController
         $promos = $this->fetchScopedPromos($request);
         $promoIds = $promos->pluck('id')->all();
         $detailsByPromo = ProductPromoReportResolver::detailsGroupedByPromo($promoIds);
+        $targetNames = $this->batchLookupTargetNames($detailsByPromo);
 
-        $items = $promos->map(function ($promo) use ($detailsByPromo) {
+        // B3.4: cap payload — promo "semua produk" bisa cover ribuan baris.
+        $productsCap = 50;
+
+        $items = $promos->map(function ($promo) use ($detailsByPromo, $targetNames, $productsCap) {
             $details = $detailsByPromo->get($promo->id, collect());
-            $productsCovered = $this->resolveProductsForSinglePromo($details);
+            $productsCovered = array_values($this->resolveProductsForSinglePromo($details));
+            $totalProducts = count($productsCovered);
 
             return [
                 'promo_id' => $promo->id,
@@ -169,16 +179,47 @@ class ProductPromoReportController extends BaseApiController
                 'details' => $details->map(fn ($d) => [
                     'target_type' => $d->target_type,
                     'target_id' => $d->target_id,
-                    'target_label' => $this->describeTarget($d),
+                    'target_label' => $this->describeTarget($d, $targetNames),
                     'min_qty' => (int) $d->min_qty,
                     'diskon' => $this->formatDiskon($d),
                 ])->values(),
-                'product_count' => count($productsCovered),
-                'products' => array_values($productsCovered),
+                'product_count' => $totalProducts,
+                'products' => array_slice($productsCovered, 0, $productsCap),
+                'products_total' => $totalProducts,
+                'products_truncated' => $totalProducts > $productsCap,
             ];
         });
 
         return $this->success(['items' => $items->values()]);
+    }
+
+    /**
+     * Batch-fetch nama produk/kategori/grup untuk semua detail sekaligus (anti N+1).
+     *
+     * @return array{produk: array<int,string>, kategori: array<int,string>, grup: array<int,string>}
+     */
+    private function batchLookupTargetNames($detailsByPromo): array
+    {
+        $ids = ['produk' => [], 'kategori' => [], 'grup' => []];
+        foreach ($detailsByPromo as $details) {
+            foreach ($details as $d) {
+                if (isset($ids[$d->target_type]) && $d->target_id) {
+                    $ids[$d->target_type][] = (int) $d->target_id;
+                }
+            }
+        }
+
+        return [
+            'produk' => $ids['produk']
+                ? DB::table('master_produk')->whereIn('id', array_unique($ids['produk']))->pluck('nama_produk', 'id')->all()
+                : [],
+            'kategori' => $ids['kategori']
+                ? DB::table('master_kategori')->whereIn('id', array_unique($ids['kategori']))->pluck('nama_kategori', 'id')->all()
+                : [],
+            'grup' => $ids['grup']
+                ? DB::table('master_grup')->whereIn('id', array_unique($ids['grup']))->pluck('nama_grup', 'id')->all()
+                : [],
+        ];
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────
@@ -265,17 +306,15 @@ class ProductPromoReportController extends BaseApiController
                 return $d;
             }
         }
-        // 2) Kategori (need kategori_id of product)
-        $productRow = DB::table('master_produk')->where('id', $product->id)
-            ->select('kategori_id', 'grup_id')->first();
+        // 2) Kategori (kategori_id/grup_id already selected on $product — no extra query)
         foreach ($details as $d) {
-            if ($d->target_type === 'kategori' && (int) $d->target_id === (int) ($productRow->kategori_id ?? 0)) {
+            if ($d->target_type === 'kategori' && (int) $d->target_id === (int) ($product->kategori_id ?? 0)) {
                 return $d;
             }
         }
         // 3) Grup
         foreach ($details as $d) {
-            if ($d->target_type === 'grup' && (int) $d->target_id === (int) ($productRow->grup_id ?? 0)) {
+            if ($d->target_type === 'grup' && (int) $d->target_id === (int) ($product->grup_id ?? 0)) {
                 return $d;
             }
         }
@@ -286,30 +325,17 @@ class ProductPromoReportController extends BaseApiController
         return null;
     }
 
-    private function describeTarget(object $detail): string
+    private function describeTarget(object $detail, array $targetNames): string
     {
+        $id = (int) $detail->target_id;
+
         return match ($detail->target_type) {
             'semua' => 'Semua produk',
-            'produk' => 'Produk: ' . ($this->lookupProdukNama($detail->target_id) ?? "#{$detail->target_id}"),
-            'kategori' => 'Kategori: ' . ($this->lookupKategoriNama($detail->target_id) ?? "#{$detail->target_id}"),
-            'grup' => 'Grup: ' . ($this->lookupGrupNama($detail->target_id) ?? "#{$detail->target_id}"),
+            'produk' => 'Produk: ' . ($targetNames['produk'][$id] ?? "#{$detail->target_id}"),
+            'kategori' => 'Kategori: ' . ($targetNames['kategori'][$id] ?? "#{$detail->target_id}"),
+            'grup' => 'Grup: ' . ($targetNames['grup'][$id] ?? "#{$detail->target_id}"),
             default => $detail->target_type,
         };
-    }
-
-    private function lookupProdukNama($id): ?string
-    {
-        return DB::table('master_produk')->where('id', $id)->value('nama_produk');
-    }
-
-    private function lookupKategoriNama($id): ?string
-    {
-        return DB::table('master_kategori')->where('id', $id)->value('nama_kategori');
-    }
-
-    private function lookupGrupNama($id): ?string
-    {
-        return DB::table('master_grup')->where('id', $id)->value('nama_grup');
     }
 
     private function formatDiskon(object $detail): array

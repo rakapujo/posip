@@ -2,6 +2,7 @@
 
 namespace App\Exports;
 
+use App\Services\ReportHelperService;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -21,6 +22,7 @@ class PurchasePerDokumenExport implements FromQuery, WithHeadings, WithMapping, 
     protected ?int $warehouseId;
     protected ?string $search;
     protected string $source;
+    protected string $mode;
     protected int $rowNumber = 0;
 
     public function __construct(
@@ -30,7 +32,8 @@ class PurchasePerDokumenExport implements FromQuery, WithHeadings, WithMapping, 
         ?int $supplierId = null,
         ?int $warehouseId = null,
         ?string $search = null,
-        ?string $source = null
+        ?string $source = null,
+        ?string $mode = null
     ) {
         $this->dateFrom = $dateFrom;
         $this->dateTo = $dateTo . ' 23:59:59';
@@ -39,10 +42,13 @@ class PurchasePerDokumenExport implements FromQuery, WithHeadings, WithMapping, 
         $this->warehouseId = $warehouseId;
         $this->search = $search;
         $this->source = $source ?? 'all';
+        $this->mode = $mode === 'net' ? 'net' : 'bruto';
     }
 
     public function query()
     {
+        $applyNet = $this->mode === 'net' && $this->source !== 'serial';
+
         $select = [
             'dpo.sumber',
             'dpo.tanggal_po', 'dpo.nomor_dokumen',
@@ -53,7 +59,11 @@ class PurchasePerDokumenExport implements FromQuery, WithHeadings, WithMapping, 
         ];
 
         if ($this->canViewHarga) {
-            $select = array_merge($select, [
+            $select = array_merge($select, $applyNet ? [
+                DB::raw('GREATEST(dpo.subtotal - COALESCE(pret.ret_money, 0), 0) as subtotal'),
+                DB::raw('GREATEST(dpo.total_diskon_header - COALESCE(pret.ret_disc, 0), 0) as total_diskon_header'),
+                DB::raw('GREATEST(dpo.grand_total - COALESCE(pret.ret_money, 0), 0) as grand_total'),
+            ] : [
                 'dpo.subtotal', 'dpo.total_diskon_header', 'dpo.grand_total',
             ]);
         }
@@ -61,8 +71,17 @@ class PurchasePerDokumenExport implements FromQuery, WithHeadings, WithMapping, 
         $query = DB::query()
             ->fromSub(\App\Services\PurchaseReportSource::documents($this->dateFrom, $this->dateTo, $this->source), 'dpo')
             ->join('master_supplier as ms', 'ms.id', '=', 'dpo.supplier_id')
-            ->join('master_warehouse as mw', 'mw.id', '=', 'dpo.warehouse_id')
-            ->select($select);
+            ->join('master_warehouse as mw', 'mw.id', '=', 'dpo.warehouse_id');
+
+        if ($this->canViewHarga && $applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnByPoSubquery($this->dateFrom, $this->dateTo),
+                'pret',
+                fn ($join) => $join->on('pret.po_id', '=', 'dpo.id')->whereRaw("dpo.sumber = 'po'")
+            );
+        }
+
+        $query->select($select);
 
         if ($this->supplierId) {
             $query->where('dpo.supplier_id', $this->supplierId);

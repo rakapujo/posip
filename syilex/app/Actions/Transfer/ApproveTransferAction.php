@@ -35,6 +35,14 @@ class ApproveTransferAction
         }
 
         return DB::transaction(function () use ($transfer) {
+            // Lock header + re-check draft di dalam TX (cegah double-approve race).
+            $transfer = DocTransfer::where('id', $transfer->id)->lockForUpdate()->firstOrFail();
+            if (!$transfer->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Transfer sudah diproses, tidak bisa disetujui ulang.'],
+                ]);
+            }
+
             // Load details with products
             $transfer->load('details.product');
 
@@ -46,6 +54,15 @@ class ApproveTransferAction
             if (count($productIds) !== count(array_unique($productIds))) {
                 throw ValidationException::withMessages([
                     'details' => ['Tidak boleh ada produk yang sama lebih dari satu baris.'],
+                ]);
+            }
+
+            // Kartu sudah ada sebelum mutasi → 422 (jangan mutate lalu skip kartu).
+            if (StockCard::where('transaction_id', $transfer->id)
+                ->whereIn('transaction_type', ['TRANSFER_OUT', 'TRANSFER_IN'])
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Kartu stok untuk transfer ini sudah ada. Dokumen mungkin sudah diproses.'],
                 ]);
             }
 
@@ -74,7 +91,7 @@ class ApproveTransferAction
             $errors = [];
 
             foreach ($transfer->details as $detail) {
-                $currentStockFrom = $stocksFrom[$detail->product_id]->qty ?? 0;
+                $currentStockFrom = $stocksFrom[$detail->product_id]?->qty ?? 0;
                 $newStockFrom = $currentStockFrom - $detail->qty;
 
                 if ($newStockFrom < 0 && !$negativeStockAllowed) {
@@ -138,29 +155,21 @@ class ApproveTransferAction
                     // Update running stock for next iteration of same product
                     $runningStocksFrom[$detail->product_id] = $newStockFrom;
 
-                    // Check if stock card already exists for TRANSFER_OUT
-                    $existingOutCard = StockCard::where('transaction_id', $transfer->id)
-                        ->where('product_id', $detail->product_id)
-                        ->where('transaction_type', 'TRANSFER_OUT')
-                        ->exists();
-
-                    if (!$existingOutCard) {
-                        // Record stock card for OUT
-                        StockCard::record([
-                            'product_id' => $detail->product_id,
-                            'warehouse_id' => $transfer->warehouse_from_id,
-                            'transaction_type' => 'TRANSFER_OUT',
-                            'transaction_id' => $transfer->id,
-                            'transaction_no' => $transfer->nomor_dokumen,
-                            'tanggal' => $transfer->tanggal,
-                            'qty_in' => 0,
-                            'qty_out' => $detail->qty,
-                            'cost_per_unit' => $avgCost,
-                            'avg_cost_before' => $avgCost, // HPP tidak berubah untuk transfer
-                            'avg_cost_after' => $avgCost,
-                            'notes' => $transfer->notes,
-                        ]);
-                    }
+                    // Always record OUT card (idempotensi via status lock, bukan skip-after-mutate)
+                    StockCard::record([
+                        'product_id' => $detail->product_id,
+                        'warehouse_id' => $transfer->warehouse_from_id,
+                        'transaction_type' => 'TRANSFER_OUT',
+                        'transaction_id' => $transfer->id,
+                        'transaction_no' => $transfer->nomor_dokumen,
+                        'tanggal' => $transfer->tanggal,
+                        'qty_in' => 0,
+                        'qty_out' => $detail->qty,
+                        'cost_per_unit' => $avgCost,
+                        'avg_cost_before' => $avgCost, // HPP tidak berubah untuk transfer
+                        'avg_cost_after' => $avgCost,
+                        'notes' => $transfer->notes,
+                    ]);
 
                     // --- Process destination warehouse (IN) ---
                     $currentStockTo = $runningStocksTo[$detail->product_id] ?? 0;
@@ -181,29 +190,21 @@ class ApproveTransferAction
                     // Update running stock for next iteration of same product
                     $runningStocksTo[$detail->product_id] = $newStockTo;
 
-                    // Check if stock card already exists for TRANSFER_IN
-                    $existingInCard = StockCard::where('transaction_id', $transfer->id)
-                        ->where('product_id', $detail->product_id)
-                        ->where('transaction_type', 'TRANSFER_IN')
-                        ->exists();
-
-                    if (!$existingInCard) {
-                        // Record stock card for IN
-                        StockCard::record([
-                            'product_id' => $detail->product_id,
-                            'warehouse_id' => $transfer->warehouse_to_id,
-                            'transaction_type' => 'TRANSFER_IN',
-                            'transaction_id' => $transfer->id,
-                            'transaction_no' => $transfer->nomor_dokumen,
-                            'tanggal' => $transfer->tanggal,
-                            'qty_in' => $detail->qty,
-                            'qty_out' => 0,
-                            'cost_per_unit' => $avgCost,
-                            'avg_cost_before' => $avgCost, // HPP tidak berubah untuk transfer
-                            'avg_cost_after' => $avgCost,
-                            'notes' => $transfer->notes,
-                        ]);
-                    }
+                    // Always record IN card
+                    StockCard::record([
+                        'product_id' => $detail->product_id,
+                        'warehouse_id' => $transfer->warehouse_to_id,
+                        'transaction_type' => 'TRANSFER_IN',
+                        'transaction_id' => $transfer->id,
+                        'transaction_no' => $transfer->nomor_dokumen,
+                        'tanggal' => $transfer->tanggal,
+                        'qty_in' => $detail->qty,
+                        'qty_out' => 0,
+                        'cost_per_unit' => $avgCost,
+                        'avg_cost_before' => $avgCost, // HPP tidak berubah untuk transfer
+                        'avg_cost_after' => $avgCost,
+                        'notes' => $transfer->notes,
+                    ]);
 
                     // --- Produk serial: pindahkan unit fisik ke gudang tujuan + catat ledger ---
                     if ($product->is_serial && !empty($detail->serial_unit_ids)) {

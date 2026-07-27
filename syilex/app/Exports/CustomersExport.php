@@ -92,7 +92,7 @@ class CustomersExport implements FromQuery, WithHeadings, WithMapping, WithStyle
             $customer->alamat ?? '-',
             $customer->nik ?? '-',
             $customer->npwp ?? '-',
-            $customer->jenis === 'perorangan' ? 'Perorangan' : 'Perusahaan',
+            $customer->jenis === 'walk_in' ? 'Walk-in' : 'Spesifik',
             $customer->tipeCustomer?->kode_tipe ?? '-',
             $customer->tipeCustomer?->nama_tipe ?? '-',
             $customer->kategoriCustomer?->kode_kategori ?? '-',

@@ -1,0 +1,1 @@
+import{c as o,o as r,a as s,n}from"./vue-core-Dr_IIeMI.js";const c={__name:"RowActionButtons",props:{variant:{type:String,default:"text"},wrap:{type:Boolean,default:!1}},setup(e){const t=e;return(a,l)=>(r(),o("div",{class:n(["row-action-buttons flex gap-1 items-center",t.wrap?"flex-wrap":"flex-nowrap"])},[s(a.$slots,"default")],2))}};export{c as _};

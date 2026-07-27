@@ -123,13 +123,18 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // Getters - Calculation (with defaults)
     const calculation = computed(() => ({
-        discountMode: publicSettings.value.calculation?.discount_mode || 'recursive',
-        costAllocationMode: publicSettings.value.calculation?.cost_allocation_mode || 'by_value'
+        discountMode: publicSettings.value.calculation?.discount_mode || 'recursive'
     }));
 
     // Getters - Modules (toggle fitur opsional). Retail selalu aktif; elektronik (serial) on/off.
     // Default TRUE bila belum ada setting → fitur serial tampil sampai terbukti dimatikan.
     const serialEnabled = computed(() => publicSettings.value.modules?.elektronik_enabled ?? true);
+
+    // Getters - Returns (mode bebas retur jual/beli). Default TRUE = perilaku existing.
+    const returns = computed(() => ({
+        salesAllowFree: publicSettings.value.returns?.sales_allow_free ?? true,
+        purchaseAllowFree: publicSettings.value.returns?.purchase_allow_free ?? true
+    }));
 
     // Actions
     const fetchPublicSettings = async () => {
@@ -139,22 +144,39 @@ export const useSettingsStore = defineStore('settings', () => {
         try {
             const response = await settingsApi.getPublic();
             if (response.data.success) {
-                // Backend returns { store: {...}, currency: {...}, regional: {...} }
-                publicSettings.value = response.data.data;
+                publicSettings.value = {
+                    ...publicSettings.value,
+                    ...response.data.data
+                };
                 loaded.value = true;
-
-                // Cache to localStorage for instant load on next visit
-                saveCachedSettings(response.data.data);
-
-                // Update favicon if icon is set
+                saveCachedSettings(publicSettings.value);
                 updateFavicon();
-                // Update page title
                 updatePageTitle();
             }
         } catch (error) {
             console.error('Failed to fetch public settings:', error);
         } finally {
             loading.value = false;
+        }
+    };
+
+    /** Merge tax/rounding/stock/returns/… after login (not in public payload). */
+    const fetchRuntimeSettings = async () => {
+        try {
+            const response = await settingsApi.getRuntime();
+            if (response.data.success) {
+                const data = response.data.data || {};
+                publicSettings.value = {
+                    ...publicSettings.value,
+                    ...data,
+                    // Explicit merge so returns group survives partial payloads / cache
+                    ...(data.returns ? { returns: { ...publicSettings.value.returns, ...data.returns } } : {})
+                };
+                saveCachedSettings(publicSettings.value);
+            }
+        } catch (error) {
+            // Unauthenticated or offline — keep defaults / cache
+            console.error('Failed to fetch runtime settings:', error);
         }
     };
 
@@ -180,6 +202,9 @@ export const useSettingsStore = defineStore('settings', () => {
     const refresh = async () => {
         loaded.value = false;
         await fetchPublicSettings();
+        if (localStorage.getItem('token')) {
+            await fetchRuntimeSettings();
+        }
     };
 
     // Apply cached settings on initialization
@@ -218,9 +243,11 @@ export const useSettingsStore = defineStore('settings', () => {
         stock,
         calculation,
         serialEnabled,
+        returns,
 
         // Actions
         fetchPublicSettings,
+        fetchRuntimeSettings,
         updateFavicon,
         updatePageTitle,
         refresh

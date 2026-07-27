@@ -1,72 +1,77 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\SettingController;
-use App\Http\Controllers\Api\V1\UploadController;
-use App\Http\Controllers\Api\V1\UserController;
-use App\Http\Controllers\Api\V1\WarehouseController;
-use App\Http\Controllers\Api\V1\BrandController;
-use App\Http\Controllers\Api\V1\TipeController;
-use App\Http\Controllers\Api\V1\KategoriController;
-use App\Http\Controllers\Api\V1\GrupController;
-use App\Http\Controllers\Api\V1\SupplierController;
-use App\Http\Controllers\Api\V1\TipeCustomerController;
-use App\Http\Controllers\Api\V1\KategoriCustomerController;
-use App\Http\Controllers\Api\V1\CustomerController;
-use App\Http\Controllers\Api\V1\MetodePembayaranController;
-use App\Http\Controllers\Api\V1\ProdukController;
-use App\Http\Controllers\Api\V1\InventoryStockController;
-use App\Http\Controllers\Api\V1\StockCardController;
 use App\Http\Controllers\Api\V1\AdjustmentController;
-use App\Http\Controllers\Api\V1\TransferController;
-use App\Http\Controllers\Api\V1\RepackController;
-use App\Http\Controllers\Api\V1\StockOpnameController;
-use App\Http\Controllers\Api\V1\HppCorrectionController;
-use App\Http\Controllers\Api\V1\PurchaseOrderController;
-use App\Http\Controllers\Api\V1\PurchaseReturnController;
-use App\Http\Controllers\Api\V1\SupplierHutangController;
-use App\Http\Controllers\Api\V1\SupplierDepositController;
-use App\Http\Controllers\Api\V1\PembayaranHutangController;
-use App\Http\Controllers\Api\V1\PriceChangeController;
-use App\Http\Controllers\Api\V1\PromoController;
-use App\Http\Controllers\Api\V1\PosTerminalController;
-use App\Http\Controllers\Api\V1\ShiftController;
-use App\Http\Controllers\Api\V1\PosController;
-use App\Http\Controllers\Api\V1\SalesReturnController;
+use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\BackofficeSalesReturnController;
+use App\Http\Controllers\Api\V1\BackupController;
+use App\Http\Controllers\Api\V1\BrandController;
 use App\Http\Controllers\Api\V1\CashTransactionController;
-use App\Http\Controllers\Api\V1\SalesProductReportController;
-use App\Http\Controllers\Api\V1\SalesReportController;
-use App\Http\Controllers\Api\V1\SalesFinancialReportController;
-use App\Http\Controllers\Api\V1\RoleController;
+use App\Http\Controllers\Api\V1\ClientErrorLogController;
+use App\Http\Controllers\Api\V1\CustomerController;
+use App\Http\Controllers\Api\V1\CustomerDepositController;
+use App\Http\Controllers\Api\V1\CustomerPiutangController;
+use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\GrupController;
+use App\Http\Controllers\Api\V1\HealthController;
+use App\Http\Controllers\Api\V1\HppCorrectionController;
+use App\Http\Controllers\Api\V1\ImportController;
+use App\Http\Controllers\Api\V1\InventoryStockController;
+use App\Http\Controllers\Api\V1\KategoriController;
+use App\Http\Controllers\Api\V1\KategoriCustomerController;
+use App\Http\Controllers\Api\V1\ManualSalesController;
+use App\Http\Controllers\Api\V1\MetodePembayaranController;
+use App\Http\Controllers\Api\V1\PembayaranHutangController;
+use App\Http\Controllers\Api\V1\PembayaranPiutangController;
+use App\Http\Controllers\Api\V1\PosController;
+use App\Http\Controllers\Api\V1\PosTerminalController;
+use App\Http\Controllers\Api\V1\PriceChangeController;
+use App\Http\Controllers\Api\V1\ProdukController;
+use App\Http\Controllers\Api\V1\PromoController;
+use App\Http\Controllers\Api\V1\PurchaseOrderController;
 use App\Http\Controllers\Api\V1\PurchaseReport\DiskonReportController as PurchaseDiskonReportController;
 use App\Http\Controllers\Api\V1\PurchaseReport\DropdownsController as PurchaseReportDropdownsController;
 use App\Http\Controllers\Api\V1\PurchaseReport\HargaTerakhirReportController;
 use App\Http\Controllers\Api\V1\PurchaseReport\PerBarangReportController as PurchasePerBarangReportController;
 use App\Http\Controllers\Api\V1\PurchaseReport\PerDokumenReportController as PurchasePerDokumenReportController;
 use App\Http\Controllers\Api\V1\PurchaseReport\PerSupplierReportController as PurchasePerSupplierReportController;
-use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\PurchaseReturnController;
+use App\Http\Controllers\Api\V1\RepackController;
+use App\Http\Controllers\Api\V1\Reports\AnalyticReportExportController;
+use App\Http\Controllers\Api\V1\Reports\CashFlowReportController;
+use App\Http\Controllers\Api\V1\Reports\CustomerPromoReportController;
+use App\Http\Controllers\Api\V1\Reports\DeadStockReportController;
+use App\Http\Controllers\Api\V1\Reports\GrossProfitReportController;
+use App\Http\Controllers\Api\V1\Reports\KasirPerformanceReportController;
+use App\Http\Controllers\Api\V1\Reports\MarginPerBarangReportController;
+use App\Http\Controllers\Api\V1\Reports\PaymentMethodReportController;
+use App\Http\Controllers\Api\V1\Reports\ProductPromoReportController;
+use App\Http\Controllers\Api\V1\Reports\PromoUsageReportController;
+use App\Http\Controllers\Api\V1\Reports\ReturPatternReportController;
+use App\Http\Controllers\Api\V1\Reports\TopCustomerReportController;
 use App\Http\Controllers\Api\V1\ResetController;
-use App\Http\Controllers\Api\V1\ImportController;
-use App\Http\Controllers\Api\V1\SerialIntakeController;
+use App\Http\Controllers\Api\V1\RoleController;
+use App\Http\Controllers\Api\V1\SalesFinancialReportController;
+use App\Http\Controllers\Api\V1\SalesProductReportController;
+use App\Http\Controllers\Api\V1\SalesReportController;
+use App\Http\Controllers\Api\V1\SalesReturnController;
 use App\Http\Controllers\Api\V1\SerialChangeController;
 use App\Http\Controllers\Api\V1\SerialHppCorrectionController;
+use App\Http\Controllers\Api\V1\SerialIntakeController;
 use App\Http\Controllers\Api\V1\SerialUnitController;
-use App\Http\Controllers\Api\V1\BackupController;
-use App\Http\Controllers\Api\V1\HealthController;
-use App\Http\Controllers\Api\V1\ClientErrorLogController;
-use App\Http\Controllers\Api\V1\Reports\AnalyticReportExportController;
-use App\Http\Controllers\Api\V1\Reports\GrossProfitReportController;
-use App\Http\Controllers\Api\V1\Reports\MarginPerBarangReportController;
-use App\Http\Controllers\Api\V1\Reports\CashFlowReportController;
-use App\Http\Controllers\Api\V1\Reports\KasirPerformanceReportController;
-use App\Http\Controllers\Api\V1\Reports\PromoUsageReportController;
-use App\Http\Controllers\Api\V1\Reports\ProductPromoReportController;
-use App\Http\Controllers\Api\V1\Reports\CustomerPromoReportController;
-use App\Http\Controllers\Api\V1\Reports\PaymentMethodReportController;
-use App\Http\Controllers\Api\V1\Reports\TopCustomerReportController;
-use App\Http\Controllers\Api\V1\Reports\ReturPatternReportController;
-use App\Http\Controllers\Api\V1\Reports\DeadStockReportController;
+use App\Http\Controllers\Api\V1\SettingController;
+use App\Http\Controllers\Api\V1\ShiftController;
+use App\Http\Controllers\Api\V1\StockCardController;
+use App\Http\Controllers\Api\V1\StockOpnameController;
+use App\Http\Controllers\Api\V1\SupplierController;
+use App\Http\Controllers\Api\V1\SupplierDepositController;
+use App\Http\Controllers\Api\V1\SupplierHutangController;
+use App\Http\Controllers\Api\V1\TipeController;
+use App\Http\Controllers\Api\V1\TipeCustomerController;
+use App\Http\Controllers\Api\V1\TransferController;
+use App\Http\Controllers\Api\V1\UploadController;
+use App\Http\Controllers\Api\V1\UserController;
+use App\Http\Controllers\Api\V1\WarehouseController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -85,7 +90,7 @@ Route::prefix('v1')->group(function () {
     // Public routes (no auth required)
     // Rate limit login: 5 attempts per 15 minutes (per IP + per email, reset via auth:clear-login-throttle)
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
-    Route::get('/settings/public', [SettingController::class, 'publicSettings']);
+    Route::get('/settings/public', [SettingController::class, 'publicSettings'])->middleware('throttle:60,1');
 
     // Depth health check for monitoring tools (UptimeRobot, Grafana, etc.)
     Route::get('/health', [HealthController::class, 'check'])
@@ -93,8 +98,8 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/public/receipt/{ulid}', [PosController::class, 'publicReceipt'])->middleware('throttle:30,1');
 
-    // Protected routes (auth required)
-    Route::middleware('auth:sanctum')->group(function () {
+    // Protected routes (auth required + active account)
+    Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
 
         // Client-side error reporting (rate limited, auth required for user context)
         Route::post('/client-errors', [ClientErrorLogController::class, 'store'])
@@ -116,6 +121,7 @@ Route::prefix('v1')->group(function () {
         // Settings routes
         Route::prefix('settings')->group(function () {
             Route::get('/', [SettingController::class, 'index']);
+            Route::get('/runtime', [SettingController::class, 'runtimeSettings']);
             Route::get('/price-mode-lock', [SettingController::class, 'checkPriceModeLock']);
             Route::get('/stock-mode-lock', [SettingController::class, 'checkStockModeLock']);
             Route::get('/elektronik-lock', [SettingController::class, 'checkElektronikLock']);
@@ -182,9 +188,9 @@ Route::prefix('v1')->group(function () {
         });
 
         // Reset Database routes
-        Route::prefix('reset')->middleware('throttle:30,1')->group(function () {
+        Route::prefix('reset')->group(function () {
             Route::get('/counts', [ResetController::class, 'counts']);
-            Route::post('/', [ResetController::class, 'reset']);
+            Route::post('/', [ResetController::class, 'reset'])->middleware('throttle:5,1');
         });
 
         // Backup & Restore Database routes
@@ -464,6 +470,68 @@ Route::prefix('v1')->group(function () {
             Route::post('/{ulid}/approve', [PurchaseOrderController::class, 'approve'])->middleware('throttle:30,1');
         });
 
+        // Penjualan Backoffice - manual source only
+        Route::prefix('sales')->group(function () {
+            Route::get('/', [ManualSalesController::class, 'index']);
+            Route::get('/products', [ManualSalesController::class, 'products']);
+            Route::get('/tax-settings', [ManualSalesController::class, 'taxSettings']);
+            Route::post('/calculate', [ManualSalesController::class, 'calculate']);
+            Route::get('/{ulid}', [ManualSalesController::class, 'show']);
+
+            Route::middleware('throttle:30,1')->group(function () {
+                Route::post('/', [ManualSalesController::class, 'store']);
+                Route::put('/{ulid}', [ManualSalesController::class, 'update']);
+                Route::delete('/{ulid}', [ManualSalesController::class, 'destroy']);
+                Route::post('/{ulid}/approve', [ManualSalesController::class, 'approve']);
+                Route::post('/{ulid}/void', [ManualSalesController::class, 'void']);
+            });
+        });
+
+        Route::prefix('sales-returns')->group(function () {
+            Route::get('/', [BackofficeSalesReturnController::class, 'index']);
+            Route::get('/returnable-sales', [BackofficeSalesReturnController::class, 'returnableSales']);
+            Route::get('/sales/{salesUlid}/returnable-details', [BackofficeSalesReturnController::class, 'returnableDetails']);
+            Route::get('/{ulid}', [BackofficeSalesReturnController::class, 'show']);
+
+            Route::middleware('throttle:30,1')->group(function () {
+                Route::post('/', [BackofficeSalesReturnController::class, 'store']);
+                Route::put('/{ulid}', [BackofficeSalesReturnController::class, 'update']);
+                Route::delete('/{ulid}', [BackofficeSalesReturnController::class, 'destroy']);
+                Route::post('/{ulid}/lock', [BackofficeSalesReturnController::class, 'lock']);
+                Route::post('/{ulid}/approve', [BackofficeSalesReturnController::class, 'approve']);
+            });
+        });
+
+        Route::prefix('customer-piutangs')->group(function () {
+            Route::get('/', [CustomerPiutangController::class, 'index']);
+            Route::get('/summary', [CustomerPiutangController::class, 'summary']);
+            Route::get('/aging-summary', [CustomerPiutangController::class, 'agingSummary']);
+            Route::get('/export', [CustomerPiutangController::class, 'export']);
+            Route::get('/{ulid}', [CustomerPiutangController::class, 'show']);
+        });
+
+        Route::prefix('customer-deposits')->group(function () {
+            Route::get('/', [CustomerDepositController::class, 'index']);
+            Route::get('/summary', [CustomerDepositController::class, 'summary']);
+            Route::get('/export', [CustomerDepositController::class, 'export']);
+            Route::post('/', [CustomerDepositController::class, 'store']);
+            Route::get('/{ulid}', [CustomerDepositController::class, 'show']);
+            Route::get('/{ulid}/usage', [CustomerDepositController::class, 'usage']);
+            Route::put('/{ulid}', [CustomerDepositController::class, 'update']);
+            Route::delete('/{ulid}', [CustomerDepositController::class, 'destroy']);
+        });
+
+        Route::prefix('pembayaran-piutangs')->group(function () {
+            Route::get('/', [PembayaranPiutangController::class, 'index']);
+            Route::post('/', [PembayaranPiutangController::class, 'store']);
+            Route::get('/outstanding-piutangs', [PembayaranPiutangController::class, 'getOutstandingPiutangs']);
+            Route::get('/available-deposits', [PembayaranPiutangController::class, 'getAvailableDeposits']);
+            Route::get('/{ulid}', [PembayaranPiutangController::class, 'show']);
+            Route::put('/{ulid}', [PembayaranPiutangController::class, 'update']);
+            Route::delete('/{ulid}', [PembayaranPiutangController::class, 'destroy']);
+            Route::post('/{ulid}/complete', [PembayaranPiutangController::class, 'complete'])->middleware('throttle:30,1');
+        });
+
         // Pembelian - Supplier Hutang routes
         Route::prefix('supplier-hutangs')->group(function () {
             Route::get('/', [SupplierHutangController::class, 'index']);
@@ -484,6 +552,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/stock-setting', [PurchaseReturnController::class, 'getStockSetting']);
             Route::post('/calculate', [PurchaseReturnController::class, 'calculate']);
             Route::get('/po/{poUlid}/returnable-details', [PurchaseReturnController::class, 'getReturnableDetails']);
+            Route::get('/serial-intakes/list', [PurchaseReturnController::class, 'listSerialIntakes'])->middleware('feature.elektronik');
+            Route::get('/serial-intake/{intakeUlid}/returnable-units', [PurchaseReturnController::class, 'getSerialIntakeReturnable'])->middleware('feature.elektronik');
             Route::get('/{ulid}', [PurchaseReturnController::class, 'show']);
             Route::put('/{ulid}', [PurchaseReturnController::class, 'update']);
             Route::delete('/{ulid}', [PurchaseReturnController::class, 'destroy']);
@@ -559,6 +629,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/{ulid}/force-release', [PosTerminalController::class, 'forceRelease'])->middleware('throttle:30,1');
             Route::post('/{ulid}/start-shift', [PosTerminalController::class, 'startShift'])->middleware('throttle:30,1');
             Route::post('/{ulid}/end-shift', [PosTerminalController::class, 'endShift'])->middleware('throttle:30,1');
+            Route::post('/{ulid}/mail-test', [PosTerminalController::class, 'mailTest'])->middleware('throttle:5,1');
         });
 
         // POS - Shift routes (read-only)
@@ -576,6 +647,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/calculate', [PosController::class, 'calculate']);
             Route::get('/history', [PosController::class, 'history']);
             Route::get('/sales/{ulid}', [PosController::class, 'show']);
+            Route::post('/sales/{ulid}/email-receipt', [PosController::class, 'emailReceipt'])->middleware('throttle:10,1');
             Route::get('/shift-report/{shiftUlid}', [PosController::class, 'shiftReport']);
 
             // Returns (read)
@@ -590,7 +662,7 @@ Route::prefix('v1')->group(function () {
             // Write operations — rate limited
             Route::middleware('throttle:60,1')->group(function () {
                 // Checkout pakai idempotency untuk cegah double-submit (double-click / network retry)
-                Route::post('/checkout', [PosController::class, 'checkout'])->middleware('idempotency');
+                Route::post('/checkout', [PosController::class, 'checkout'])->middleware('idempotency:required');
                 Route::post('/cash', [CashTransactionController::class, 'store']);
                 Route::post('/returns', [SalesReturnController::class, 'store']);
             });
@@ -608,7 +680,7 @@ Route::prefix('v1')->group(function () {
         // Laporan - Sales Report routes
         Route::prefix('sales-report')->group(function () {
             Route::get('/dropdowns', [SalesReportController::class, 'dropdowns']);
-            Route::get('/export', [SalesReportController::class, 'export']);
+            Route::get('/export', [SalesReportController::class, 'export'])->middleware('throttle:10,1');
             Route::get('/{ulid}', [SalesReportController::class, 'show']);
             Route::get('/', [SalesReportController::class, 'index']);
         });
@@ -616,7 +688,7 @@ Route::prefix('v1')->group(function () {
         // Laporan - Sales Product Report routes
         Route::prefix('sales-product-report')->group(function () {
             Route::get('/dropdowns', [SalesProductReportController::class, 'dropdowns']);
-            Route::get('/export', [SalesProductReportController::class, 'export']);
+            Route::get('/export', [SalesProductReportController::class, 'export'])->middleware('throttle:10,1');
             Route::get('/{productUlid}', [SalesProductReportController::class, 'show']);
             Route::get('/', [SalesProductReportController::class, 'index']);
         });

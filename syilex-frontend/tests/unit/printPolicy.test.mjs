@@ -53,39 +53,46 @@ runner.test('PosKasir thermal errors surface via notify (not silent catch on try
     runner.assertContains(kasir, "notify.warn('Gagal mencetak struk thermal");
 });
 
-const THERMAL_PAGES = [
-    'views/pos/PosKasirPage.vue',
-    'views/pos/ShiftPage.vue',
-    'views/laporan/penjualan/PerNotaPage.vue',
-    'views/master/PosTerminalPage.vue',
-    'components/print/PrinterPickerPanel.vue'
-];
+runner.test('PosKasir uses isReadyToThermal gate (not mere WebUSB support)', () => {
+    runner.assertContains(kasir, 'isReadyToThermal');
+});
+
+runner.test('PosKasir shift print falls back to PDF when thermal fails', () => {
+    runner.assertContains(kasir, 'browserPrintShiftReport');
+    runner.assertContains(kasir, 'buildShiftReport(shiftReportData.value');
+});
+
+runner.test('PosKasir receipt print falls back to PDF when thermal fails', () => {
+    runner.assertContains(kasir, 'printReceiptPdf(receiptData.value');
+    runner.assertContains(kasir, 'if (ok) return');
+});
+
+const THERMAL_PAGES = ['views/pos/PosKasirPage.vue', 'views/pos/ShiftPage.vue', 'views/laporan/penjualan/PerNotaPage.vue', 'views/master/PosTerminalPage.vue', 'components/print/PrinterPickerPanel.vue'];
 
 for (const rel of THERMAL_PAGES) {
     runner.test(`${rel} imports usePrintAdapter`, () => {
-        runner.assertContains(read(rel), "usePrintAdapter");
+        runner.assertContains(read(rel), 'usePrintAdapter');
     });
 }
 
-runner.test('usePrintService only used by adapter + PosTerminal legacy list', () => {
+runner.test('usePrintService must not exist in src', () => {
     const allFiles = walkJsVue(srcRoot);
     const offenders = [];
     for (const file of allFiles) {
         const rel = file.slice(srcRoot.length + 1).replace(/\\/g, '/');
         const content = readFileSync(file, 'utf8');
-        if (!content.includes('usePrintService')) continue;
-        const allowed =
-            rel === 'composables/usePrintService.js' ||
-            rel === 'composables/print/usePrintAdapter.js' ||
-            rel === 'views/master/PosTerminalPage.vue';
-        if (!allowed) offenders.push(rel);
+        if (content.includes('usePrintService') || content.includes('localhost:5123')) {
+            offenders.push(rel);
+        }
     }
     runner.assertDeepEqual(offenders, []);
 });
 
-runner.test('ENABLE_LEGACY_PRINT_SERVICE defaults true in printAdapterCore', () => {
+runner.test('printAdapterCore has no legacy print service path', () => {
     const core = read('composables/print/printAdapterCore.js');
-    runner.assertContains(core, 'export const ENABLE_LEGACY_PRINT_SERVICE = true');
+    runner.assertFalse(core.includes('ENABLE_LEGACY'));
+    runner.assertFalse(core.includes('legacyPrinterId'));
+    runner.assertFalse(core.includes('5123'));
 });
 
 const ok = runner.summary();

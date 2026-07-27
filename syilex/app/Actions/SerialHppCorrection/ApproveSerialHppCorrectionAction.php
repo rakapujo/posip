@@ -38,15 +38,30 @@ class ApproveSerialHppCorrectionAction
         }
 
         return DB::transaction(function () use ($correction) {
+            // Lock header + re-check draft di dalam TX (cegah double-approve race).
+            $correction = DocSerialHppCorrection::where('id', $correction->id)->lockForUpdate()->firstOrFail();
+            if (!$correction->isDraft()) {
+                throw ValidationException::withMessages(['status' => ['Dokumen sudah diproses, tidak bisa disetujui ulang.']]);
+            }
+            $correction->load('details');
             $details = $correction->details;
-            $unitIds = $details->pluck('serial_unit_id')->all();
+            if ($details->isEmpty()) {
+                throw ValidationException::withMessages(['details' => ['Tidak ada unit untuk dikoreksi.']]);
+            }
 
+            $unitIds = $details->pluck('serial_unit_id')->all();
             $units = SerialUnit::whereIn('id', $unitIds)->lockForUpdate()->get()->keyBy('id');
 
+            $applied = 0;
             foreach ($details as $d) {
                 $unit = $units->get($d->serial_unit_id);
                 if (!$unit || $unit->status !== SerialUnit::STATUS_TERSEDIA) {
-                    continue; // unit sudah terjual / keluar → lewati
+                    $label = $unit
+                        ? "{$unit->kode_internal} (status: {$unit->status})"
+                        : "#{$d->serial_unit_id}";
+                    throw ValidationException::withMessages([
+                        'units' => ["Unit {$label} tidak tersedia untuk dikoreksi."],
+                    ]);
                 }
 
                 // Re-snapshot nilai lama tepat sebelum apply (audit akurat)
@@ -75,6 +90,11 @@ class ApproveSerialHppCorrectionAction
                     'tanggal' => $correction->tanggal,
                     'notes' => 'Koreksi HPP unit',
                 ]);
+                $applied++;
+            }
+
+            if ($applied === 0) {
+                throw ValidationException::withMessages(['units' => ['Tidak ada unit yang dikoreksi.']]);
             }
 
             // Propagasi ke HPP agregat (Metode A): avg_cost = rata-rata cost_per_unit
@@ -89,20 +109,23 @@ class ApproveSerialHppCorrectionAction
                     $product->update(['avg_cost' => $newAvg]);
                     $product->syncAvgCostToInventoryStocks();
 
-                    StockCard::record([
-                        'product_id' => $product->id,
-                        'warehouse_id' => null, // HPP global
-                        'transaction_type' => 'HPP_CORRECTION',
-                        'transaction_id' => $correction->id,
-                        'transaction_no' => $correction->nomor_dokumen,
-                        'tanggal' => $correction->tanggal,
-                        'qty_in' => 0,
-                        'qty_out' => 0,
-                        'cost_per_unit' => $newAvg,
-                        'avg_cost_before' => $oldAvg,
-                        'avg_cost_after' => $newAvg,
-                        'notes' => 'Koreksi HPP Serial ' . $correction->nomor_dokumen . ' (avg dari unit tersedia)',
-                    ]);
+                    // Skip kartu noop (avg tak berubah) — hindari polusi Pergerakan HPP.
+                    if (abs($oldAvg - $newAvg) >= 0.0001) {
+                        StockCard::record([
+                            'product_id' => $product->id,
+                            'warehouse_id' => null, // HPP global
+                            'transaction_type' => 'HPP_CORRECTION',
+                            'transaction_id' => $correction->id,
+                            'transaction_no' => $correction->nomor_dokumen,
+                            'tanggal' => $correction->tanggal,
+                            'qty_in' => 0,
+                            'qty_out' => 0,
+                            'cost_per_unit' => $newAvg,
+                            'avg_cost_before' => $oldAvg,
+                            'avg_cost_after' => $newAvg,
+                            'notes' => 'Koreksi HPP Serial ' . $correction->nomor_dokumen . ' (avg dari unit tersedia)',
+                        ]);
+                    }
                 }
             }
 

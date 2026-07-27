@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Verify critical data invariants. Intended to be run periodically (daily cron
@@ -25,6 +26,9 @@ class VerifyDataInvariants extends Command
             'stock_consistency' => $this->checkStockConsistency(),
             'sales_payment_totals' => $this->checkSalesPaymentTotals(),
             'hutang_ledger' => $this->checkHutangLedger(),
+            'piutang_ledger' => $this->checkPiutangLedger(),
+            'customer_deposit_balance' => $this->checkCustomerDepositBalance(),
+            'supplier_deposit_balance' => $this->checkSupplierDepositBalance(),
             'serial_stock_consistency' => $this->checkSerialStockConsistency(),
             'serial_sold_integrity' => $this->checkSerialSoldIntegrity(),
         ];
@@ -43,6 +47,7 @@ class VerifyDataInvariants extends Command
 
         if ($hasIssue) {
             Log::warning('Data invariant check found mismatches', ['report' => $report]);
+
             return $this->option('fail-on-mismatch') ? 1 : 0;
         }
 
@@ -63,10 +68,10 @@ class VerifyDataInvariants extends Command
                 GROUP BY product_id, warehouse_id
             ) as sc'), function ($join) {
                 $join->on('sc.product_id', '=', 'inv.product_id')
-                     ->on('sc.warehouse_id', '=', 'inv.warehouse_id');
+                    ->on('sc.warehouse_id', '=', 'inv.warehouse_id');
             })
             ->select('inv.product_id', 'inv.warehouse_id', 'inv.qty as stored_qty',
-                     DB::raw('COALESCE(sc.computed_qty, 0) as computed_qty'))
+                DB::raw('COALESCE(sc.computed_qty, 0) as computed_qty'))
             ->get();
 
         $mismatches = $rows->filter(fn ($r) => (int) $r->stored_qty !== (int) $r->computed_qty);
@@ -95,17 +100,19 @@ class VerifyDataInvariants extends Command
     {
         $rows = DB::table('doc_sales as s')
             ->where('s.status', 'completed')
+            ->when(Schema::hasColumn('doc_sales', 'source'), fn ($q) => $q->where('s.source', 'pos'))
             ->leftJoin(DB::raw('(
                 SELECT sales_id, COALESCE(SUM(nominal), 0) AS paid_total
                 FROM doc_sales_payments
                 GROUP BY sales_id
             ) as p'), 'p.sales_id', '=', 's.id')
             ->select('s.id', 's.nomor_dokumen', 's.grand_total', 's.total_biaya_pembayaran',
-                     DB::raw('COALESCE(p.paid_total, 0) as paid_total'))
+                DB::raw('COALESCE(p.paid_total, 0) as paid_total'))
             ->get();
 
         $mismatches = $rows->filter(function ($r) {
             $expected = (float) $r->grand_total + (float) $r->total_biaya_pembayaran;
+
             return (float) $r->paid_total < $expected;
         });
 
@@ -130,7 +137,7 @@ class VerifyDataInvariants extends Command
      */
     protected function checkHutangLedger(): array
     {
-        if (!\Schema::hasTable('supplier_hutang')) {
+        if (! \Schema::hasTable('supplier_hutang')) {
             return [
                 'name' => 'Hutang Ledger',
                 'description' => 'skipped (table not present)',
@@ -151,9 +158,10 @@ class VerifyDataInvariants extends Command
             ->select(
                 'h.id',
                 'h.nominal_awal as total_hutang',
+                'h.nominal_retur',
                 'h.sisa_hutang',
                 DB::raw('COALESCE(pay.paid, 0) as paid'),
-                DB::raw('(h.nominal_awal - COALESCE(pay.paid, 0)) as expected_sisa')
+                DB::raw('(h.nominal_awal - COALESCE(pay.paid, 0) - COALESCE(h.nominal_retur, 0)) as expected_sisa')
             )
             ->get();
 
@@ -163,18 +171,136 @@ class VerifyDataInvariants extends Command
 
         return [
             'name' => 'Hutang Ledger',
-            'description' => 'sisa_hutang === nominal_awal - SUM(pembayaran.nominal_dibayar)',
+            'description' => 'sisa_hutang === nominal_awal - SUM(pembayaran) - nominal_retur',
             'checked' => $rows->count(),
             'mismatches' => $mismatches->count(),
             'samples' => $mismatches->take(5)->map(fn ($r) => [
                 'hutang_id' => $r->id,
                 'total' => (float) $r->total_hutang,
                 'paid' => (float) $r->paid,
+                'retur' => (float) ($r->nominal_retur ?? 0),
                 'stored_sisa' => (float) $r->sisa_hutang,
                 'expected_sisa' => (float) $r->expected_sisa,
                 'diff' => (float) $r->sisa_hutang - (float) $r->expected_sisa,
             ])->values(),
         ];
+    }
+
+    protected function checkPiutangLedger(): array
+    {
+        if (! Schema::hasTable('customer_piutang')) {
+            return $this->skipped('Piutang Ledger');
+        }
+
+        $rows = DB::table('customer_piutang as h')
+            ->where('h.status', '!=', 'cancelled')
+            ->leftJoin(DB::raw('(
+                SELECT pd.piutang_id, COALESCE(SUM(pd.nominal_dibayar), 0) AS paid
+                FROM doc_pembayaran_piutang_detail pd
+                INNER JOIN doc_pembayaran_piutang p ON p.id = pd.pembayaran_id
+                WHERE p.status = \'completed\'
+                GROUP BY pd.piutang_id
+            ) as pay'), 'pay.piutang_id', '=', 'h.id')
+            ->select('h.id', 'h.nominal_awal', 'h.nominal_terbayar', 'h.nominal_retur', 'h.sisa_piutang',
+                DB::raw('COALESCE(pay.paid, 0) as paid'),
+                DB::raw('(h.nominal_awal - COALESCE(pay.paid, 0) - h.nominal_retur) as expected_sisa'))
+            ->get();
+        $mismatches = $rows->filter(fn ($row) => abs((float) $row->nominal_terbayar - (float) $row->paid) > 0.01
+            || abs((float) $row->sisa_piutang - max(0, (float) $row->expected_sisa)) > 0.01
+        );
+
+        return [
+            'name' => 'Piutang Ledger',
+            'description' => 'sisa_piutang sesuai pembayaran completed dan kredit retur',
+            'checked' => $rows->count(),
+            'mismatches' => $mismatches->count(),
+            'samples' => $mismatches->take(5)->map(fn ($row) => [
+                'piutang_id' => $row->id,
+                'paid' => (float) $row->paid,
+                'stored_paid' => (float) $row->nominal_terbayar,
+                'return_credit' => (float) $row->nominal_retur,
+                'stored_sisa' => (float) $row->sisa_piutang,
+                'expected_sisa' => max(0, (float) $row->expected_sisa),
+            ])->values(),
+        ];
+    }
+
+    protected function checkCustomerDepositBalance(): array
+    {
+        if (! Schema::hasTable('customer_deposit')) {
+            return $this->skipped('Customer Deposit Balance');
+        }
+
+        $rows = DB::table('customer_deposit as d')
+            ->leftJoin(DB::raw('(
+                SELECT u.deposit_id, COALESCE(SUM(u.nominal_digunakan), 0) AS used
+                FROM doc_pembayaran_piutang_deposit u
+                INNER JOIN doc_pembayaran_piutang p ON p.id = u.pembayaran_id
+                WHERE p.status = \'completed\'
+                GROUP BY u.deposit_id
+            ) as deposit_usage'), 'deposit_usage.deposit_id', '=', 'd.id')
+            ->select('d.id', 'd.nominal_awal', 'd.nominal_terpakai', 'd.sisa_deposit',
+                DB::raw('COALESCE(deposit_usage.used, 0) as used'))
+            ->get();
+        $mismatches = $rows->filter(fn ($row) => abs((float) $row->nominal_terpakai - (float) $row->used) > 0.01
+            || abs((float) $row->sisa_deposit - ((float) $row->nominal_awal - (float) $row->used)) > 0.01
+        );
+
+        return [
+            'name' => 'Customer Deposit Balance',
+            'description' => 'saldo deposit sesuai penggunaan pada pembayaran completed',
+            'checked' => $rows->count(),
+            'mismatches' => $mismatches->count(),
+            'samples' => $mismatches->take(5)->map(fn ($row) => [
+                'deposit_id' => $row->id,
+                'used' => (float) $row->used,
+                'stored_used' => (float) $row->nominal_terpakai,
+                'stored_sisa' => (float) $row->sisa_deposit,
+                'expected_sisa' => (float) $row->nominal_awal - (float) $row->used,
+            ])->values(),
+        ];
+    }
+
+    protected function checkSupplierDepositBalance(): array
+    {
+        if (! Schema::hasTable('supplier_deposit')) {
+            return $this->skipped('Supplier Deposit Balance');
+        }
+
+        $rows = DB::table('supplier_deposit as d')
+            ->leftJoin(DB::raw('(
+                SELECT u.deposit_id, COALESCE(SUM(u.nominal_digunakan), 0) AS used
+                FROM doc_pembayaran_hutang_deposit u
+                INNER JOIN doc_pembayaran_hutang p ON p.id = u.pembayaran_id
+                WHERE p.status = \'completed\'
+                GROUP BY u.deposit_id
+            ) as deposit_usage'), 'deposit_usage.deposit_id', '=', 'd.id')
+            ->select('d.id', 'd.nominal_awal', 'd.nominal_terpakai', 'd.sisa_deposit',
+                DB::raw('COALESCE(deposit_usage.used, 0) as used'))
+            ->get();
+        $mismatches = $rows->filter(fn ($row) => abs((float) $row->nominal_terpakai - (float) $row->used) > 0.01
+            || abs((float) $row->sisa_deposit - ((float) $row->nominal_awal - (float) $row->used)) > 0.01
+        );
+
+        return [
+            'name' => 'Supplier Deposit Balance',
+            'description' => 'saldo deposit sesuai penggunaan pada pembayaran hutang completed',
+            'checked' => $rows->count(),
+            'mismatches' => $mismatches->count(),
+            'samples' => $mismatches->take(5)->map(fn ($row) => [
+                'deposit_id' => $row->id,
+                'used' => (float) $row->used,
+                'stored_used' => (float) $row->nominal_terpakai,
+                'stored_sisa' => (float) $row->sisa_deposit,
+                'expected_sisa' => (float) $row->nominal_awal - (float) $row->used,
+            ])->values(),
+        ];
+    }
+
+    private function skipped(string $name): array
+    {
+        return ['name' => $name, 'description' => 'skipped (table not present)',
+            'checked' => 0, 'mismatches' => 0, 'samples' => []];
     }
 
     /**
@@ -183,7 +309,7 @@ class VerifyDataInvariants extends Command
      */
     protected function checkSerialStockConsistency(): array
     {
-        if (!\Schema::hasTable('serial_units')) {
+        if (! \Schema::hasTable('serial_units')) {
             return [
                 'name' => 'Serial Stock Consistency',
                 'description' => 'skipped (table not present)',
@@ -244,7 +370,7 @@ class VerifyDataInvariants extends Command
      */
     protected function checkSerialSoldIntegrity(): array
     {
-        if (!\Schema::hasTable('serial_units')) {
+        if (! \Schema::hasTable('serial_units')) {
             return [
                 'name' => 'Serial Sold Integrity',
                 'description' => 'skipped (table not present)',
@@ -288,13 +414,13 @@ class VerifyDataInvariants extends Command
         foreach ($report as $check) {
             $status = $check['mismatches'] === 0 ? '<fg=green>✓ OK</>' : '<fg=red>✗ FAIL</>';
             $this->line("\n{$status} {$check['name']}");
-            $this->line("  " . $check['description']);
+            $this->line('  '.$check['description']);
             $this->line("  Checked: {$check['checked']}, Mismatches: {$check['mismatches']}");
 
-            if ($check['mismatches'] > 0 && !empty($check['samples'])) {
+            if ($check['mismatches'] > 0 && ! empty($check['samples'])) {
                 $this->line('  Samples (first 5):');
                 foreach ($check['samples'] as $sample) {
-                    $this->line('    ' . json_encode($sample));
+                    $this->line('    '.json_encode($sample));
                 }
             }
         }

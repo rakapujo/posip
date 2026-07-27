@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\BaseApiController;
+use App\Http\Controllers\Concerns\GuardsRoleAssignments;
+use App\Models\User;
+use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -12,12 +15,14 @@ use Spatie\Permission\Models\Role;
 
 class RoleController extends BaseApiController
 {
+    use GuardsRoleAssignments;
+
     /**
      * Display a listing of roles.
      */
     public function index(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('role.view')) {
+        if (! auth()->user()->can('role.view')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -27,6 +32,7 @@ class RoleController extends BaseApiController
                     ->join('users', 'model_has_roles.model_id', '=', 'users.id')
                     ->selectRaw('count(*)')
                     ->whereColumn('model_has_roles.role_id', 'roles.id')
+                    ->where('model_has_roles.model_type', User::class)
                     ->whereNull('users.deleted_at'),
                 'users_count'
             );
@@ -65,7 +71,7 @@ class RoleController extends BaseApiController
      */
     public function show(int $id): JsonResponse
     {
-        if (!auth()->user()->can('role.view')) {
+        if (! auth()->user()->can('role.view')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -76,12 +82,13 @@ class RoleController extends BaseApiController
                     ->join('users', 'model_has_roles.model_id', '=', 'users.id')
                     ->selectRaw('count(*)')
                     ->whereColumn('model_has_roles.role_id', 'roles.id')
+                    ->where('model_has_roles.model_type', User::class)
                     ->whereNull('users.deleted_at'),
                 'users_count'
             )
             ->find($id);
 
-        if (!$role) {
+        if (! $role) {
             return $this->notFound('Role tidak ditemukan');
         }
 
@@ -102,27 +109,42 @@ class RoleController extends BaseApiController
      */
     public function store(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('role.create')) {
+        if (! auth()->user()->can('role.create')) {
             return $this->error('Unauthorized', 403);
         }
 
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:50', 'unique:roles,name', 'regex:/^[a-z0-9-]+$/'],
+            'name' => ['required', 'string', 'max:50', 'unique:roles,name', 'regex:/^[a-z0-9-]+$/', 'not_in:super-admin'],
             'permissions' => ['required', 'array', 'min:1'],
             'permissions.*' => ['string', 'exists:permissions,name'],
         ], [
             'name.regex' => 'Nama role hanya boleh huruf kecil, angka, dan tanda hubung (-)',
             'name.unique' => 'Nama role sudah digunakan',
+            'name.not_in' => 'Tidak dapat membuat role super-admin',
             'permissions.required' => 'Pilih minimal 1 permission',
             'permissions.min' => 'Pilih minimal 1 permission',
         ]);
 
-        $role = Role::create([
-            'name' => $validated['name'],
-            'guard_name' => 'web',
-        ]);
+        if ($deny = $this->assertAssignablePermissions($validated['permissions'])) {
+            return $deny;
+        }
 
-        $role->syncPermissions($validated['permissions']);
+        $role = DB::transaction(function () use ($validated) {
+            $role = Role::create([
+                'name' => $validated['name'],
+                'guard_name' => 'web',
+            ]);
+
+            $role->syncPermissions($validated['permissions']);
+
+            activity('Role')
+                ->causedBy(auth()->user())
+                ->performedOn($role)
+                ->withProperties(['permissions' => $validated['permissions']])
+                ->log('Role dibuat');
+
+            return $role;
+        });
 
         return $this->created([
             'role' => [
@@ -137,14 +159,25 @@ class RoleController extends BaseApiController
      */
     public function update(Request $request, int $id): JsonResponse
     {
-        if (!auth()->user()->can('role.update')) {
+        if (! auth()->user()->can('role.update')) {
             return $this->error('Unauthorized', 403);
         }
 
         $role = Role::find($id);
 
-        if (!$role) {
+        if (! $role) {
             return $this->notFound('Role tidak ditemukan');
+        }
+
+        $isSuperAdminRole = $role->name === 'super-admin';
+
+        if ($isSuperAdminRole && ! $this->actorIsSuperAdmin()) {
+            return $this->error('Tidak dapat mengubah role super-admin', 403);
+        }
+
+        // Lock name of super-admin before any update (FE disables rename; API must too)
+        if ($isSuperAdminRole && $request->input('name') !== 'super-admin') {
+            return $this->error('Nama role super-admin tidak dapat diubah', 422);
         }
 
         $validated = $request->validate([
@@ -158,14 +191,59 @@ class RoleController extends BaseApiController
             'permissions.min' => 'Pilih minimal 1 permission',
         ]);
 
-        $role->update(['name' => $validated['name']]);
-
-        // Super-admin override: always sync ALL permissions
-        if ($role->name === 'super-admin') {
-            $role->syncPermissions(Permission::pluck('name')->toArray());
-        } else {
-            $role->syncPermissions($validated['permissions']);
+        // Prevent renaming another role INTO super-admin
+        if (! $isSuperAdminRole && $validated['name'] === 'super-admin') {
+            return $this->error('Tidak dapat mengubah nama role menjadi super-admin', 422);
         }
+
+        $permissionsToSync = $validated['permissions'];
+
+        if (! $isSuperAdminRole) {
+            if ($deny = $this->assertRolePermissionsManageable($role)) {
+                return $deny;
+            }
+            if ($deny = $this->assertAssignablePermissions($permissionsToSync)) {
+                return $deny;
+            }
+        }
+
+        $role = DB::transaction(function () use ($role, $validated, $isSuperAdminRole, $permissionsToSync) {
+            if ($isSuperAdminRole) {
+                // Always keep full permission set; name stays super-admin
+                $permissionsToSync = Permission::pluck('name')->toArray();
+                $role->syncPermissions($permissionsToSync);
+            } else {
+                // Modul Elektronik OFF: matrix role di frontend menyembunyikan permission serial
+                // (serial-change/serial-hpp/serial-intake) — merge kembali permission serial yang
+                // SUDAH dimiliki role ini supaya tidak ke-wipe oleh sync (bukan hilang permanen,
+                // hanya tak terlihat sementara modul nonaktif).
+                if (! SettingService::isElektronikEnabled()) {
+                    $existingSerialPermissions = $role->permissions()
+                        ->where(function ($q) {
+                            $q->where('name', 'like', 'serial-change.%')
+                                ->orWhere('name', 'like', 'serial-hpp.%')
+                                ->orWhere('name', 'like', 'serial-intake.%');
+                        })
+                        ->pluck('name')
+                        ->all();
+                    $permissionsToSync = array_values(array_unique(array_merge($permissionsToSync, $existingSerialPermissions)));
+                }
+
+                $role->update(['name' => $validated['name']]);
+                $role->syncPermissions($permissionsToSync);
+            }
+
+            activity('Role')
+                ->causedBy(auth()->user())
+                ->performedOn($role)
+                ->withProperties([
+                    'name' => $role->name,
+                    'permissions' => $permissionsToSync,
+                ])
+                ->log('Role diperbarui');
+
+            return $role;
+        });
 
         return $this->success([
             'role' => [
@@ -180,37 +258,48 @@ class RoleController extends BaseApiController
      */
     public function destroy(int $id): JsonResponse
     {
-        if (!auth()->user()->can('role.delete')) {
+        if (! auth()->user()->can('role.delete')) {
             return $this->error('Unauthorized', 403);
         }
 
-        $role = Role::find($id);
+        return DB::transaction(function () use ($id) {
+            $role = Role::whereKey($id)->lockForUpdate()->first();
 
-        if (!$role) {
-            return $this->notFound('Role tidak ditemukan');
-        }
+            if (! $role) {
+                return $this->notFound('Role tidak ditemukan');
+            }
 
-        // Guard: super-admin cannot be deleted
-        if ($role->name === 'super-admin') {
-            return $this->error('Role super-admin tidak dapat dihapus', 422);
-        }
+            // Guard: super-admin cannot be deleted
+            if ($role->name === 'super-admin') {
+                return $this->error('Role super-admin tidak dapat dihapus', 422);
+            }
 
-        // Guard: role with users cannot be deleted (exclude soft-deleted users)
-        $usersCount = DB::table('model_has_roles')
-            ->join('users', 'model_has_roles.model_id', '=', 'users.id')
-            ->where('model_has_roles.role_id', $id)
-            ->whereNull('users.deleted_at')
-            ->count();
-        if ($usersCount > 0) {
-            return $this->error(
-                "Tidak dapat menghapus karena masih digunakan oleh {$usersCount} user",
-                422
-            );
-        }
+            if ($deny = $this->assertRolePermissionsManageable($role)) {
+                return $deny;
+            }
 
-        $role->delete();
+            // Include soft-deleted assignees — pivot may remain after soft-delete
+            $usersCount = DB::table('model_has_roles')
+                ->where('role_id', $id)
+                ->where('model_type', User::class)
+                ->count();
+            if ($usersCount > 0) {
+                return $this->error(
+                    "Tidak dapat menghapus karena masih digunakan oleh {$usersCount} user",
+                    422
+                );
+            }
 
-        return $this->success(null, 'Role berhasil dihapus');
+            activity('Role')
+                ->causedBy(auth()->user())
+                ->performedOn($role)
+                ->withProperties(['name' => $role->name])
+                ->log('Role dihapus');
+
+            $role->delete();
+
+            return $this->success(null, 'Role berhasil dihapus');
+        });
     }
 
     /**
@@ -218,11 +307,26 @@ class RoleController extends BaseApiController
      */
     public function permissions(): JsonResponse
     {
-        if (!auth()->user()->can('role.update')) {
+        if (! auth()->user()->canAny(['role.create', 'role.update'])) {
             return $this->error('Unauthorized', 403);
         }
 
         $allPermissions = Permission::pluck('name')->sort()->values()->toArray();
+
+        // Modul Elektronik OFF: sembunyikan permission serial dari matrix role (modules +
+        // all_permissions) — mencegah admin mengaktifkan izin untuk fitur yang tidak tersedia.
+        if (! SettingService::isElektronikEnabled()) {
+            $serialPrefixes = ['serial-change.', 'serial-hpp.', 'serial-intake.'];
+            $allPermissions = array_values(array_filter($allPermissions, function ($permission) use ($serialPrefixes) {
+                foreach ($serialPrefixes as $prefix) {
+                    if (str_starts_with($permission, $prefix)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }));
+        }
 
         $groupDefinitions = [
             [
@@ -276,6 +380,16 @@ class RoleController extends BaseApiController
                 ],
             ],
             [
+                'label' => 'Penjualan',
+                'modules' => [
+                    ['label' => 'Penjualan', 'prefix' => 'sales'],
+                    ['label' => 'Piutang', 'prefix' => 'piutang'],
+                    ['label' => 'Pembayaran Piutang', 'prefix' => 'pembayaran-piutang'],
+                    ['label' => 'Deposit Customer', 'prefix' => 'deposit-customer'],
+                    ['label' => 'Retur Penjualan', 'prefix' => 'retur-jual'],
+                ],
+            ],
+            [
                 'label' => 'Perubahan Harga',
                 'modules' => [
                     ['label' => 'Perubahan Harga', 'prefix' => 'price-change'],
@@ -310,7 +424,7 @@ class RoleController extends BaseApiController
             foreach ($group['modules'] as $module) {
                 $permissions = $this->mapPermissions($allPermissions, $module['prefix']);
 
-                if (!empty($permissions)) {
+                if (! empty($permissions)) {
                     $modules[] = [
                         'label' => $module['label'],
                         'prefix' => $module['prefix'],
@@ -319,7 +433,7 @@ class RoleController extends BaseApiController
                 }
             }
 
-            if (!empty($modules)) {
+            if (! empty($modules)) {
                 $groups[] = [
                     'label' => $group['label'],
                     'modules' => $modules,
@@ -344,7 +458,7 @@ class RoleController extends BaseApiController
 
         foreach ($allPermissions as $permission) {
             // Match permissions that start with the prefix followed by a dot
-            if (str_starts_with($permission, $prefix . '.')) {
+            if (str_starts_with($permission, $prefix.'.')) {
                 $action = substr($permission, strlen($prefix) + 1);
                 $mapped[$action] = $permission;
             }

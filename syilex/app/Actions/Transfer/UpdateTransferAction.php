@@ -2,6 +2,7 @@
 
 namespace App\Actions\Transfer;
 
+use App\Actions\Serial\Concerns\ResolvesSelectedUnits;
 use App\Models\DocTransfer;
 use App\Models\DocTransferDetail;
 use App\Models\MasterProduk;
@@ -13,6 +14,7 @@ use App\Actions\Concerns\RequiresAuthenticatedUser;
 class UpdateTransferAction
 {
     use RequiresAuthenticatedUser;
+    use ResolvesSelectedUnits;
 
     /**
      * Execute the action.
@@ -29,6 +31,16 @@ class UpdateTransferAction
         }
 
         return DB::transaction(function () use ($transfer, $data) {
+            if (! SettingService::isElektronikEnabled()) {
+                foreach ($data['details'] as $i => $detail) {
+                    if (! empty($detail['serial_unit_ids'])) {
+                        throw ValidationException::withMessages([
+                            "details.{$i}.serial_unit_ids" => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+                        ]);
+                    }
+                }
+            }
+
             // Format notes
             $notes = isset($data['notes'])
                 ? SettingService::formatName($data['notes'])
@@ -55,17 +67,27 @@ class UpdateTransferAction
                 ->pluck('id');
 
             // Re-create details
-            foreach ($data['details'] as $detail) {
+            foreach ($data['details'] as $i => $detail) {
                 $serialUnitIds = null;
                 $qty = $detail['qty'];
 
                 if ($serialProductIds->contains($detail['product_id'])) {
-                    $serialUnitIds = $detail['serial_unit_ids'] ?? [];
-                    if (empty($serialUnitIds)) {
+                    $serialUnitIds = array_values(array_unique(array_filter(
+                        $detail['serial_unit_ids'] ?? [],
+                        fn ($u) => $u !== null && $u !== ''
+                    )));
+                    if ($serialUnitIds === []) {
                         throw ValidationException::withMessages([
                             'details' => ['Produk serial wajib memilih unit (nomor seri) yang ditransfer.'],
                         ]);
                     }
+                    $this->resolveSelectedUnits(
+                        $serialUnitIds,
+                        (int) $detail['product_id'],
+                        (int) $data['warehouse_from_id'],
+                        null,
+                        "details.{$i}.serial_unit_ids"
+                    );
                     $qty = count($serialUnitIds);
                 }
 

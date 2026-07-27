@@ -91,6 +91,13 @@ export const useAuthStore = defineStore('auth', {
                     applyFullTheme(data.user.preferences);
                 }
 
+                try {
+                    const { useSettingsStore } = await import('@/stores/settings');
+                    await useSettingsStore().fetchRuntimeSettings();
+                } catch {
+                    // non-fatal
+                }
+
                 return { success: true };
             } catch (error) {
                 const message = error.response?.data?.message || 'Login gagal. Silakan coba lagi.';
@@ -189,6 +196,12 @@ export const useAuthStore = defineStore('auth', {
         async initAuth() {
             if (this.token) {
                 await this.fetchUser();
+                try {
+                    const { useSettingsStore } = await import('@/stores/settings');
+                    await useSettingsStore().fetchRuntimeSettings();
+                } catch {
+                    // non-fatal
+                }
             }
         }
     }

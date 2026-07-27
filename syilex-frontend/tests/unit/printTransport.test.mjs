@@ -1,14 +1,5 @@
 import { TestRunner } from './testRunner.mjs';
-import {
-    clearActiveConnection,
-    connectBluetooth,
-    connectSerial,
-    connectUsb,
-    isThermalSupported,
-    setActiveConnection,
-    supportMatrix,
-    trySilentReconnect
-} from '../../src/composables/print/printTransportCore.js';
+import { clearActiveConnection, connectBluetooth, connectSerial, connectUsb, isThermalSupported, setActiveConnection, supportMatrix, trySilentReconnect } from '../../src/composables/print/printTransportCore.js';
 
 const runner = new TestRunner('printTransportCore');
 

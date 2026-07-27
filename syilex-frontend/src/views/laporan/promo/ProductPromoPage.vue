@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { reportsApi } from '@/api';
+import { reportsApi, brandsApi, kategorisApi, grupsApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useNotification } from '@/composables/useNotification';
 import { useFormatters } from '@/composables/useFormatters';
@@ -29,6 +29,14 @@ const byProduct = ref({ loading: false, items: [], pagination: { total: 0 } });
 const byPromo = ref({ loading: false, items: [] });
 const lazyParams = ref({ first: 0, rows: 25 });
 const onlyWithPromo = ref(false);
+const selectedBrand = ref(null);
+const selectedKategori = ref(null);
+const selectedGrup = ref(null);
+const selectedProductStatus = ref(null);
+const selectedSort = ref(null);
+const brands = ref([]);
+const kategoris = ref([]);
+const grups = ref([]);
 
 const statusOptions = [
     { label: 'Aktif Sekarang', value: 'active_now' },
@@ -36,6 +44,28 @@ const statusOptions = [
     { label: 'Upcoming', value: 'upcoming' },
     { label: 'Expired', value: 'expired' }
 ];
+
+const productStatusOptions = [
+    { label: 'Aktif', value: 'active' },
+    { label: 'Nonaktif', value: 'inactive' }
+];
+
+const sortOptions = [
+    { label: 'Jumlah Promo Terbanyak', value: 'promo_count_desc' },
+    { label: 'Kode A-Z', value: 'kode_asc' },
+    { label: 'Nama A-Z', value: 'nama_asc' }
+];
+
+async function loadDropdowns() {
+    try {
+        const [brandsRes, kategorisRes, grupsRes] = await Promise.all([brandsApi.getList(), kategorisApi.getList(), grupsApi.getList()]);
+        if (brandsRes.data.success) brands.value = brandsRes.data.data.brands ?? [];
+        if (kategorisRes.data.success) kategoris.value = kategorisRes.data.data.kategoris ?? [];
+        if (grupsRes.data.success) grups.value = grupsRes.data.data.grups ?? [];
+    } catch (e) {
+        notify.apiError(e, 'Gagal load filter');
+    }
+}
 
 async function loadByProduct() {
     byProduct.value.loading = true;
@@ -47,6 +77,11 @@ async function loadByProduct() {
         };
         if (searchQuery.value) params.search = searchQuery.value;
         if (onlyWithPromo.value) params.only_with_promo = 1;
+        if (selectedBrand.value) params.brand_id = selectedBrand.value;
+        if (selectedKategori.value) params.kategori_id = selectedKategori.value;
+        if (selectedGrup.value) params.grup_id = selectedGrup.value;
+        if (selectedProductStatus.value) params.product_status = selectedProductStatus.value;
+        if (selectedSort.value) params.sort = selectedSort.value;
 
         const r = await reportsApi.productPromo.byProduct(params);
         if (r.data.success) {
@@ -99,7 +134,10 @@ function slotLabel(key) {
     return `Diskon ${num}`;
 }
 
-onMounted(loadByProduct);
+onMounted(() => {
+    loadDropdowns();
+    loadByProduct();
+});
 
 async function exportByPromoExcel() {
     if (!canExport.value) return;
@@ -160,11 +198,16 @@ async function exportByProductExcel() {
 
         <!-- Tab: Per Produk -->
         <div v-if="activeTab === 'by_product'">
-            <div class="flex gap-2 mb-3">
-                <IconField class="flex-1">
+            <div class="flex gap-2 mb-3 flex-wrap items-center">
+                <IconField class="flex-1 min-w-[200px]">
                     <InputIcon class="pi pi-search" />
                     <InputText v-model="searchQuery" placeholder="Cari produk..." @input="onFilterChange" class="w-full" />
                 </IconField>
+                <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" class="w-36" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" class="w-36" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedGrup" :options="grups" optionLabel="nama_grup" optionValue="id" placeholder="Grup" class="w-36" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedProductStatus" :options="productStatusOptions" optionLabel="label" optionValue="value" placeholder="Status Produk" class="w-40" showClear @change="onFilterChange" />
+                <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" placeholder="Urutkan" class="w-48" showClear @change="onFilterChange" />
                 <div class="flex items-center gap-2 px-3 bg-surface-100 dark:bg-surface-800 rounded">
                     <Checkbox v-model="onlyWithPromo" :binary="true" inputId="onlyPromo" @change="onFilterChange" />
                     <label for="onlyPromo" class="text-sm cursor-pointer">Hanya yang ada promo</label>
@@ -285,7 +328,10 @@ async function exportByProductExcel() {
                                 <div class="font-medium text-sm">{{ p.nama_produk }}</div>
                                 <div class="text-xs text-surface-500">{{ p.kode_produk }}</div>
                             </div>
-                            <div v-if="data.products.length > 20" class="text-xs text-surface-500 col-span-full">+{{ data.products.length - 20 }} produk lainnya</div>
+                            <div v-if="(data.products_total ?? data.products.length) > 20" class="text-xs text-surface-500 col-span-full">
+                                dan {{ (data.products_total ?? data.products.length) - 20 }} lainnya
+                                <span v-if="data.products_truncated">(payload dibatasi {{ data.products.length }} dari {{ data.products_total }} produk)</span>
+                            </div>
                         </div>
                     </div>
                 </template>

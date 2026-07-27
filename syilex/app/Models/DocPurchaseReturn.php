@@ -31,6 +31,7 @@ class DocPurchaseReturn extends Model
         'supplier_id',
         'warehouse_id',
         'po_id',
+        'serial_intake_id',
         'subtotal',
         'diskon_1_tipe',
         'diskon_1_nilai',
@@ -69,6 +70,7 @@ class DocPurchaseReturn extends Model
         'supplier_id',
         'warehouse_id',
         'po_id',
+        'serial_intake_id',
         'locked_by',
         'approved_by',
         'created_by',
@@ -127,6 +129,14 @@ class DocPurchaseReturn extends Model
     public function purchaseOrder(): BelongsTo
     {
         return $this->belongsTo(DocPurchaseOrder::class, 'po_id');
+    }
+
+    /**
+     * Get the related serial intake (PBS), if linked.
+     */
+    public function serialIntake(): BelongsTo
+    {
+        return $this->belongsTo(DocSerialIntake::class, 'serial_intake_id');
     }
 
     /**

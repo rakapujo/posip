@@ -64,7 +64,6 @@ session([
         'rounding_sales_precision' => '100',
         'negative_mode' => 'block',
         'discount_mode' => 'recursive',
-        'cost_allocation_mode' => 'by_value',
         'price_input_mode' => 'auto',
         'elektronik_enabled' => true,
     ],

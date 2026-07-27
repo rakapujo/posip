@@ -7,12 +7,19 @@ import { useReportDetailDialog } from '@/composables/useReportDetailDialog';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 
 const authStore = useAuthStore();
 const { formatCurrency, formatQty, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
 const canExport = computed(() => authStore.can('laporan.export'));
+
+const reportMode = ref('bruto');
+const modeOptions = [
+    { label: 'Bruto', value: 'bruto' },
+    { label: 'Net', value: 'net' }
+];
 
 const selectedTerminal = ref(null);
 
@@ -22,9 +29,10 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
     exportFilenamePrefix: 'laporan_disc_line',
     fetchDropdowns: salesFinancialReportApi.getDropdowns,
     listErrorLabel: 'laporan disc line',
-    getExtraFilters: () => ({ terminal_id: selectedTerminal.value }),
+    getExtraFilters: () => ({ terminal_id: selectedTerminal.value, mode: reportMode.value }),
     onResetFilters: () => {
         selectedTerminal.value = null;
+        reportMode.value = 'bruto';
     },
     defaultSortField: 'tanggal'
 });
@@ -113,6 +121,7 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
+                    <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
                     <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="onFilterChange" />
                     <div class="w-40">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
@@ -125,23 +134,25 @@ async function exportPdf() {
             </template>
         </Toolbar>
 
+        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: baris, ringkasan, dan export sudah dikurangi retur</Message>
+
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Jumlah Nota</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.jumlah_nota }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.jumlah_nota }}</div>
             </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Total Bruto</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_bruto) }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_bruto) }}</div>
             </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                 <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Disc Line</div>
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_disc_line) }}</div>
+                <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_disc_line) }}</div>
             </div>
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                 <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Total Setelah Disc</div>
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_setelah_disc) }}</div>
+                <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_setelah_disc) }}</div>
             </div>
         </div>
 
@@ -221,7 +232,9 @@ async function exportPdf() {
             <!-- Actions -->
             <Column :exportable="false" style="min-width: 80px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" outlined rounded severity="info" @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -255,15 +268,15 @@ async function exportPdf() {
                 <div class="grid grid-cols-3 gap-4 mb-4">
                     <div class="text-center">
                         <div class="text-surface-500 text-sm">Total Bruto</div>
-                        <div class="text-xl font-bold">{{ formatCurrency(detailSummary.total_bruto) }}</div>
+                        <div class="summary-money-value">{{ formatCurrency(detailSummary.total_bruto) }}</div>
                     </div>
                     <div class="text-center">
                         <div class="text-red-600 dark:text-red-400 text-sm">Total Disc</div>
-                        <div class="text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(detailSummary.total_disc) }}</div>
+                        <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(detailSummary.total_disc) }}</div>
                     </div>
                     <div class="text-center">
                         <div class="text-blue-600 dark:text-blue-400 text-sm">Total Jumlah</div>
-                        <div class="text-xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(detailSummary.total_jumlah) }}</div>
+                        <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(detailSummary.total_jumlah) }}</div>
                     </div>
                 </div>
 

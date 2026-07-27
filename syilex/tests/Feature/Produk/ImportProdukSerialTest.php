@@ -26,11 +26,11 @@ class ImportProdukSerialTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        foreach (['import.master', 'produk.create', 'produk.view'] as $perm) {
+        foreach (['import.master', 'produk.create', 'produk.update', 'produk.view'] as $perm) {
             Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
         }
         $this->admin = User::factory()->create();
-        $this->admin->givePermissionTo(['import.master', 'produk.create', 'produk.view']);
+        $this->admin->givePermissionTo(['import.master', 'produk.create', 'produk.update', 'produk.view']);
     }
 
     /** Bangun file xlsx sementara dari array (baris pertama = header). */

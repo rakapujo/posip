@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /**
  * Header Koreksi HPP Serial (modul serial A+).
  * Mengoreksi harga_modal & cost_per_unit unit tersedia; alur draft → approved.
- * Default tidak menyentuh avg_cost agregat produk.
+ * Saat approve: Metode A — avg_cost = rata-rata cost_per_unit unit tersedia.
  */
 class DocSerialHppCorrection extends Model
 {

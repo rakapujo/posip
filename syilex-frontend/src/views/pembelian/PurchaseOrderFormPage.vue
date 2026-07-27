@@ -4,13 +4,22 @@ import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch, nextTick } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useSettingsStore } from '@/stores/settings';
+import { useAuthStore } from '@/stores/auth';
+import ProductUnitPickerDrawer from '@/components/common/ProductUnitPickerDrawer.vue';
+import { buildTakenKeys, findDuplicateProductUnitErrors, productUnitRowHighlight } from '@/utils/productUnitLineHelpers';
 
 const notify = useNotification();
 const router = useRouter();
 const route = useRoute();
+const settingsStore = useSettingsStore();
+const authStore = useAuthStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
+const canViewHarga = computed(() => authStore.can('po.view_harga'));
 const {
     formatCurrency,
     formatQty,
+    formatDateTime,
     shouldUppercase,
     getPrimeDateFormatShort,
     toDateTimeString,
@@ -69,6 +78,8 @@ const form = ref({
     details: []
 });
 
+const canAddLines = computed(() => !!form.value.supplier_id && !!form.value.warehouse_id);
+
 // Calculated totals (from backend)
 const calculated = ref({
     subtotal: 0,
@@ -84,13 +95,38 @@ const calculated = ref({
     grand_total: 0
 });
 
-// Product search
-const productSuggestions = ref([]);
-const loadingProducts = ref(false);
-
 // Discount dialog
 const discountDialog = ref(false);
 const editingDiscountIndex = ref(null);
+
+// Price history dialog
+const priceHistoryDialog = ref(false);
+const priceHistoryLoading = ref(false);
+const priceHistoryItems = ref([]);
+const priceHistoryTitle = ref('');
+
+async function openPriceHistory(detail) {
+    if (!detail?.product_id) return;
+    priceHistoryTitle.value = `${detail.product?.kode_produk || ''} — ${detail.unit_used || ''}`.trim();
+    priceHistoryDialog.value = true;
+    priceHistoryLoading.value = true;
+    priceHistoryItems.value = [];
+    try {
+        const res = await purchaseOrdersApi.getPriceHistory({
+            product_id: detail.product_id,
+            supplier_id: form.value.supplier_id || undefined,
+            unit: detail.unit_used || undefined,
+            limit: 20
+        });
+        if (res.data.success) {
+            priceHistoryItems.value = res.data.data.items || [];
+        }
+    } catch (e) {
+        notify.apiError(e, 'Gagal memuat riwayat harga');
+    } finally {
+        priceHistoryLoading.value = false;
+    }
+}
 
 // Tipe options - dynamically use currency symbol from settings
 const tipeOptions = computed(() => [
@@ -190,7 +226,7 @@ async function loadPurchaseOrder() {
                 diskon_3_nilai: po.diskon_3_nilai || 0,
                 biaya_kirim_tipe: po.biaya_kirim_tipe || 'none',
                 biaya_kirim_nilai: po.biaya_kirim_nilai || 0,
-                biaya_lain_nama: po.biaya_lain_nama || '',
+                biaya_lain_nama: po.biaya_lain_nama || 'Biaya Lain-lain',
                 biaya_lain_tipe: po.biaya_lain_tipe || 'none',
                 biaya_lain_nilai: po.biaya_lain_nilai || 0,
                 details: po.details.map((d) => ({
@@ -256,52 +292,78 @@ watch(
     }
 );
 
-// Product autocomplete
-async function searchProducts(event) {
-    loadingProducts.value = true;
-    try {
-        const response = await purchaseOrdersApi.getProducts({
-            search: event.query
-        });
-        if (response.data.success) {
-            productSuggestions.value = response.data.data.items;
-        }
-    } catch (error) {
-        console.error('Failed to search products:', error);
-        notify.apiError(error, 'Gagal search products');
-    } finally {
-        loadingProducts.value = false;
-    }
+// Product picker drawer
+const pickerVisible = ref(false);
+const pickerQuery = ref('');
+const pickerTargetIndex = ref(-1);
+const pickerTakenKeys = computed(() =>
+    buildTakenKeys(form.value.details, {
+        exceptIndex: pickerTargetIndex.value >= 0 ? pickerTargetIndex.value : undefined,
+        unitField: 'unit_used'
+    })
+);
+
+function openProductPicker(index) {
+    const row = form.value.details[index];
+    pickerTargetIndex.value = index;
+    pickerQuery.value = row?._searchQuery || row?.product?.kode_produk || row?.product?.nama_produk || '';
+    pickerVisible.value = true;
 }
 
-function onProductSelect(event, index) {
-    const product = event.value || event;
-    if (product && typeof product === 'object' && product.id) {
-        // Filter unique units by name
-        const rawUnits = product.units || [];
-        const seenUnits = new Set();
-        const units = rawUnits.filter((u) => {
-            if (seenUnits.has(u.unit)) return false;
-            seenUnits.add(u.unit);
-            return true;
-        });
+async function fetchPickerProducts(q) {
+    const response = await purchaseOrdersApi.getProducts({ search: q });
+    if (!response.data.success) return [];
+    return response.data.data.items || [];
+}
 
-        const defaultUnit = units[0] || { unit: '', konversi: 1 };
+function applyPickerSelect({ product, unit, konversi, unitObj }) {
+    const index = pickerTargetIndex.value;
+    if (index < 0 || !product?.id) return;
 
-        form.value.details[index] = {
-            ...form.value.details[index],
-            product_id: product.id,
-            product: product,
-            units: units,
-            unit_used: defaultUnit.unit,
-            unit_konversi: defaultUnit.konversi,
-            qty_in_unit: 1,
-            harga_per_unit: 0
-        };
+    const rawUnits = product.units || [];
+    const seenUnits = new Set();
+    const units = rawUnits.filter((u) => {
+        if (seenUnits.has(u.unit)) return false;
+        seenUnits.add(u.unit);
+        return true;
+    });
 
-        // Try to get last price
-        getLastPrice(index, product.id, form.value.supplier_id, defaultUnit.unit);
-    }
+    form.value.details[index] = {
+        ...form.value.details[index],
+        _searchQuery: '',
+        product_id: product.id,
+        product,
+        units: units.length ? units : [{ unit, konversi }],
+        unit_used: unit,
+        unit_konversi: konversi || 1,
+        qty_in_unit: 1,
+        harga_per_unit: 0
+    };
+    getLastPrice(index, product.id, form.value.supplier_id, unit);
+}
+
+function onPickerTakenClick() {
+    notify.info('Produk + satuan sudah ada di form — ubah qty di baris tersebut');
+}
+
+function findDuplicateLineIndex(productId, unit, exceptIndex) {
+    return form.value.details.findIndex((d, i) => i !== exceptIndex && d.product_id === productId && d.unit_used === unit);
+}
+
+/** Gabung qty hanya saat ganti satuan bentrok. */
+function mergeDuplicateLine(index, { silent = false } = {}) {
+    const detail = form.value.details[index];
+    if (!detail?.product_id || !detail.unit_used) return false;
+    const other = findDuplicateLineIndex(detail.product_id, detail.unit_used, index);
+    if (other < 0) return false;
+
+    const keep = Math.min(index, other);
+    const drop = Math.max(index, other);
+    form.value.details[keep].qty_in_unit = (Number(form.value.details[keep].qty_in_unit) || 0) + (Number(form.value.details[drop].qty_in_unit) || 0);
+    form.value.details.splice(drop, 1);
+    if (!silent) notify.info('Produk + satuan sudah ada — qty digabung ke baris yang ada');
+    calculateTotals();
+    return true;
 }
 
 async function getLastPrice(index, productId, supplierId, unit) {
@@ -314,9 +376,11 @@ async function getLastPrice(index, productId, supplierId, unit) {
         if (response.data.success && response.data.data.last_price) {
             form.value.details[index].harga_per_unit = response.data.data.last_price.harga_per_unit;
         }
+        calculateTotals();
     } catch (error) {
         console.error('Failed to get last price:', error);
         notify.apiError(error, 'Gagal get last price');
+        calculateTotals();
     }
 }
 
@@ -326,15 +390,24 @@ function onUnitChange(index) {
         const selectedUnit = detail.units.find((u) => u.unit === detail.unit_used);
         if (selectedUnit) {
             detail.unit_konversi = selectedUnit.konversi;
-            // Try to get last price for new unit
+            if (mergeDuplicateLine(index)) return;
             getLastPrice(index, detail.product_id, form.value.supplier_id, detail.unit_used);
+            return;
         }
     }
     calculateTotals();
 }
 
-function addDetail() {
-    form.value.details.push({
+function detailRowClass(data) {
+    const kind = productUnitRowHighlight(data, form.value.details, { unitField: 'unit_used' });
+    if (kind === 'dup-unit') return 'row-dup-unit';
+    if (kind === 'dup-product') return 'row-dup-product';
+    return '';
+}
+
+function emptyDetail() {
+    return {
+        _searchQuery: '',
         product_id: null,
         product: null,
         unit_used: '',
@@ -352,6 +425,27 @@ function addDetail() {
         diskon_4_nilai: 0,
         diskon_5_tipe: 'none',
         diskon_5_nilai: 0
+    };
+}
+
+function addDetail() {
+    if (!canAddLines.value) {
+        notify.selectFirst('supplier & gudang');
+        return;
+    }
+    form.value.details.push(emptyDetail());
+}
+
+function insertDetailAfter(index) {
+    if (!canAddLines.value) {
+        notify.selectFirst('supplier & gudang');
+        return;
+    }
+    form.value.details.splice(index + 1, 0, emptyDetail());
+    nextTick(() => {
+        const inputs = document.querySelectorAll('.po-detail-table .product-search-input');
+        const el = inputs[index + 1];
+        if (el && typeof el.focus === 'function') el.focus();
     });
 }
 
@@ -384,7 +478,23 @@ async function calculateTotals() {
         }
 
         try {
-            const payload = buildPayload();
+            const payload = buildPayload({ forCalc: true });
+            if (!payload.details.length) {
+                calculated.value = {
+                    subtotal: 0,
+                    total_diskon_header: 0,
+                    total_setelah_diskon: 0,
+                    biaya_kirim_hasil: 0,
+                    biaya_lain_hasil: 0,
+                    total_biaya_tambahan: 0,
+                    dpp: 0,
+                    pajak_nominal: 0,
+                    total_sebelum_pembulatan: 0,
+                    pembulatan: 0,
+                    grand_total: 0
+                };
+                return;
+            }
             const response = await purchaseOrdersApi.calculate(payload);
             if (response.data.success) {
                 calculated.value = response.data.data.calculation;
@@ -396,7 +506,11 @@ async function calculateTotals() {
     }, 500);
 }
 
-function buildPayload() {
+function buildPayload({ forCalc = false } = {}) {
+    let details = form.value.details;
+    if (forCalc) {
+        details = details.filter((d) => d.product_id && Number(d.qty_in_unit) > 0);
+    }
     return {
         tanggal_po: toDateTimeString(form.value.tanggal_po),
         supplier_id: form.value.supplier_id,
@@ -420,7 +534,7 @@ function buildPayload() {
         biaya_lain_nama: form.value.biaya_lain_nama || null,
         biaya_lain_tipe: form.value.biaya_lain_tipe,
         biaya_lain_nilai: form.value.biaya_lain_nilai,
-        details: form.value.details.map((d) => ({
+        details: details.map((d) => ({
             product_id: d.product_id,
             unit_used: d.unit_used,
             unit_konversi: d.unit_konversi,
@@ -440,8 +554,37 @@ function buildPayload() {
     };
 }
 
+function syncDetailProducts() {
+    // Drop blank extra rows (Tambah/+, user often leaves one empty)
+    form.value.details = form.value.details.filter((d) => {
+        if (d.product_id) return true;
+        if (d.product && typeof d.product === 'object' && d.product.id) return true;
+        if (typeof d.product === 'string' && d.product.trim()) return true;
+        return false;
+    });
+
+    form.value.details.forEach((detail) => {
+        if (detail.product_id || !detail.product?.id) return;
+        detail.product_id = detail.product.id;
+        if (!detail.units?.length) {
+            const rawUnits = detail.product.units || [];
+            const seen = new Set();
+            detail.units = rawUnits.filter((u) => {
+                if (seen.has(u.unit)) return false;
+                seen.add(u.unit);
+                return true;
+            });
+        }
+        if (!detail.unit_used && detail.units?.[0]) {
+            detail.unit_used = detail.units[0].unit;
+            detail.unit_konversi = detail.units[0].konversi;
+        }
+    });
+}
+
 function validate() {
     errors.value = {};
+    syncDetailProducts();
 
     if (!form.value.supplier_id) {
         errors.value.supplier_id = 'Supplier wajib dipilih';
@@ -456,23 +599,9 @@ function validate() {
         errors.value.details = 'Minimal harus ada 1 detail produk';
     }
 
-    // Check for duplicate product + unit combinations
-    const seenProductUnits = new Set();
-    form.value.details.forEach((detail, index) => {
-        if (detail.product_id && detail.unit_used) {
-            const key = `${detail.product_id}-${detail.unit_used}`;
-            if (seenProductUnits.has(key)) {
-                errors.value[`details.${index}.product_id`] = 'Produk dengan satuan yang sama sudah ada';
-            } else {
-                seenProductUnits.add(key);
-            }
-        }
-    });
-
-    // Validate each detail
     form.value.details.forEach((detail, index) => {
         if (!detail.product_id) {
-            errors.value[`details.${index}.product_id`] = 'Produk wajib dipilih';
+            errors.value[`details.${index}.product_id`] = 'Produk wajib dipilih dari daftar';
         }
         if (!detail.unit_used) {
             errors.value[`details.${index}.unit_used`] = 'Satuan wajib dipilih';
@@ -485,12 +614,17 @@ function validate() {
         }
     });
 
+    for (const dup of findDuplicateProductUnitErrors(form.value.details, { unitField: 'unit_used' })) {
+        errors.value[`details.${dup.index}.product_id`] = dup.message;
+    }
+
     return Object.keys(errors.value).length === 0;
 }
 
 async function save() {
     if (!validate()) {
-        notify.formInvalid();
+        const first = Object.values(errors.value).find((v) => typeof v === 'string');
+        notify.formInvalid(first || 'Periksa kembali form Anda');
         return;
     }
 
@@ -525,11 +659,6 @@ function cancel() {
     router.push({ name: 'pembelian-po' });
 }
 
-function getProductLabel(product) {
-    if (!product) return '';
-    return `${product.kode_produk} - ${product.nama_produk}`;
-}
-
 // Calculate item subtotal for display
 function getItemSubtotal(detail) {
     const bruto = (detail.qty_in_unit || 0) * (detail.harga_per_unit || 0);
@@ -552,7 +681,7 @@ function getItemSubtotal(detail) {
 
         const discountFromPercent = bruto * (totalDiscountPercent / 100);
         const totalDiscount = discountFromPercent + totalDiscountNominal;
-        return Math.max(0, bruto - totalDiscount);
+        return Math.round(Math.max(0, bruto - totalDiscount) * 100) / 100;
     } else {
         // Recursive: apply each discount to the remaining amount
         let current = bruto;
@@ -565,7 +694,7 @@ function getItemSubtotal(detail) {
                 current -= Math.min(nilai, current);
             }
         }
-        return Math.max(0, current);
+        return Math.round(Math.max(0, current) * 100) / 100;
     }
 }
 
@@ -790,16 +919,16 @@ function onDiscountValueChange(discIndex, newValue) {
                     </div>
                     <div class="flex flex-col gap-2">
                         <label class="font-medium">No. Referensi <span class="text-surface-400">(bukti/kwitansi)</span></label>
-                        <InputText v-model="form.cash_no_referensi" placeholder="No. bukti/kwitansi" class="w-full" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" maxlength="100" />
+                        <InputText v-model="form.cash_no_referensi" placeholder="No. bukti/kwitansi" class="w-full" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" maxlength="50" />
                     </div>
                     <template v-if="form.cash_metode === 'transfer'">
                         <div class="flex flex-col gap-2">
                             <label class="font-medium">Nama Bank</label>
-                            <InputText v-model="form.cash_bank_nama" class="w-full" maxlength="100" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
+                            <InputText v-model="form.cash_bank_nama" class="w-full" maxlength="50" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-medium">No. Rekening</label>
-                            <InputText v-model="form.cash_bank_rekening" class="w-full" maxlength="50" />
+                            <InputText v-model="form.cash_bank_rekening" class="w-full" maxlength="30" />
                         </div>
                     </template>
                 </div>
@@ -809,37 +938,45 @@ function onDiscountValueChange(discIndex, newValue) {
             <div class="border border-surface-200 rounded-lg p-4 mb-6">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-medium m-0">Detail Produk</h3>
-                    <Button label="Tambah Produk" icon="pi pi-plus" size="small" @click="addDetail" />
+                    <Button
+                        label="Tambah Produk"
+                        icon="pi pi-plus"
+                        size="small"
+                        @click="addDetail"
+                        :disabled="!canAddLines"
+                        v-tooltip.top="canAddLines ? null : 'Pilih supplier & gudang dulu'"
+                    />
                 </div>
+                <small v-if="serialEnabled" class="text-surface-500 block mb-3">
+                    Produk serial tidak masuk daftar ini —
+                    <router-link :to="{ name: 'inventory-serial-intake-create' }" class="text-primary underline">Pembelian Serial</router-link>
+                </small>
 
                 <small v-if="errors.details" class="text-red-500 block mb-4">{{ errors.details }}</small>
 
-                <DataTable :value="form.details" class="p-datatable-sm" responsiveLayout="scroll" v-if="form.details.length > 0">
+                <DataTable :value="form.details" class="p-datatable-sm po-detail-table" responsiveLayout="scroll" v-if="form.details.length > 0" :rowClass="detailRowClass">
                     <Column header="#" style="width: 40px">
                         <template #body="{ index }">{{ index + 1 }}</template>
                     </Column>
 
                     <Column header="Produk" style="min-width: 250px">
                         <template #body="{ data, index }">
-                            <AutoComplete
-                                v-model="data.product"
-                                :suggestions="productSuggestions"
-                                @complete="searchProducts"
-                                @item-select="(e) => onProductSelect(e, index)"
-                                :optionLabel="getProductLabel"
-                                placeholder="Cari produk..."
-                                :loading="loadingProducts"
-                                class="w-full"
-                                :class="{ 'p-invalid': errors[`details.${index}.product_id`] }"
-                                dropdown
-                            >
-                                <template #option="{ option }">
-                                    <div class="flex flex-col">
-                                        <span class="font-medium">{{ option.kode_produk }}</span>
-                                        <span class="text-sm text-surface-500">{{ option.nama_produk }}</span>
-                                    </div>
-                                </template>
-                            </AutoComplete>
+                            <div v-if="data.product_id && data.product" class="flex flex-col gap-1">
+                                <span class="font-medium">{{ data.product?.kode_produk }}</span>
+                                <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
+                                <Button label="Ganti" icon="pi pi-search" size="small" text class="!p-0 !w-auto self-start" @click="openProductPicker(index)" />
+                            </div>
+                            <div v-else class="flex gap-1">
+                                <InputText
+                                    v-model="data._searchQuery"
+                                    class="w-full product-search-input"
+                                    placeholder="Ketik lalu Enter…"
+                                    :class="{ 'p-invalid': errors[`details.${index}.product_id`] }"
+                                    @keydown.enter.prevent="openProductPicker(index)"
+                                />
+                                <Button icon="pi pi-search" size="small" @click="openProductPicker(index)" aria-label="Cari produk" />
+                            </div>
+                            <small v-if="errors[`details.${index}.product_id`]" class="text-red-500">{{ errors[`details.${index}.product_id`] }}</small>
                         </template>
                     </Column>
 
@@ -855,6 +992,7 @@ function onDiscountValueChange(discIndex, newValue) {
                                 </template>
                                 <template #option="{ option }"> {{ option.unit }} ({{ option.konversi }}) </template>
                             </Select>
+                            <small v-if="errors[`details.${index}.unit_used`]" class="text-red-500">{{ errors[`details.${index}.unit_used`] }}</small>
                         </template>
                     </Column>
 
@@ -871,27 +1009,40 @@ function onDiscountValueChange(discIndex, newValue) {
                                 :class="{ 'p-invalid': errors[`details.${index}.qty_in_unit`] }"
                                 @update:modelValue="calculateTotals"
                             />
+                            <small v-if="errors[`details.${index}.qty_in_unit`]" class="text-red-500">{{ errors[`details.${index}.qty_in_unit`] }}</small>
                         </template>
                     </Column>
 
-                    <Column header="Harga/Unit" style="width: 150px">
+                    <Column v-if="canViewHarga" header="Harga/Unit" style="width: 170px">
                         <template #body="{ data }">
-                            <InputNumber
-                                v-select-on-focus
-                                v-model="data.harga_per_unit"
-                                :min="0"
-                                :prefix="currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
-                                :suffix="currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
-                                :locale="getLocale"
-                                :minFractionDigits="getCurrencyMinFractionDigits"
-                                :maxFractionDigits="getCurrencyMaxFractionDigits"
-                                class="w-full"
-                                @update:modelValue="calculateTotals"
-                            />
+                            <div class="flex items-center gap-1">
+                                <InputNumber
+                                    v-select-on-focus
+                                    v-model="data.harga_per_unit"
+                                    :min="0"
+                                    :prefix="currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
+                                    :suffix="currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
+                                    :locale="getLocale"
+                                    :minFractionDigits="getCurrencyMinFractionDigits"
+                                    :maxFractionDigits="getCurrencyMaxFractionDigits"
+                                    class="w-full"
+                                    @update:modelValue="calculateTotals"
+                                />
+                                <Button
+                                    v-if="data.product_id"
+                                    icon="pi pi-history"
+                                    severity="secondary"
+                                    text
+                                    rounded
+                                    size="small"
+                                    v-tooltip.top="'Riwayat harga'"
+                                    @click="openPriceHistory(data)"
+                                />
+                            </div>
                         </template>
                     </Column>
 
-                    <Column header="Diskon" style="width: 160px">
+                    <Column v-if="canViewHarga" header="Diskon" style="width: 160px">
                         <template #body="{ data, index }">
                             <div v-if="hasDiscount(data)" class="flex items-center gap-1">
                                 <div
@@ -920,15 +1071,26 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column header="Subtotal" style="width: 130px" bodyClass="text-right">
+                    <Column v-if="canViewHarga" header="Subtotal" style="width: 130px" bodyClass="text-right">
                         <template #body="{ data }">
                             <span class="font-medium">{{ formatCurrency(getItemSubtotal(data)) }}</span>
                         </template>
                     </Column>
 
-                    <Column header="" style="width: 50px">
+                    <Column header="" style="width: 90px">
                         <template #body="{ index }">
-                            <Button icon="pi pi-trash" severity="danger" text rounded @click="removeDetail(index)" />
+                            <div class="flex items-center justify-end gap-0">
+                                <Button
+                                    icon="pi pi-plus"
+                                    severity="secondary"
+                                    text
+                                    rounded
+                                    :disabled="!canAddLines"
+                                    v-tooltip.top="canAddLines ? 'Tambah baris di bawah' : 'Pilih supplier & gudang dulu'"
+                                    @click="insertDetailAfter(index)"
+                                />
+                                <Button icon="pi pi-trash" severity="danger" text rounded v-tooltip.top="'Hapus baris'" @click="removeDetail(index)" />
+                            </div>
                         </template>
                     </Column>
                 </DataTable>
@@ -940,7 +1102,7 @@ function onDiscountValueChange(discIndex, newValue) {
             </div>
 
             <!-- Bottom Section: Costs & Totals -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div v-if="canViewHarga" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <!-- Left: Discounts & Costs -->
                 <div class="space-y-4">
                     <!-- Header Discounts -->
@@ -989,7 +1151,7 @@ function onDiscountValueChange(discIndex, newValue) {
                                 />
                             </div>
                             <div class="flex gap-2 items-center">
-                                <InputText v-model="form.biaya_lain_nama" placeholder="Nama Biaya Lain" class="w-28" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
+                                <InputText v-model="form.biaya_lain_nama" placeholder="Nama Biaya Lain" class="w-40" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
                                 <Select v-model="form.biaya_lain_tipe" :options="tipeOptions" optionLabel="label" optionValue="value" class="w-28" @change="calculateTotals" />
                                 <InputNumber
                                     v-select-on-focus
@@ -1065,12 +1227,12 @@ function onDiscountValueChange(discIndex, newValue) {
             <!-- Form Actions -->
             <div class="flex justify-end gap-2">
                 <Button label="Batal" severity="secondary" outlined @click="cancel" />
-                <Button label="Simpan" icon="pi pi-save" type="submit" :loading="saving" :disabled="form.details.length === 0" />
+                <Button label="Simpan" icon="pi pi-save" type="submit" :loading="saving" :disabled="!form.details.some((d) => d.product_id)" />
             </div>
         </form>
 
         <!-- Discount Dialog -->
-        <Dialog v-model:visible="discountDialog" header="Diskon Item" modal :style="{ width: '400px' }" :closable="true" @hide="closeDiscountDialog">
+        <Dialog v-if="canViewHarga" v-model:visible="discountDialog" header="Diskon Item" modal :style="{ width: '400px' }" :closable="true" @hide="closeDiscountDialog">
             <template v-if="editingDiscountIndex !== null && form.details[editingDiscountIndex]">
                 <div class="space-y-4">
                     <!-- Discount mode info -->
@@ -1138,5 +1300,53 @@ function onDiscountValueChange(discIndex, newValue) {
                 <Button label="Tutup" severity="secondary" @click="closeDiscountDialog" />
             </template>
         </Dialog>
+
+        <Dialog v-if="canViewHarga" v-model:visible="priceHistoryDialog" :header="`Riwayat Harga — ${priceHistoryTitle}`" modal :style="{ width: '720px' }">
+            <DataTable :value="priceHistoryItems" :loading="priceHistoryLoading" class="p-datatable-sm" responsiveLayout="scroll">
+                <template #empty>
+                    <div class="text-center py-4 text-surface-500">Belum ada riwayat harga.</div>
+                </template>
+                <Column header="Tanggal" style="min-width: 140px">
+                    <template #body="{ data }">{{ formatDateTime(data.tanggal) }}</template>
+                </Column>
+                <Column header="Supplier" style="min-width: 160px">
+                    <template #body="{ data }">{{ data.supplier?.nama_supplier || '-' }}</template>
+                </Column>
+                <Column header="Satuan" field="unit_used" style="width: 90px" />
+                <Column header="Harga/Unit" bodyClass="text-right" style="min-width: 130px">
+                    <template #body="{ data }">{{ formatCurrency(data.harga_per_unit) }}</template>
+                </Column>
+                <Column header="No. PO" style="min-width: 140px">
+                    <template #body="{ data }">{{ data.purchase_order?.nomor_dokumen || '-' }}</template>
+                </Column>
+            </DataTable>
+        </Dialog>
+
+        <ProductUnitPickerDrawer
+            v-model:visible="pickerVisible"
+            :query="pickerQuery"
+            title="Pilih Produk"
+            :fetch-products="fetchPickerProducts"
+            :taken-keys="pickerTakenKeys"
+            :include-serial="false"
+            :show-price="false"
+            @select="applyPickerSelect"
+            @taken-click="onPickerTakenClick"
+        />
     </div>
 </template>
+
+<style scoped>
+:deep(.row-dup-product) {
+    background: color-mix(in srgb, var(--p-orange-100, #ffedd5) 55%, transparent) !important;
+}
+:deep(.row-dup-unit) {
+    background: color-mix(in srgb, var(--p-red-100, #fee2e2) 65%, transparent) !important;
+}
+.app-dark :deep(.row-dup-product) {
+    background: color-mix(in srgb, var(--p-orange-900, #7c2d12) 35%, transparent) !important;
+}
+.app-dark :deep(.row-dup-unit) {
+    background: color-mix(in srgb, var(--p-red-900, #7f1d1d) 40%, transparent) !important;
+}
+</style>

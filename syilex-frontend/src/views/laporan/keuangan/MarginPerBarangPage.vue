@@ -1,10 +1,12 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { reportsApi } from '@/api';
+import { reportsApi, brandsApi, tipesApi, kategorisApi, grupsApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { downloadBlob } from '@/utils/downloadBlob';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import MoneySummaryPanel from '@/components/common/MoneySummaryPanel.vue';
 
 const authStore = useAuthStore();
 const canViewHpp = computed(() => authStore.can('stok.view_hpp'));
@@ -24,6 +26,50 @@ const lazyParams = ref({ first: 0, rows: 25 });
 const selectedBucket = ref('any');
 const searchQuery = ref('');
 const selectedSort = ref('margin_asc');
+const selectedBrand = ref(null);
+const selectedTipe = ref(null);
+const selectedKategori = ref(null);
+const selectedGrup = ref(null);
+const selectedStatus = ref(null);
+const selectedPriceField = ref(null);
+const brands = ref([]);
+const tipes = ref([]);
+const kategoris = ref([]);
+const grups = ref([]);
+
+const statusOptions = [
+    { label: 'Aktif', value: 'active' },
+    { label: 'Nonaktif', value: 'inactive' }
+];
+
+const priceFieldOptions = [
+    { label: 'Harga 1', value: 'harga_1' },
+    { label: 'Harga 2', value: 'harga_2' },
+    { label: 'Harga 3', value: 'harga_3' },
+    { label: 'Harga 4 (Default)', value: 'harga_4' }
+];
+
+const summaryItems = computed(() => [
+    { label: 'Total Produk', value: String(summary.value.total_produk || 0), hint: 'Produk active belum soft-delete' },
+    { label: 'Tanpa Harga', value: String(summary.value.tanpa_harga || 0), hint: 'Harga jual terpilih ≤ 0', tone: 'default' },
+    { label: 'Margin Rendah', value: String(summary.value.margin_rendah || 0), hint: 'Margin % < 10%', tone: 'danger' },
+    { label: 'Margin Sedang', value: String(summary.value.margin_sedang || 0), hint: 'Margin 10%–20%', tone: 'warn' },
+    { label: 'Margin Tinggi', value: String(summary.value.margin_tinggi || 0), hint: 'Margin > 20%', tone: 'success' },
+    { label: 'Rugi Margin', value: String(summary.value.rugi_margin || 0), hint: 'Harga jual < avg_cost', tone: 'danger' }
+]);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedBucket.value && selectedBucket.value !== 'any') n++;
+    if (selectedSort.value && selectedSort.value !== 'margin_asc') n++;
+    if (selectedBrand.value) n++;
+    if (selectedTipe.value) n++;
+    if (selectedKategori.value) n++;
+    if (selectedGrup.value) n++;
+    if (selectedStatus.value) n++;
+    if (selectedPriceField.value) n++;
+    return n;
+});
 
 const bucketOptions = [
     { label: 'Semua', value: 'any' },
@@ -39,9 +85,32 @@ const sortOptions = [
     { label: 'Nama A-Z', value: 'nama_asc' }
 ];
 
+function extraFilterParams() {
+    const params = {};
+    if (selectedBrand.value) params.brand_id = selectedBrand.value;
+    if (selectedTipe.value) params.tipe_id = selectedTipe.value;
+    if (selectedKategori.value) params.kategori_id = selectedKategori.value;
+    if (selectedGrup.value) params.grup_id = selectedGrup.value;
+    if (selectedStatus.value) params.status = selectedStatus.value;
+    if (selectedPriceField.value) params.price_field = selectedPriceField.value;
+    return params;
+}
+
+async function loadDropdowns() {
+    try {
+        const [brandsRes, tipesRes, kategorisRes, grupsRes] = await Promise.all([brandsApi.getList(), tipesApi.getList(), kategorisApi.getList(), grupsApi.getList()]);
+        if (brandsRes.data.success) brands.value = brandsRes.data.data.brands ?? [];
+        if (tipesRes.data.success) tipes.value = tipesRes.data.data.tipes ?? [];
+        if (kategorisRes.data.success) kategoris.value = kategorisRes.data.data.kategoris ?? [];
+        if (grupsRes.data.success) grups.value = grupsRes.data.data.grups ?? [];
+    } catch (e) {
+        notify.apiError(e, 'Gagal load filter');
+    }
+}
+
 async function loadSummary() {
     try {
-        const r = await reportsApi.marginPerBarang.summary();
+        const r = await reportsApi.marginPerBarang.summary(extraFilterParams());
         if (r.data.success) summary.value = r.data.data;
     } catch (e) {
         notify.apiError(e, 'Gagal load summary');
@@ -55,7 +124,8 @@ async function loadList() {
             page: Math.floor(lazyParams.value.first / lazyParams.value.rows) + 1,
             per_page: lazyParams.value.rows,
             margin_bucket: selectedBucket.value,
-            sort: selectedSort.value
+            sort: selectedSort.value,
+            ...extraFilterParams()
         };
         if (searchQuery.value) params.search = searchQuery.value;
 
@@ -79,10 +149,12 @@ function onPage(e) {
 
 function onFilterChange() {
     lazyParams.value.first = 0;
+    loadSummary();
     loadList();
 }
 
 onMounted(() => {
+    loadDropdowns();
     loadSummary();
     loadList();
 });
@@ -91,7 +163,12 @@ async function exportExcel() {
     if (!canExport.value) return;
     exportingExcel.value = true;
     try {
-        const response = await reportsApi.marginPerBarang.exportExcel();
+        const response = await reportsApi.marginPerBarang.exportExcel({
+            margin_bucket: selectedBucket.value,
+            sort: selectedSort.value,
+            search: searchQuery.value || undefined,
+            ...extraFilterParams()
+        });
         downloadBlob(response.data, 'laporan_margin_per_barang.xlsx');
     } catch (e) {
         notify.apiError(e, 'Gagal export Excel');
@@ -116,41 +193,24 @@ function marginSeverity(pct) {
         </div>
 
         <!-- Summary -->
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-3">
-                <div class="text-xs text-surface-500 mb-1">Total Produk</div>
-                <div class="text-xl font-bold">{{ summary.total_produk || 0 }}</div>
-            </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-3">
-                <div class="text-xs text-surface-500 mb-1">Tanpa Harga</div>
-                <div class="text-xl font-bold text-surface-600">{{ summary.tanpa_harga || 0 }}</div>
-            </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-3">
-                <div class="text-xs text-red-600 mb-1">Margin Rendah</div>
-                <div class="text-xl font-bold text-red-600">{{ summary.margin_rendah || 0 }}</div>
-            </div>
-            <div class="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-3">
-                <div class="text-xs text-yellow-600 mb-1">Margin Sedang</div>
-                <div class="text-xl font-bold text-yellow-600">{{ summary.margin_sedang || 0 }}</div>
-            </div>
-            <div class="bg-green-50 dark:bg-green-900/20 rounded-lg p-3">
-                <div class="text-xs text-green-600 mb-1">Margin Tinggi</div>
-                <div class="text-xl font-bold text-green-600">{{ summary.margin_tinggi || 0 }}</div>
-            </div>
-            <div class="bg-red-100 dark:bg-red-900/30 rounded-lg p-3 border border-red-300">
-                <div class="text-xs text-red-700 mb-1">⚠️ Rugi Margin</div>
-                <div class="text-xl font-bold text-red-700">{{ summary.rugi_margin || 0 }}</div>
-            </div>
-        </div>
+        <MoneySummaryPanel title="Ringkasan Margin" :items="summaryItems" :cols="6" :primary-index="5" />
 
         <!-- Filters -->
-        <div class="flex flex-wrap gap-2 mb-4">
+        <div class="flex flex-wrap gap-2 mb-4 items-center">
             <IconField class="flex-1 min-w-[240px]">
                 <InputIcon class="pi pi-search" />
                 <InputText v-model="searchQuery" placeholder="Cari kode atau nama..." @input="onFilterChange" class="w-full" />
             </IconField>
-            <Select v-model="selectedBucket" :options="bucketOptions" optionLabel="label" optionValue="value" class="w-44" @change="onFilterChange" />
-            <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" class="w-52" @change="onFilterChange" />
+            <ListFiltersSheet :active-count="activeFilterCount">
+                <Select v-model="selectedBucket" :options="bucketOptions" optionLabel="label" optionValue="value" @change="onFilterChange" />
+                <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" @change="onFilterChange" />
+                <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedTipe" :options="tipes" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedGrup" :options="grups" optionLabel="nama_grup" optionValue="id" placeholder="Grup" filter showClear @change="onFilterChange" />
+                <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" showClear @change="onFilterChange" />
+                <Select v-model="selectedPriceField" :options="priceFieldOptions" optionLabel="label" optionValue="value" placeholder="Field Harga" showClear @change="onFilterChange" />
+            </ListFiltersSheet>
         </div>
 
         <DataTable :value="items" :loading="loading" :lazy="true" :paginator="true" :rows="lazyParams.rows" :totalRecords="totalRecords" :first="lazyParams.first" :rowsPerPageOptions="[25, 50, 100]" @page="onPage" stripedRows>

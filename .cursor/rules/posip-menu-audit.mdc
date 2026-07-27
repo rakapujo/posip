@@ -1,0 +1,31 @@
+---
+description: POSIP sequential deep menu audit — process & where findings live
+alwaysApply: false
+globs: docs/quality/audits/**,syilex-frontend/src/views/Dashboard.vue,syilex/app/Http/Controllers/Api/V1/DashboardController.php
+---
+
+# POSIP menu audit
+
+## Cara audit (wajib dalam)
+
+Per menu AppMenu (urutan Home → …): trace FE view + API + Action/Model + permission seeder + cross-modul + query DB. Cek: bisnis, kode, keamanan, cross-menu, UI (PrimeVue/Sakai dulu), DRY, anti-N+1/index.
+
+## Output
+
+- File: `docs/quality/audits/NN-slug.md` (header CONVENTIONS)
+- Jangan “fix saja” tanpa bukti path/baris
+- Fix kode hanya jika user minta; audit default = temuan + antrian
+
+## Sudah ada
+
+- `01`–`16` — Dashboard + Master (thru Print Barcode); Scope A patched
+- `17`–`26` — Inventory; P0+P1 patched
+- `27`–`32` — Pembelian; P0+P1 core patched
+- `33`–`37` — Penjualan BO; Wave A + walk-in BO
+- `38` — POS Shift; Wave A P0
+- `39` — POS Terminal; Wave A + R + D + B
+- `40` — POS Kasir; Wave A + R + D + B
+- `41`–`62` — Laporan (Penjualan→Inventory); Wave A + Wave B executed (see `00-laporan-plan-review.md`)
+- `63`–`66` — Pengaturan (User, Role, Settings, Reset); P0+P1 patched
+- `67` — Pengaturan → Import Master; P0+P1 patched
+- Index: `docs/quality/audits/README.md`

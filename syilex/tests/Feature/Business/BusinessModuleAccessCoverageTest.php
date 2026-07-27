@@ -25,6 +25,8 @@ class BusinessModuleAccessCoverageTest extends TestCase
             'promo.view', 'promo.create',
             'price-change.view', 'price-change.create',
             'terminal.view', 'terminal.create',
+            'user.view', 'role.view', 'import.master', 'settings.reset',
+            'brand.create',
         ] as $permission) {
             Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
         }
@@ -84,6 +86,46 @@ class BusinessModuleAccessCoverageTest extends TestCase
     {
         $this->actingAs($this->viewer)
             ->getJson('/api/v1/promos/'.Str::ulid())
+            ->assertForbidden();
+    }
+
+    public function test_dashboard_ok_for_authenticated_user_without_any_widget_permission(): void
+    {
+        // Dashboard gates each widget individually — authenticated user with zero
+        // permissions still gets 200 with an (mostly empty) payload, never 403.
+        $this->actingAs($this->viewer)
+            ->getJson('/api/v1/dashboard')
+            ->assertOk();
+    }
+
+    public function test_users_index_forbidden_without_user_view(): void
+    {
+        $this->actingAs($this->viewer)
+            ->getJson('/api/v1/users')
+            ->assertForbidden();
+    }
+
+    public function test_roles_index_forbidden_without_role_view(): void
+    {
+        $this->actingAs($this->viewer)
+            ->getJson('/api/v1/roles')
+            ->assertForbidden();
+    }
+
+    public function test_import_template_forbidden_without_import_master(): void
+    {
+        $user = User::factory()->create();
+        $user->givePermissionTo('brand.create');
+
+        $this->actingAs($user)
+            ->getJson('/api/v1/import/template/brand')
+            ->assertForbidden();
+    }
+
+    public function test_reset_forbidden_without_settings_reset(): void
+    {
+        $this->actingAs($this->viewer)
+            ->postJson('/api/v1/reset', [])
             ->assertForbidden();
     }
 }

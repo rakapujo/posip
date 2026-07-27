@@ -96,7 +96,8 @@ class DocSalesDetail extends Model
 
     public function returnDetails(): HasMany
     {
-        return $this->hasMany(DocSalesReturnDetail::class, 'sales_detail_id');
+        return $this->hasMany(DocSalesReturnDetail::class, 'sales_detail_id')
+            ->whereHas('salesReturn', fn ($return) => $return->whereIn('status', ['lock', 'approved']));
     }
 
     // ==================== HELPERS ====================

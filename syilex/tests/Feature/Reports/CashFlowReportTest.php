@@ -142,7 +142,7 @@ class CashFlowReportTest extends TestCase
         $this->makeCashTx('setor_awal', 100_000);
         $this->makeCashTx('kas_masuk', 50_000, 'Injeksi kas');
         $this->makeCashTx('kas_keluar', 20_000, 'Beli galon');
-        $this->makeCashTx('kas_keluar', 15_000, 'Refund retur INV-001');
+        $this->makeCashTx('refund_retur', 15_000, 'Refund retur INV-001');
 
         // Sale: grand_total 50k, customer bayar 60k (cash), kembalian 10k → net contribution 50k
         $this->makeSaleWithCashPayment(50_000, 60_000, 10_000);
@@ -162,10 +162,10 @@ class CashFlowReportTest extends TestCase
         $this->assertEquals(165_000, $data['net_cash_flow']);
     }
 
-    public function test_refund_retur_detected_by_keterangan_prefix(): void
+    public function test_refund_retur_detected_by_tipe(): void
     {
         $this->makeCashTx('kas_keluar', 10_000, 'Biaya listrik');   // manual
-        $this->makeCashTx('kas_keluar', 7_000, 'Refund retur XYZ');  // refund
+        $this->makeCashTx('refund_retur', 7_000, 'Refund retur XYZ');  // refund
         $this->makeCashTx('kas_keluar', 3_000, null);                 // manual (null keterangan)
 
         $response = $this->actingAs($this->userWithPerm)
@@ -299,6 +299,7 @@ class CashFlowReportTest extends TestCase
         $this->assertEquals(0, $data['setor_awal']);
         $this->assertEquals(0, $data['kas_masuk']);
         $this->assertEquals(0, $data['penjualan_tunai_net']);
+        $this->assertEquals(0, $data['bayar_piutang_cash']);
         $this->assertEquals(0, $data['kas_keluar_manual']);
         $this->assertEquals(0, $data['refund_tunai']);
         $this->assertEquals(0, $data['net_cash_flow']);
@@ -492,5 +493,59 @@ class CashFlowReportTest extends TestCase
 
         $this->assertEquals(90_000, $data['penjualan_tunai_net']);
         $this->assertEquals(90_000, $data['net_cash_flow']);
+    }
+
+    public function test_completed_pembayaran_piutang_cash_included_in_net(): void
+    {
+        DB::table('doc_pembayaran_piutang')->insert([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'PPI-CF-001',
+            'tanggal' => now()->toDateTimeString(),
+            'customer_id' => $this->customerId,
+            'total_bayar_cash' => 25_000,
+            'total_bayar_deposit' => 0,
+            'total_pembayaran' => 25_000,
+            'metode_pembayaran' => 'cash',
+            'status' => 'completed',
+            'completed_at' => now(),
+            'completed_by' => $this->userWithPerm->id,
+            'created_by' => $this->userWithPerm->id,
+            'updated_by' => $this->userWithPerm->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        // Deposit-only settle harus diabaikan (bukan kas masuk)
+        DB::table('doc_pembayaran_piutang')->insert([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'PPI-CF-002',
+            'tanggal' => now()->toDateTimeString(),
+            'customer_id' => $this->customerId,
+            'total_bayar_cash' => 0,
+            'total_bayar_deposit' => 10_000,
+            'total_pembayaran' => 10_000,
+            'metode_pembayaran' => 'cash',
+            'status' => 'completed',
+            'completed_at' => now(),
+            'completed_by' => $this->userWithPerm->id,
+            'created_by' => $this->userWithPerm->id,
+            'updated_by' => $this->userWithPerm->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $data = $this->actingAs($this->userWithPerm)
+            ->getJson('/api/v1/reports/cash-flow/summary')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertEquals(25_000, $data['bayar_piutang_cash']);
+        $this->assertEquals(25_000, $data['net_cash_flow']);
+
+        // Filter terminal → BO settle tidak ikut
+        $filtered = $this->actingAs($this->userWithPerm)
+            ->getJson("/api/v1/reports/cash-flow/summary?terminal_id={$this->terminalId}")
+            ->assertOk()
+            ->json('data');
+        $this->assertEquals(0, $filtered['bayar_piutang_cash']);
     }
 }

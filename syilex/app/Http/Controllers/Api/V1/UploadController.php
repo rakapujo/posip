@@ -14,10 +14,11 @@ class UploadController extends Controller
      * Folder-to-permission mapping.
      * Each upload folder requires a specific existing permission.
      */
+    /** @var array<string, string|list<string>> */
     protected const FOLDER_PERMISSIONS = [
         'settings' => 'settings.update',
-        'avatars' => 'user.update',
-        'users' => 'user.update',
+        'avatars' => ['user.create', 'user.update'],
+        'users' => ['user.create', 'user.update'],
         'documents' => 'metode-bayar.update',
         'products' => 'produk.update',
         'payments' => 'metode-bayar.update',
@@ -143,10 +144,16 @@ class UploadController extends Controller
     {
         $permission = self::FOLDER_PERMISSIONS[$folder] ?? null;
 
-        if (!$permission) {
+        if (! $permission) {
             return false;
         }
 
-        return auth()->user()->can($permission);
+        foreach ((array) $permission as $perm) {
+            if (auth()->user()->can($perm)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

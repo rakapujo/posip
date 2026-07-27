@@ -3,24 +3,21 @@
 namespace App\Models;
 
 use App\Casts\LocalDateTime;
+use App\Traits\HasAuditLog;
 use App\Traits\HasDateRangeScope;
 use App\Traits\HasUlid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Validation\ValidationException;
 
 class SupplierDeposit extends Model
 {
-    use HasUlid, HasDateRangeScope;
+    use HasAuditLog, HasDateRangeScope, HasUlid;
 
     /**
      * The table associated with the model.
      */
     protected $table = 'supplier_deposit';
-
-    /**
-     * Indicates if the model should be timestamped.
-     */
-    public $timestamps = false;
 
     /**
      * The attributes that are mass assignable.
@@ -193,7 +190,10 @@ class SupplierDeposit extends Model
      */
     public function canBeEdited(): bool
     {
-        return $this->isManual();
+        // SD-Q1 C: only unused manual deposits with no PH pivot (draft or completed).
+        return $this->isManual()
+            && (float) $this->nominal_terpakai === 0.0
+            && ! DocPembayaranHutangDeposit::where('deposit_id', $this->id)->exists();
     }
 
     /**
@@ -201,7 +201,7 @@ class SupplierDeposit extends Model
      */
     public function canBeDeleted(): bool
     {
-        return $this->isManual() && $this->nominal_terpakai == 0;
+        return $this->canBeEdited();
     }
 
     /**
@@ -212,21 +212,18 @@ class SupplierDeposit extends Model
      */
     public function use(float $amount): float
     {
-        $actualUsed = min($amount, $this->sisa_deposit);
-
-        $this->nominal_terpakai += $actualUsed;
-        $this->sisa_deposit -= $actualUsed;
-
-        // Update status
-        if ($this->sisa_deposit <= 0) {
-            $this->status = 'used_all';
-        } elseif ($this->nominal_terpakai > 0) {
-            $this->status = 'used_partial';
+        if ($amount > (float) $this->sisa_deposit + 0.01) {
+            throw ValidationException::withMessages([
+                'deposit' => ['Penggunaan deposit melebihi saldo tersedia.'],
+            ]);
         }
 
+        $this->nominal_terpakai += $amount;
+        $this->sisa_deposit -= $amount;
+        $this->status = $this->sisa_deposit <= 0 ? 'used_all' : 'used_partial';
         $this->save();
 
-        return $actualUsed;
+        return $amount;
     }
 
     /**

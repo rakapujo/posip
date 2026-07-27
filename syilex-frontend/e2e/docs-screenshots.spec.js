@@ -1,11 +1,5 @@
 import { test, expect } from '@playwright/test';
-import {
-    loginViaApi,
-    snap,
-    waitForDataTable,
-    gotoMenu,
-    ALL_MENU_ROUTES,
-} from './docs-helpers.js';
+import { loginViaApi, snap, waitForDataTable, gotoMenu, ALL_MENU_ROUTES } from './docs-helpers.js';
 
 async function waitForLoginPage(page, baseURL) {
     await page.goto(baseURL);

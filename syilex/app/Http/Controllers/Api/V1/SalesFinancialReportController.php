@@ -22,7 +22,7 @@ class SalesFinancialReportController extends BaseApiController
      */
     public function pembulatan(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
@@ -32,7 +32,7 @@ class SalesFinancialReportController extends BaseApiController
 
         // Sales query
         $salesQuery = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->where('ds.status', 'completed')
             ->where('ds.tanggal', '>=', $dateFrom)
             ->where('ds.tanggal', '<=', $dateToEnd)
@@ -45,11 +45,15 @@ class SalesFinancialReportController extends BaseApiController
                 'ds.pembulatan'
             );
 
-        // Returns query
+        // Returns query (linked + free / whereNull sales_id)
         $returQuery = DB::table('doc_sales_returns as dsr')
-            ->join('doc_sales as ds2', 'ds2.id', '=', 'dsr.sales_id')
-            ->join('master_pos_terminal as pt2', 'pt2.id', '=', 'ds2.terminal_id')
-            ->where('ds2.status', 'completed')
+            ->leftJoin('doc_sales as ds2', 'ds2.id', '=', 'dsr.sales_id')
+            ->leftJoin('master_pos_terminal as pt2', 'pt2.id', '=', 'dsr.terminal_id')
+            ->whereIn('dsr.status', ['lock', 'approved'])
+            ->where(function ($q) {
+                $q->whereNull('dsr.sales_id')
+                    ->orWhere('ds2.status', 'completed');
+            })
             ->where('dsr.tanggal', '>=', $dateFrom)
             ->where('dsr.tanggal', '<=', $dateToEnd)
             ->select(
@@ -64,7 +68,11 @@ class SalesFinancialReportController extends BaseApiController
         // Apply filters
         if ($request->filled('terminal_id')) {
             $salesQuery->where('ds.terminal_id', $request->terminal_id);
-            $returQuery->where('ds2.terminal_id', $request->terminal_id);
+            $returQuery->where('dsr.terminal_id', $request->terminal_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $salesQuery->where('ds.source', $request->source);
+            $returQuery->where('dsr.source', $request->source);
         }
         if ($request->filled('search')) {
             $search = $request->search;
@@ -113,14 +121,22 @@ class SalesFinancialReportController extends BaseApiController
             ->where('tanggal', '<=', $dateToEnd);
 
         $returSummaryQuery = DB::table('doc_sales_returns as dsr')
-            ->join('doc_sales as ds', 'ds.id', '=', 'dsr.sales_id')
-            ->where('ds.status', 'completed')
+            ->leftJoin('doc_sales as ds', 'ds.id', '=', 'dsr.sales_id')
+            ->whereIn('dsr.status', ['lock', 'approved'])
+            ->where(function ($q) {
+                $q->whereNull('dsr.sales_id')
+                    ->orWhere('ds.status', 'completed');
+            })
             ->where('dsr.tanggal', '>=', $dateFrom)
             ->where('dsr.tanggal', '<=', $dateToEnd);
 
         if ($request->filled('terminal_id')) {
             $salesSummaryQuery->where('terminal_id', $request->terminal_id);
-            $returSummaryQuery->where('ds.terminal_id', $request->terminal_id);
+            $returSummaryQuery->where('dsr.terminal_id', $request->terminal_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $salesSummaryQuery->where('source', $request->source);
+            $returSummaryQuery->where('dsr.source', $request->source);
         }
         if ($request->filled('search')) {
             $search = $request->search;
@@ -157,36 +173,55 @@ class SalesFinancialReportController extends BaseApiController
      */
     public function discLine(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
+        $mode = ReportHelperService::resolveMode($request);
+        $applyNet = $mode === 'net';
 
         $query = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->join('doc_sales_detail as dsd', 'dsd.sales_id', '=', 'ds.id')
             ->where('ds.status', 'completed')
             ->where('ds.tanggal', '>=', $dateFrom)
             ->where('ds.tanggal', '<=', $dateToEnd)
             ->groupBy('ds.id', 'ds.ulid', 'ds.tanggal', 'ds.nomor_dokumen', 'pt.nama_terminal')
-            ->havingRaw('SUM(dsd.diskon_total) > 0')
-            ->select(
-                'ds.ulid',
-                'ds.tanggal',
-                'ds.nomor_dokumen',
-                'pt.nama_terminal',
-                DB::raw('COUNT(dsd.id) as jumlah_item'),
-                DB::raw('SUM(dsd.qty * dsd.harga_satuan) as total_bruto'),
-                DB::raw('SUM(dsd.diskon_total) as total_disc_line'),
-                DB::raw('SUM(dsd.jumlah) as total_setelah_disc')
+            ->havingRaw('SUM(dsd.diskon_total) > 0');
+
+        // ACC-4 Wave B: LEFT JOIN retur per nota (pre-aggregated) so mode=net nets the row itself.
+        // Value is constant per nota, MAX() avoids multiplying it across the joined dsd lines.
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::salesDiscLineReturnByNotaSubquery($dateFrom, $dateToEnd, $this->salesReturnFilters($request)),
+                'ret',
+                fn ($join) => $join->on('ret.sales_id', '=', 'ds.id')
             );
+        }
+
+        $query->select([
+            'ds.ulid',
+            'ds.tanggal',
+            'ds.nomor_dokumen',
+            'pt.nama_terminal',
+            DB::raw('COUNT(dsd.id) as jumlah_item'),
+            DB::raw('SUM(dsd.qty * dsd.harga_satuan) as total_bruto'),
+            $applyNet
+                ? DB::raw('GREATEST(SUM(dsd.diskon_total) - COALESCE(MAX(ret.ret_disc), 0), 0) as total_disc_line')
+                : DB::raw('SUM(dsd.diskon_total) as total_disc_line'),
+            DB::raw('SUM(dsd.jumlah) as total_setelah_disc'),
+            // ponytail: bruto/setelah stay bruto; only money-field disc_line nets (matches summary formula)
+        ]);
 
         // Filters
         if ($request->filled('terminal_id')) {
             $query->where('ds.terminal_id', $request->terminal_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $query->where('ds.source', $request->source);
         }
         if ($request->filled('search')) {
             $query->where('ds.nomor_dokumen', 'like', "%{$request->search}%");
@@ -217,6 +252,9 @@ class SalesFinancialReportController extends BaseApiController
         if ($request->filled('terminal_id')) {
             $summaryQuery->where('ds.terminal_id', $request->terminal_id);
         }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $summaryQuery->where('ds.source', $request->source);
+        }
         if ($request->filled('search')) {
             $summaryQuery->where('ds.nomor_dokumen', 'like', "%{$request->search}%");
         }
@@ -245,7 +283,13 @@ class SalesFinancialReportController extends BaseApiController
             'total_setelah_disc' => round((float) ($summaryRaw->total_setelah_disc ?? 0), 2),
         ];
 
-        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary));
+        if ($mode === 'net') {
+            $retDisc = $this->netDiscLineReduction($request, $dateFrom, $dateToEnd);
+            $summary['total_disc_line'] = round(max(0, $summary['total_disc_line'] - $retDisc), 2);
+            // ponytail: bruto/setelah stay bruto; only money-field disc_line nets
+        }
+
+        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary, ['mode' => $mode]));
     }
 
     /**
@@ -253,18 +297,18 @@ class SalesFinancialReportController extends BaseApiController
      */
     public function discLineDetail(string $salesUlid): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
         $sale = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->where('ds.ulid', $salesUlid)
             ->where('ds.status', 'completed')
             ->select('ds.id', 'ds.nomor_dokumen', 'ds.tanggal', 'pt.nama_terminal as terminal')
             ->first();
 
-        if (!$sale) {
+        if (! $sale) {
             return $this->notFound('Nota penjualan tidak ditemukan.');
         }
 
@@ -329,44 +373,62 @@ class SalesFinancialReportController extends BaseApiController
      */
     public function discNota(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
+        $mode = ReportHelperService::resolveMode($request);
+        $applyNet = $mode === 'net';
 
         $query = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->where('ds.status', 'completed')
             ->where('ds.tanggal', '>=', $dateFrom)
             ->where('ds.tanggal', '<=', $dateToEnd)
-            ->where('ds.total_diskon', '>', 0)
-            ->select(
-                'ds.tanggal',
-                'ds.nomor_dokumen',
-                'pt.nama_terminal',
-                'ds.subtotal',
-                'ds.diskon_nota_1_tipe',
-                'ds.diskon_nota_1_nilai',
-                'ds.diskon_nota_1_hasil',
-                'ds.diskon_nota_1_label',
-                'ds.diskon_nota_2_tipe',
-                'ds.diskon_nota_2_nilai',
-                'ds.diskon_nota_2_hasil',
-                'ds.diskon_nota_2_label',
-                'ds.diskon_nota_3_tipe',
-                'ds.diskon_nota_3_nilai',
-                'ds.diskon_nota_3_hasil',
-                'ds.diskon_nota_3_label',
-                'ds.total_diskon',
-                'ds.total_setelah_diskon'
+            ->where('ds.total_diskon', '>', 0);
+
+        // ACC-4 Wave B: LEFT JOIN retur per nota so mode=net nets the row itself.
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::salesDiscNotaReturnByNotaSubquery($dateFrom, $dateToEnd, $this->salesReturnFilters($request)),
+                'ret',
+                fn ($join) => $join->on('ret.sales_id', '=', 'ds.id')
             );
+        }
+
+        $query->select([
+            'ds.tanggal',
+            'ds.nomor_dokumen',
+            'pt.nama_terminal',
+            'ds.subtotal',
+            'ds.diskon_nota_1_tipe',
+            'ds.diskon_nota_1_nilai',
+            'ds.diskon_nota_1_hasil',
+            'ds.diskon_nota_1_label',
+            'ds.diskon_nota_2_tipe',
+            'ds.diskon_nota_2_nilai',
+            'ds.diskon_nota_2_hasil',
+            'ds.diskon_nota_2_label',
+            'ds.diskon_nota_3_tipe',
+            'ds.diskon_nota_3_nilai',
+            'ds.diskon_nota_3_hasil',
+            'ds.diskon_nota_3_label',
+            $applyNet
+                ? DB::raw('GREATEST(ds.total_diskon - COALESCE(ret.ret_disc, 0), 0) as total_diskon')
+                : DB::raw('ds.total_diskon as total_diskon'),
+            'ds.total_setelah_diskon',
+            // ponytail: subtotal/total_setelah_diskon stay bruto; only total_diskon nets (matches summary formula)
+        ]);
 
         // Filters
         if ($request->filled('terminal_id')) {
             $query->where('ds.terminal_id', $request->terminal_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $query->where('ds.source', $request->source);
         }
         if ($request->filled('search')) {
             $query->where('ds.nomor_dokumen', 'like', "%{$request->search}%");
@@ -397,6 +459,9 @@ class SalesFinancialReportController extends BaseApiController
         if ($request->filled('terminal_id')) {
             $summaryQuery->where('terminal_id', $request->terminal_id);
         }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $summaryQuery->where('source', $request->source);
+        }
         if ($request->filled('search')) {
             $summaryQuery->where('nomor_dokumen', 'like', "%{$request->search}%");
         }
@@ -415,7 +480,12 @@ class SalesFinancialReportController extends BaseApiController
             'total_setelah_diskon' => round((float) ($summaryRaw->total_setelah_diskon ?? 0), 2),
         ];
 
-        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary));
+        if ($mode === 'net') {
+            $retDisc = $this->netDiscNotaReduction($request, $dateFrom, $dateToEnd);
+            $summary['total_diskon'] = round(max(0, $summary['total_diskon'] - $retDisc), 2);
+        }
+
+        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary, ['mode' => $mode]));
     }
 
     /**
@@ -424,38 +494,59 @@ class SalesFinancialReportController extends BaseApiController
      */
     public function biaya(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
+        $mode = ReportHelperService::resolveMode($request);
+        $applyNet = $mode === 'net';
 
         $query = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->where('ds.status', 'completed')
             ->where('ds.tanggal', '>=', $dateFrom)
             ->where('ds.tanggal', '<=', $dateToEnd)
-            ->whereRaw('(COALESCE(ds.biaya_kirim_hasil, 0) + COALESCE(ds.biaya_lain_hasil, 0)) > 0')
-            ->select(
-                'ds.tanggal',
-                'ds.nomor_dokumen',
-                'pt.nama_terminal',
-                'ds.total_setelah_diskon',
-                'ds.biaya_kirim_tipe',
-                'ds.biaya_kirim_nilai',
-                'ds.biaya_kirim_hasil',
-                'ds.biaya_lain_tipe',
-                'ds.biaya_lain_nilai',
-                'ds.biaya_lain_hasil',
-                DB::raw('(COALESCE(ds.biaya_kirim_hasil, 0) + COALESCE(ds.biaya_lain_hasil, 0)) as total_biaya'),
-                'ds.dpp'
+            ->whereRaw('(COALESCE(ds.biaya_kirim_hasil, 0) + COALESCE(ds.biaya_lain_hasil, 0)) > 0');
+
+        // ACC-4 Wave B: LEFT JOIN retur per nota so mode=net nets the row itself.
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::salesBiayaReturnByNotaSubquery($dateFrom, $dateToEnd, $this->salesReturnFilters($request)),
+                'ret',
+                fn ($join) => $join->on('ret.sales_id', '=', 'ds.id')
             );
+        }
+
+        $query->select([
+            'ds.tanggal',
+            'ds.nomor_dokumen',
+            'pt.nama_terminal',
+            'ds.total_setelah_diskon',
+            'ds.biaya_kirim_tipe',
+            'ds.biaya_kirim_nilai',
+            $applyNet
+                ? DB::raw('GREATEST(COALESCE(ds.biaya_kirim_hasil, 0) - COALESCE(ret.ret_kirim, 0), 0) as biaya_kirim_hasil')
+                : DB::raw('ds.biaya_kirim_hasil as biaya_kirim_hasil'),
+            'ds.biaya_lain_tipe',
+            'ds.biaya_lain_nilai',
+            $applyNet
+                ? DB::raw('GREATEST(COALESCE(ds.biaya_lain_hasil, 0) - COALESCE(ret.ret_lain, 0), 0) as biaya_lain_hasil')
+                : DB::raw('ds.biaya_lain_hasil as biaya_lain_hasil'),
+            $applyNet
+                ? DB::raw('GREATEST(COALESCE(ds.biaya_kirim_hasil, 0) - COALESCE(ret.ret_kirim, 0), 0) + GREATEST(COALESCE(ds.biaya_lain_hasil, 0) - COALESCE(ret.ret_lain, 0), 0) as total_biaya')
+                : DB::raw('(COALESCE(ds.biaya_kirim_hasil, 0) + COALESCE(ds.biaya_lain_hasil, 0)) as total_biaya'),
+            'ds.dpp',
+        ]);
 
         // Filters
         if ($request->filled('terminal_id')) {
             $query->where('ds.terminal_id', $request->terminal_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $query->where('ds.source', $request->source);
         }
         if ($request->filled('search')) {
             $query->where('ds.nomor_dokumen', 'like', "%{$request->search}%");
@@ -468,21 +559,12 @@ class SalesFinancialReportController extends BaseApiController
         $sortableFields = ['tanggal', 'nomor_dokumen', 'total_setelah_diskon', 'biaya_kirim', 'biaya_lain', 'total_biaya', 'dpp'];
 
         if (in_array($sortField, $sortableFields)) {
-            // Map frontend field names to actual columns
+            // Map frontend field names to select aliases (matches netted columns too when mode=net)
             $columnMap = [
-                'biaya_kirim' => 'ds.biaya_kirim_hasil',
-                'biaya_lain' => 'ds.biaya_lain_hasil',
-                'total_biaya' => DB::raw('(COALESCE(ds.biaya_kirim_hasil, 0) + COALESCE(ds.biaya_lain_hasil, 0))'),
+                'biaya_kirim' => 'biaya_kirim_hasil',
+                'biaya_lain' => 'biaya_lain_hasil',
             ];
-            if (isset($columnMap[$sortField])) {
-                if ($sortField === 'total_biaya') {
-                    $query->orderByRaw("(COALESCE(ds.biaya_kirim_hasil, 0) + COALESCE(ds.biaya_lain_hasil, 0)) {$dir}");
-                } else {
-                    $query->orderBy($columnMap[$sortField], $dir);
-                }
-            } else {
-                $query->orderBy($sortField, $dir);
-            }
+            $query->orderBy($columnMap[$sortField] ?? $sortField, $dir);
         } else {
             $query->orderBy('tanggal', 'desc');
         }
@@ -499,6 +581,9 @@ class SalesFinancialReportController extends BaseApiController
 
         if ($request->filled('terminal_id')) {
             $summaryQuery->where('terminal_id', $request->terminal_id);
+        }
+        if (in_array($request->source, ['pos', 'manual'], true)) {
+            $summaryQuery->where('source', $request->source);
         }
         if ($request->filled('search')) {
             $summaryQuery->where('nomor_dokumen', 'like', "%{$request->search}%");
@@ -518,7 +603,46 @@ class SalesFinancialReportController extends BaseApiController
             'total_biaya' => round((float) ($summaryRaw->total_biaya ?? 0), 2),
         ];
 
-        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary));
+        if ($mode === 'net') {
+            [$retKirim, $retLain] = $this->netBiayaReduction($request, $dateFrom, $dateToEnd);
+            $summary['total_biaya_kirim'] = round(max(0, $summary['total_biaya_kirim'] - $retKirim), 2);
+            $summary['total_biaya_lain'] = round(max(0, $summary['total_biaya_lain'] - $retLain), 2);
+            $summary['total_biaya'] = round($summary['total_biaya_kirim'] + $summary['total_biaya_lain'], 2);
+        }
+
+        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary, ['mode' => $mode]));
+    }
+
+    // ========================
+    // ACC-4 Net reductions — thin wrappers over ReportHelperService::sales*Return* (shared with exports)
+    // ========================
+
+    /** @return array{terminal_id: mixed, source: mixed, search: mixed} */
+    private function salesReturnFilters(Request $request): array
+    {
+        return [
+            'terminal_id' => $request->input('terminal_id'),
+            'source' => $request->input('source'),
+            'search' => $request->input('search'),
+        ];
+    }
+
+    /** Linked returns: proportional line disc; free returns → 0 (no line disc on return detail). */
+    private function netDiscLineReduction(Request $request, string $dateFrom, string $dateToEnd): float
+    {
+        return ReportHelperService::salesDiscLineReturnTotal($dateFrom, $dateToEnd, $this->salesReturnFilters($request));
+    }
+
+    /** Linked only: return.grand_total * (sale.total_diskon / sale.grand_total); free → 0. */
+    private function netDiscNotaReduction(Request $request, string $dateFrom, string $dateToEnd): float
+    {
+        return ReportHelperService::salesDiscNotaReturnTotal($dateFrom, $dateToEnd, $this->salesReturnFilters($request));
+    }
+
+    /** @return array{0: float, 1: float} [kirim, lain] */
+    private function netBiayaReduction(Request $request, string $dateFrom, string $dateToEnd): array
+    {
+        return ReportHelperService::salesBiayaReturnTotals($dateFrom, $dateToEnd, $this->salesReturnFilters($request));
     }
 
     // ========================
@@ -527,13 +651,13 @@ class SalesFinancialReportController extends BaseApiController
 
     public function exportPembulatan(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
+        if (! auth()->user()->can('laporan.export')) {
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
         $request->validate(ReportHelperService::dateRangeRules());
 
-        $filename = 'laporan_pembulatan_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'laporan_pembulatan_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(new SalesPembulatanExport(
             $request->date_from,
@@ -541,60 +665,67 @@ class SalesFinancialReportController extends BaseApiController
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
             $request->input('tipe'),
             $request->input('search'),
+            $request->input('source'),
         ), $filename);
     }
 
     public function exportDiscLine(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
+        if (! auth()->user()->can('laporan.export')) {
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
-        $filename = 'laporan_disc_line_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'laporan_disc_line_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(new SalesDiscLineExport(
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
             $request->input('search'),
+            $request->input('source'),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 
     public function exportDiscNota(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
+        if (! auth()->user()->can('laporan.export')) {
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
-        $filename = 'laporan_disc_nota_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'laporan_disc_nota_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(new SalesDiscNotaExport(
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
             $request->input('search'),
+            $request->input('source'),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 
     public function exportBiaya(Request $request)
     {
-        if (!auth()->user()->can('laporan.export')) {
+        if (! auth()->user()->can('laporan.export')) {
             return $this->forbidden('Anda tidak memiliki akses untuk export laporan.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
-        $filename = 'laporan_biaya_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'laporan_biaya_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(new SalesBiayaExport(
             $request->date_from,
             $request->date_to,
             $request->filled('terminal_id') ? (int) $request->terminal_id : null,
             $request->input('search'),
+            $request->input('source'),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 
@@ -603,7 +734,7 @@ class SalesFinancialReportController extends BaseApiController
      */
     public function dropdowns(): JsonResponse
     {
-        if (!auth()->user()->can('laporan.penjualan')) {
+        if (! auth()->user()->can('laporan.penjualan')) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 

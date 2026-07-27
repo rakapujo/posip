@@ -90,4 +90,9 @@ class PosCashTransaction extends Model
     {
         return $query->where('tipe', 'kas_keluar');
     }
+
+    public function scopeRefundRetur($query)
+    {
+        return $query->where('tipe', 'refund_retur');
+    }
 }

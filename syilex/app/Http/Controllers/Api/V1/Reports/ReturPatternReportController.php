@@ -24,7 +24,7 @@ class ReturPatternReportController extends BaseApiController
 {
     public function pattern(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.inventory')) {
+        if (! auth()->user()->can('laporan.inventory')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
@@ -46,18 +46,23 @@ class ReturPatternReportController extends BaseApiController
 
         $base = DB::table('doc_sales_return_detail as rd')
             ->join('doc_sales_returns as r', 'r.id', '=', 'rd.return_id')
+            ->join('doc_sales_detail as sd', 'sd.id', '=', 'rd.sales_detail_id')
+            ->join('doc_sales as os', 'os.id', '=', 'sd.sales_id')
             ->join('master_produk as p', 'p.id', '=', 'rd.product_id')
             ->leftJoin('master_kategori as k', 'k.id', '=', 'p.kategori_id')
-            ->whereBetween('r.tanggal', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->whereNull('p.deleted_at')
+            ->whereIn('r.status', ['lock', 'approved'])
+            ->whereBetween('r.tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
             ->when($terminalId, fn ($q) => $q->where('r.terminal_id', $terminalId))
             ->when($kategoriId, fn ($q) => $q->where('p.kategori_id', $kategoriId));
 
-        // Summary
+        // Summary — avg_days_sale_to_return: rata-rata umur barang antara sale (os.tanggal) → return (r.tanggal).
         $summary = (clone $base)
             ->select(
                 DB::raw('COUNT(DISTINCT r.id) as retur_count'),
                 DB::raw('COALESCE(SUM(rd.qty_base), 0) as qty_total'),
-                DB::raw('COALESCE(SUM(rd.harga_satuan * rd.qty), 0) as nominal_total')
+                DB::raw('COALESCE(SUM(rd.harga_satuan * rd.qty), 0) as nominal_total'),
+                DB::raw('AVG(DATEDIFF(r.tanggal, os.tanggal)) as avg_days_sale_to_return')
             )
             ->first();
 
@@ -65,7 +70,7 @@ class ReturPatternReportController extends BaseApiController
         $salesQty = DB::table('doc_sales_detail as d')
             ->join('doc_sales as s', 's.id', '=', 'd.sales_id')
             ->where('s.status', 'completed')
-            ->whereBetween('s.tanggal', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->whereBetween('s.tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
             ->when($terminalId, fn ($q) => $q->where('s.terminal_id', $terminalId))
             ->when($kategoriId, fn ($q) => $q->join('master_produk as mp', 'mp.id', '=', 'd.product_id')
                 ->where('mp.kategori_id', $kategoriId))
@@ -83,7 +88,8 @@ class ReturPatternReportController extends BaseApiController
                 'k.nama_kategori',
                 DB::raw('COUNT(DISTINCT r.id) as retur_count'),
                 DB::raw('SUM(rd.qty_base) as qty_total'),
-                DB::raw('SUM(rd.harga_satuan * rd.qty) as nominal_total')
+                DB::raw('SUM(rd.harga_satuan * rd.qty) as nominal_total'),
+                DB::raw('AVG(DATEDIFF(r.tanggal, os.tanggal)) as avg_days_sale_to_return')
             )
             ->groupBy('p.id', 'p.ulid', 'p.kode_produk', 'p.nama_produk', 'k.nama_kategori');
 
@@ -102,6 +108,7 @@ class ReturPatternReportController extends BaseApiController
             'retur_count' => (int) $r->retur_count,
             'qty_total' => (float) $r->qty_total,
             'nominal_total' => (float) $r->nominal_total,
+            'avg_days_sale_to_return' => $r->avg_days_sale_to_return !== null ? round((float) $r->avg_days_sale_to_return, 1) : null,
         ]);
 
         return $this->success([
@@ -112,6 +119,7 @@ class ReturPatternReportController extends BaseApiController
                 'nominal_total' => (float) $summary->nominal_total,
                 'sales_qty_total' => (float) $salesQty,
                 'retur_rate_percent' => $rate,
+                'avg_days_sale_to_return' => $summary->avg_days_sale_to_return !== null ? round((float) $summary->avg_days_sale_to_return, 1) : null,
             ],
             'items' => $items->values(),
         ]);

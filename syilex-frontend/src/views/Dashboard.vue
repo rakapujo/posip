@@ -37,7 +37,18 @@ const kpiCards = computed(() => {
             label: 'Omzet Hari Ini',
             value: formatCurrency(d.sales_today.omzet),
             icon: 'pi pi-dollar',
-            color: 'green'
+            color: 'green',
+            hint: 'grand_total, belum potong retur'
+        });
+    }
+
+    if (d.sales_today?.pendapatan_line !== undefined) {
+        cards.push({
+            label: 'Pendapatan Line Hari Ini',
+            value: formatCurrency(d.sales_today.pendapatan_line),
+            icon: 'pi pi-chart-line',
+            color: 'teal',
+            hint: 'Line setelah diskon nota, excl. biaya/PPN/pembulatan'
         });
     }
 
@@ -100,7 +111,8 @@ const kpiColorClasses = {
     orange: { bg: 'bg-orange-100 dark:bg-orange-400/10', icon: 'text-orange-500 dark:text-orange-400' },
     red: { bg: 'bg-red-100 dark:bg-red-400/10', icon: 'text-red-500 dark:text-red-400' },
     purple: { bg: 'bg-purple-100 dark:bg-purple-400/10', icon: 'text-purple-500 dark:text-purple-400' },
-    yellow: { bg: 'bg-yellow-100 dark:bg-yellow-400/10', icon: 'text-yellow-500 dark:text-yellow-400' }
+    yellow: { bg: 'bg-yellow-100 dark:bg-yellow-400/10', icon: 'text-yellow-500 dark:text-yellow-400' },
+    teal: { bg: 'bg-teal-100 dark:bg-teal-400/10', icon: 'text-teal-500 dark:text-teal-400' }
 };
 
 // ─── Charts ────────────────────────────────────────────────
@@ -281,7 +293,12 @@ const pendingRouteMap = {
     opname: 'inventory-opname',
     repack: 'inventory-repack',
     hpp: 'inventory-hpp-correction',
-    po: 'pembelian-po'
+    po: 'pembelian-po',
+    sales: 'penjualan-sales',
+    sales_return: 'penjualan-retur',
+    serial_intake: 'inventory-serial-intake',
+    serial_change: 'master-serial-change',
+    serial_hpp: 'inventory-serial-hpp'
 };
 
 const pendingIconMap = {
@@ -290,7 +307,12 @@ const pendingIconMap = {
     opname: 'pi pi-clipboard',
     repack: 'pi pi-sync',
     hpp: 'pi pi-calculator',
-    po: 'pi pi-shopping-cart'
+    po: 'pi pi-shopping-cart',
+    sales: 'pi pi-shopping-bag',
+    sales_return: 'pi pi-replay',
+    serial_intake: 'pi pi-qrcode',
+    serial_change: 'pi pi-pencil',
+    serial_hpp: 'pi pi-dollar'
 };
 
 function goToPending(item) {
@@ -352,7 +374,7 @@ onMounted(loadDashboard);
         <!-- KPI Cards -->
         <div v-if="loading" class="grid grid-cols-12 gap-4">
             <div v-for="i in 4" :key="i" class="col-span-12 sm:col-span-6 xl:col-span-3">
-                <div class="card mb-0">
+                <div class="card mb-0 summary-stat-card">
                     <Skeleton height="5rem" />
                 </div>
             </div>
@@ -360,18 +382,19 @@ onMounted(loadDashboard);
 
         <div v-else-if="kpiCards.length" class="grid grid-cols-12 gap-4">
             <div v-for="(card, index) in kpiCards" :key="index" class="col-span-12 sm:col-span-6 xl:col-span-3">
-                <div class="card mb-0">
+                <div class="card mb-0 summary-stat-card">
                     <div class="flex items-center justify-between">
-                        <div>
+                        <div class="min-w-0 flex-1">
                             <span class="block text-surface-500 dark:text-surface-400 font-medium text-sm">
                                 {{ card.label }}
                             </span>
-                            <div class="text-xl font-bold mt-2">
+                            <div class="summary-money-value mt-2">
                                 {{ card.value }}
                                 <span v-if="card.suffix" class="text-sm font-normal text-surface-500">
                                     {{ card.suffix }}
                                 </span>
                             </div>
+                            <div v-if="card.hint" class="text-xs text-surface-400 mt-1">{{ card.hint }}</div>
                         </div>
                         <div class="flex items-center justify-center rounded-full w-12 h-12" :class="kpiColorClasses[card.color]?.bg">
                             <i :class="[card.icon, kpiColorClasses[card.color]?.icon]" class="text-xl" />

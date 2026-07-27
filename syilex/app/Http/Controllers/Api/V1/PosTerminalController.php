@@ -3,10 +3,14 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\BaseApiController;
+use App\Models\DocSales;
+use App\Models\DocSalesReturn;
 use App\Models\MasterPosTerminal;
+use App\Models\PosCashTransaction;
 use App\Models\PosTerminalShift;
 use App\Models\User;
 use App\Services\SettingService;
+use App\Services\TerminalMailer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -97,6 +101,15 @@ class PosTerminalController extends BaseApiController
                 Rule::exists('master_metode_pembayaran', 'id')->where('status', 'active')->where('metode', 'tunai'),
             ],
             'default_printer' => 'nullable|string|max:100',
+            'mail_driver' => 'nullable|in:none,smtp,resend',
+            'mail_from_address' => 'nullable|email|max:255',
+            'mail_from_name' => 'nullable|string|max:255',
+            'smtp_host' => 'nullable|string|max:255',
+            'smtp_port' => 'nullable|integer|min:1|max:65535',
+            'smtp_encryption' => 'nullable|in:tls,ssl',
+            'smtp_username' => 'nullable|string|max:255',
+            'smtp_password' => 'nullable|string|max:1000',
+            'resend_api_key' => 'nullable|string|max:1000',
             'auto_open_tray' => 'required|boolean',
             'auto_print_receipt' => 'boolean',
             'auto_print_retur' => 'boolean',
@@ -114,11 +127,18 @@ class PosTerminalController extends BaseApiController
             'user_ids' => 'required|array|min:1',
             'user_ids.*' => 'exists:users,id',
             'metode_pembayaran_ids' => 'required|array|min:1',
-            'metode_pembayaran_ids.*' => 'exists:master_metode_pembayaran,id',
+            'metode_pembayaran_ids.*' => Rule::exists('master_metode_pembayaran', 'id')->where('status', 'active'),
         ], [
             'kode_terminal.regex' => 'Kode hanya boleh berisi huruf, angka, dan underscore (_)',
         ]);
 
+        if ($err = $this->prepareMailSettings($validated)) {
+            return $err;
+        }
+
+        if ($err = $this->defaultMetodeMustBeAllowed($validated)) {
+            return $err;
+        }
         // Format kode and nama based on settings
         $validated['kode_terminal'] = SettingService::formatCode($validated['kode_terminal']);
         $validated['nama_terminal'] = SettingService::formatName($validated['nama_terminal']);
@@ -141,16 +161,18 @@ class PosTerminalController extends BaseApiController
             );
         }
 
-        // Create terminal
-        $terminal = MasterPosTerminal::create($validated);
+        // Create terminal + pivots atomically
+        $terminal = DB::transaction(function () use ($validated, $userIds, $metodePembayaranIds) {
+            $terminal = MasterPosTerminal::create($validated);
+            if (! empty($userIds)) {
+                $terminal->users()->attach($userIds);
+            }
+            if (! empty($metodePembayaranIds)) {
+                $terminal->allowedPaymentMethods()->attach($metodePembayaranIds);
+            }
 
-        // Sync pivot tables
-        if (!empty($userIds)) {
-            $terminal->users()->attach($userIds);
-        }
-        if (!empty($metodePembayaranIds)) {
-            $terminal->allowedPaymentMethods()->attach($metodePembayaranIds);
-        }
+            return $terminal;
+        });
 
         return $this->success([
             'terminal' => $terminal,
@@ -199,6 +221,7 @@ class PosTerminalController extends BaseApiController
         if ($terminal->defaultMetodePembayaran) {
             $terminal->defaultMetodePembayaran->makeVisible('id');
         }
+        $terminal->makeVisible('id');
 
         return $this->success([
             'terminal' => $terminal,
@@ -241,6 +264,15 @@ class PosTerminalController extends BaseApiController
                 Rule::exists('master_metode_pembayaran', 'id')->where('status', 'active')->where('metode', 'tunai'),
             ],
             'default_printer' => 'nullable|string|max:100',
+            'mail_driver' => 'nullable|in:none,smtp,resend',
+            'mail_from_address' => 'nullable|email|max:255',
+            'mail_from_name' => 'nullable|string|max:255',
+            'smtp_host' => 'nullable|string|max:255',
+            'smtp_port' => 'nullable|integer|min:1|max:65535',
+            'smtp_encryption' => 'nullable|in:tls,ssl',
+            'smtp_username' => 'nullable|string|max:255',
+            'smtp_password' => 'nullable|string|max:1000',
+            'resend_api_key' => 'nullable|string|max:1000',
             'auto_open_tray' => 'required|boolean',
             'auto_print_receipt' => 'boolean',
             'auto_print_retur' => 'boolean',
@@ -258,8 +290,16 @@ class PosTerminalController extends BaseApiController
             'user_ids' => 'required|array|min:1',
             'user_ids.*' => 'exists:users,id',
             'metode_pembayaran_ids' => 'required|array|min:1',
-            'metode_pembayaran_ids.*' => 'exists:master_metode_pembayaran,id',
+            'metode_pembayaran_ids.*' => Rule::exists('master_metode_pembayaran', 'id')->where('status', 'active'),
         ]);
+
+        if ($err = $this->prepareMailSettings($validated, $terminal)) {
+            return $err;
+        }
+
+        if ($err = $this->defaultMetodeMustBeAllowed($validated)) {
+            return $err;
+        }
 
         // Format nama based on settings
         $validated['nama_terminal'] = SettingService::formatName($validated['nama_terminal']);
@@ -282,15 +322,14 @@ class PosTerminalController extends BaseApiController
             );
         }
 
-        // Update terminal
-        $terminal->update($validated);
-
-        // Sync pivot tables
-        $terminal->users()->sync($userIds);
-        $terminal->allowedPaymentMethods()->sync($metodePembayaranIds);
+        DB::transaction(function () use ($terminal, $validated, $userIds, $metodePembayaranIds) {
+            $terminal->update($validated);
+            $terminal->users()->sync($userIds);
+            $terminal->allowedPaymentMethods()->sync($metodePembayaranIds);
+        });
 
         return $this->success([
-            'terminal' => $terminal,
+            'terminal' => $terminal->fresh(),
         ], 'Terminal berhasil diupdate');
     }
 
@@ -339,9 +378,19 @@ class PosTerminalController extends BaseApiController
             return $this->error('Terminal tidak ditemukan', 404);
         }
 
-        // Block delete if terminal is active
+        // Block delete if terminal is in use
         if ($terminal->isInUse()) {
             return $this->error('Terminal sedang digunakan. Tutup paksa terlebih dahulu.', 422);
+        }
+
+        $salesCount = DocSales::where('terminal_id', $terminal->id)->count();
+        $cashCount = PosCashTransaction::where('terminal_id', $terminal->id)->count();
+        $returnCount = DocSalesReturn::where('terminal_id', $terminal->id)->count();
+        if ($salesCount > 0 || $cashCount > 0 || $returnCount > 0) {
+            return $this->error(
+                'Terminal tidak dapat dihapus karena sudah dipakai transaksi. Nonaktifkan saja.',
+                422
+            );
         }
 
         // Permanently delete (pivots cascade)
@@ -377,37 +426,46 @@ class PosTerminalController extends BaseApiController
             return $this->error('Terminal tidak sedang digunakan', 422);
         }
 
-        $activeShift = PosTerminalShift::where('terminal_id', $terminal->id)
-            ->whereNull('ended_at')
-            ->first();
+        return DB::transaction(function () use ($terminal, $request) {
+            $terminal = MasterPosTerminal::whereKey($terminal->id)->lockForUpdate()->first();
 
-        $shiftUlid = null;
-        if ($activeShift) {
-            $saldoSystem = $this->computeSaldoSystem($activeShift->id);
-            $saldoFisik = $request->filled('saldo_fisik') ? (float) $request->saldo_fisik : null;
-            $selisih = $saldoFisik !== null ? round($saldoFisik - $saldoSystem, 2) : null;
+            if (!$terminal->isInUse()) {
+                return $this->error('Terminal tidak sedang digunakan', 422);
+            }
 
-            $activeShift->update([
-                'ended_at' => now(),
-                'ended_by_force' => true,
-                'forced_by' => auth()->id(),
-                'saldo_system' => $saldoSystem,
-                'saldo_fisik' => $saldoFisik,
-                'selisih' => $selisih,
-                'closing_notes' => $request->closing_notes,
-            ]);
-            $shiftUlid = $activeShift->ulid;
-        }
+            $activeShift = PosTerminalShift::where('terminal_id', $terminal->id)
+                ->whereNull('ended_at')
+                ->lockForUpdate()
+                ->first();
 
-        $terminal->update(['active_user_id' => null]);
+            $shiftUlid = null;
+            if ($activeShift) {
+                $saldoSystem = $this->computeSaldoSystem($activeShift->id);
+                $saldoFisik = $request->filled('saldo_fisik') ? (float) $request->saldo_fisik : null;
+                $selisih = $saldoFisik !== null ? round($saldoFisik - $saldoSystem, 2) : null;
 
-        return $this->success([
-            'terminal' => $terminal,
-            'shift_ulid' => $shiftUlid,
-            'saldo_system' => $activeShift ? (float) $activeShift->saldo_system : null,
-            'saldo_fisik' => $activeShift ? ($activeShift->saldo_fisik !== null ? (float) $activeShift->saldo_fisik : null) : null,
-            'selisih' => $activeShift ? ($activeShift->selisih !== null ? (float) $activeShift->selisih : null) : null,
-        ], 'Terminal berhasil ditutup paksa');
+                $activeShift->update([
+                    'ended_at' => now(),
+                    'ended_by_force' => true,
+                    'forced_by' => auth()->id(),
+                    'saldo_system' => $saldoSystem,
+                    'saldo_fisik' => $saldoFisik,
+                    'selisih' => $selisih,
+                    'closing_notes' => $request->closing_notes,
+                ]);
+                $shiftUlid = $activeShift->ulid;
+            }
+
+            $terminal->update(['active_user_id' => null]);
+
+            return $this->success([
+                'terminal' => $terminal,
+                'shift_ulid' => $shiftUlid,
+                'saldo_system' => $activeShift ? (float) $activeShift->saldo_system : null,
+                'saldo_fisik' => $activeShift ? ($activeShift->saldo_fisik !== null ? (float) $activeShift->saldo_fisik : null) : null,
+                'selisih' => $activeShift ? ($activeShift->selisih !== null ? (float) $activeShift->selisih : null) : null,
+            ], 'Terminal berhasil ditutup paksa');
+        });
     }
 
     /**
@@ -415,6 +473,10 @@ class PosTerminalController extends BaseApiController
      */
     public function startShift(string $ulid): JsonResponse
     {
+        if (! auth()->user()->can('pos.access')) {
+            return $this->error('Unauthorized', 403);
+        }
+
         $terminal = MasterPosTerminal::where('ulid', $ulid)->first();
 
         if (!$terminal) {
@@ -434,7 +496,7 @@ class PosTerminalController extends BaseApiController
 
         // Check if terminal configuration is complete
         $missing = [];
-        if (!$terminal->warehouse_id || !$terminal->warehouse()->where('status', 'active')->exists()) {
+        if (!$terminal->warehouse_id || !$terminal->warehouse()->where('status', 'active')->where('is_saleable', true)->exists()) {
             $missing[] = 'Warehouse';
         }
         if (!$terminal->default_customer_id || !$terminal->defaultCustomer()->where('status', 'active')->exists()) {
@@ -463,6 +525,7 @@ class PosTerminalController extends BaseApiController
         // Check if user already has an active shift on another terminal
         $existingShift = PosTerminalShift::where('user_id', $userId)
             ->whereNull('ended_at')
+            ->lockForUpdate()
             ->first();
         if ($existingShift) {
             return $this->error('Anda masih memiliki shift aktif di terminal lain', 422);
@@ -497,6 +560,10 @@ class PosTerminalController extends BaseApiController
      */
     public function endShift(string $ulid, Request $request): JsonResponse
     {
+        if (! auth()->user()->can('pos.access')) {
+            return $this->error('Unauthorized', 403);
+        }
+
         $request->validate([
             'saldo_fisik' => 'nullable|numeric|min:0',
             'closing_notes' => 'nullable|string|max:1000',
@@ -516,36 +583,49 @@ class PosTerminalController extends BaseApiController
             return $this->error('Hanya user yang sedang menggunakan terminal yang dapat mengakhiri shift', 403);
         }
 
-        $activeShift = PosTerminalShift::where('terminal_id', $terminal->id)
-            ->whereNull('ended_at')
-            ->first();
+        return DB::transaction(function () use ($terminal, $request) {
+            $terminal = MasterPosTerminal::whereKey($terminal->id)->lockForUpdate()->first();
 
-        $shiftUlid = null;
-        if ($activeShift) {
-            $saldoSystem = $this->computeSaldoSystem($activeShift->id);
-            $saldoFisik = $request->filled('saldo_fisik') ? (float) $request->saldo_fisik : null;
-            $selisih = $saldoFisik !== null ? round($saldoFisik - $saldoSystem, 2) : null;
+            if (!$terminal->isInUse()) {
+                return $this->error('Terminal tidak sedang digunakan', 422);
+            }
 
-            $activeShift->update([
-                'ended_at' => now(),
-                'ended_by_force' => false,
-                'saldo_system' => $saldoSystem,
-                'saldo_fisik' => $saldoFisik,
-                'selisih' => $selisih,
-                'closing_notes' => $request->closing_notes,
-            ]);
-            $shiftUlid = $activeShift->ulid;
-        }
+            if ($terminal->active_user_id !== auth()->id()) {
+                return $this->error('Hanya user yang sedang menggunakan terminal yang dapat mengakhiri shift', 403);
+            }
 
-        $terminal->update(['active_user_id' => null]);
+            $activeShift = PosTerminalShift::where('terminal_id', $terminal->id)
+                ->whereNull('ended_at')
+                ->lockForUpdate()
+                ->first();
 
-        return $this->success([
-            'terminal' => $terminal,
-            'shift_ulid' => $shiftUlid,
-            'saldo_system' => $activeShift ? (float) $activeShift->saldo_system : null,
-            'saldo_fisik' => $activeShift ? ($activeShift->saldo_fisik !== null ? (float) $activeShift->saldo_fisik : null) : null,
-            'selisih' => $activeShift ? ($activeShift->selisih !== null ? (float) $activeShift->selisih : null) : null,
-        ], 'Shift berhasil diakhiri');
+            $shiftUlid = null;
+            if ($activeShift) {
+                $saldoSystem = $this->computeSaldoSystem($activeShift->id);
+                $saldoFisik = $request->filled('saldo_fisik') ? (float) $request->saldo_fisik : null;
+                $selisih = $saldoFisik !== null ? round($saldoFisik - $saldoSystem, 2) : null;
+
+                $activeShift->update([
+                    'ended_at' => now(),
+                    'ended_by_force' => false,
+                    'saldo_system' => $saldoSystem,
+                    'saldo_fisik' => $saldoFisik,
+                    'selisih' => $selisih,
+                    'closing_notes' => $request->closing_notes,
+                ]);
+                $shiftUlid = $activeShift->ulid;
+            }
+
+            $terminal->update(['active_user_id' => null]);
+
+            return $this->success([
+                'terminal' => $terminal,
+                'shift_ulid' => $shiftUlid,
+                'saldo_system' => $activeShift ? (float) $activeShift->saldo_system : null,
+                'saldo_fisik' => $activeShift ? ($activeShift->saldo_fisik !== null ? (float) $activeShift->saldo_fisik : null) : null,
+                'selisih' => $activeShift ? ($activeShift->selisih !== null ? (float) $activeShift->selisih : null) : null,
+            ], 'Shift berhasil diakhiri');
+        });
     }
 
     /**
@@ -559,13 +639,8 @@ class PosTerminalController extends BaseApiController
         $setorAwal = (float) $cashTx->where('tipe', 'setor_awal')->sum('nominal');
         $kasMasuk = (float) $cashTx->where('tipe', 'kas_masuk')->sum('nominal');
 
-        $kasKeluarAll = $cashTx->where('tipe', 'kas_keluar');
-        $refundTunai = (float) $kasKeluarAll->filter(
-            fn ($tx) => str_starts_with($tx->keterangan ?? '', 'Refund retur')
-        )->sum('nominal');
-        $kasKeluarManual = (float) $kasKeluarAll->reject(
-            fn ($tx) => str_starts_with($tx->keterangan ?? '', 'Refund retur')
-        )->sum('nominal');
+        $kasKeluarManual = (float) $cashTx->where('tipe', 'kas_keluar')->sum('nominal');
+        $refundTunai = (float) $cashTx->where('tipe', 'refund_retur')->sum('nominal');
 
         $tunaiMethodIds = \App\Models\MasterMetodePembayaran::where('metode', 'tunai')
             ->pluck('id')
@@ -593,6 +668,10 @@ class PosTerminalController extends BaseApiController
      */
     public function list(): JsonResponse
     {
+        if (! auth()->user()->can('terminal.view') && ! auth()->user()->can('pos.access')) {
+            return $this->error('Unauthorized', 403);
+        }
+
         $terminals = MasterPosTerminal::active()
             ->select('id', 'ulid', 'kode_terminal', 'nama_terminal', 'warehouse_id')
             ->orderBy('nama_terminal')
@@ -626,6 +705,91 @@ class PosTerminalController extends BaseApiController
             'count' => $shifts->count(),
             'shifts' => $shifts,
         ]);
+    }
+
+    /**
+     * Send a plain-text test email using terminal mail config.
+     */
+    public function mailTest(Request $request, string $ulid): JsonResponse
+    {
+        if (! auth()->user()->can('terminal.edit')) {
+            return $this->error('Unauthorized', 403);
+        }
+
+        $validated = $request->validate([
+            'to_email' => 'required|email|max:255',
+        ]);
+
+        $terminal = MasterPosTerminal::where('ulid', $ulid)->first();
+        if (! $terminal) {
+            return $this->error('Terminal tidak ditemukan', 404);
+        }
+        if (! $terminal->isMailConfigured()) {
+            return $this->error('Email struk belum dikonfigurasi pada terminal ini.', 422);
+        }
+
+        try {
+            TerminalMailer::send(
+                $terminal,
+                $validated['to_email'],
+                "Test email — {$terminal->nama_terminal}",
+                "Ini email uji dari terminal {$terminal->kode_terminal} ({$terminal->nama_terminal}).\nDriver: {$terminal->mail_driver}."
+            );
+        } catch (\Throwable $e) {
+            return $this->error('Gagal mengirim: '.$e->getMessage(), 422);
+        }
+
+        return $this->success(null, 'Email uji berhasil dikirim.');
+    }
+
+    private function defaultMetodeMustBeAllowed(array $validated): ?JsonResponse
+    {
+        $defaultId = (int) ($validated['default_metode_pembayaran_id'] ?? 0);
+        $allowed = array_map('intval', $validated['metode_pembayaran_ids'] ?? []);
+        if ($defaultId && ! in_array($defaultId, $allowed, true)) {
+            return $this->validationError([
+                'default_metode_pembayaran_id' => ['Default metode harus termasuk dalam metode yang diizinkan.'],
+            ]);
+        }
+
+        return null;
+    }
+
+    private function prepareMailSettings(array &$validated, ?MasterPosTerminal $terminal = null): ?JsonResponse
+    {
+        $driver = $validated['mail_driver'] ?? 'none';
+        $validated['mail_driver'] = $driver;
+
+        if ($driver === 'none') {
+            foreach (['mail_from_address', 'mail_from_name', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_username', 'smtp_password', 'resend_api_key'] as $field) {
+                $validated[$field] = null;
+            }
+
+            return null;
+        }
+
+        $errors = [];
+        if (empty($validated['mail_from_address'])) $errors['mail_from_address'][] = 'Alamat pengirim wajib diisi.';
+
+        if ($driver === 'smtp') {
+            if (empty($validated['smtp_host'])) $errors['smtp_host'][] = 'SMTP host wajib diisi.';
+            if (empty($validated['smtp_port'])) $errors['smtp_port'][] = 'SMTP port wajib diisi.';
+            $validated['resend_api_key'] = null;
+            if ($terminal && empty($validated['smtp_password'])) unset($validated['smtp_password']);
+        }
+
+        if ($driver === 'resend') {
+            $key = $validated['resend_api_key'] ?? $terminal?->resend_api_key;
+            if (empty($key)) $errors['resend_api_key'][] = 'Resend API key wajib diisi.';
+            $validated['smtp_host'] = null;
+            $validated['smtp_port'] = null;
+            $validated['smtp_encryption'] = null;
+            $validated['smtp_username'] = null;
+            $validated['smtp_password'] = null;
+            if ($terminal && empty($validated['resend_api_key'])) unset($validated['resend_api_key']);
+        }
+
+        return empty($errors) ? null : $this->validationError($errors);
     }
 
     /**

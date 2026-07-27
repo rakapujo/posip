@@ -21,10 +21,6 @@ class UpdateSerialIntakeAction
     {
         $this->ensureAuthenticated();
 
-        if (!$intake->isDraft()) {
-            throw ValidationException::withMessages(['status' => ['Hanya intake draft yang dapat diubah.']]);
-        }
-
         // Kecualikan unit milik intake ini dari cek unik kode_internal (karena akan diganti)
         [$product, $serials, $kodes] = $this->validateSerialPayload((int) $data['product_id'], $data['units'], $intake->id);
 
@@ -36,6 +32,11 @@ class UpdateSerialIntakeAction
         $jatuhTempo = $tempoHari > 0 ? Carbon::parse($tanggal)->addDays($tempoHari)->toDateString() : null;
 
         return DB::transaction(function () use ($intake, $product, $data, $units, $serials, $kodes, $qty, $calc, $tanggal, $tempoHari, $jatuhTempo) {
+            $intake = DocSerialIntake::whereKey($intake->id)->lockForUpdate()->firstOrFail();
+            if (! $intake->isDraft()) {
+                throw ValidationException::withMessages(['status' => ['Hanya intake draft yang dapat diubah.']]);
+            }
+
             $intake->update(array_merge([
                 'tanggal' => $tanggal,
                 'product_id' => $product->id,

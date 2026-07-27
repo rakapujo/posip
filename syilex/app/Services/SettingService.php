@@ -15,7 +15,7 @@ class SettingService
     protected const CACHE_KEY = 'app_settings';
 
     /**
-     * Cache TTL in seconds (1 hour).
+     * Cache TTL in seconds (24 hours). Writes call clearCache().
      */
     protected const CACHE_TTL = 86400;
 
@@ -39,6 +39,7 @@ class SettingService
     public static function get(string $key, mixed $default = null): mixed
     {
         $settings = self::all();
+
         return $settings[$key] ?? $default;
     }
 
@@ -50,6 +51,55 @@ class SettingService
     public static function isElektronikEnabled(): bool
     {
         return (bool) self::get('modules.elektronik_enabled', true);
+    }
+
+    /** Retur jual BO boleh tanpa nota (mode bebas). Default true. */
+    public static function isSalesReturnFreeAllowed(): bool
+    {
+        return (bool) self::get('returns.sales_allow_free', true);
+    }
+
+    /** Retur beli boleh tanpa PO/PBS (mode bebas). Default true. */
+    public static function isPurchaseReturnFreeAllowed(): bool
+    {
+        return (bool) self::get('returns.purchase_allow_free', true);
+    }
+
+    /**
+     * Tolak payload serial baru saat Modul Elektronik OFF.
+     * Revert existing SN (void/lock) tidak memakai helper ini.
+     *
+     * @param  array<int, string>  $fields  e.g. ['serial_unit_ids'] or ['serial_intake_id']
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public static function rejectSerialPayloadIfDisabled(array $data, array $fields = ['serial_unit_ids']): void
+    {
+        if (self::isElektronikEnabled()) {
+            return;
+        }
+
+        foreach ($fields as $field) {
+            $value = data_get($data, $field);
+            if ($value === null || $value === '' || $value === [] || $value === false) {
+                continue;
+            }
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                $field => ['Modul Elektronik nonaktif. Fitur serial tidak tersedia.'],
+            ]);
+        }
+    }
+
+    /**
+     * Scope query produk: paksa non-serial saat elektronik OFF.
+     */
+    public static function constrainNonSerialWhenDisabled($query)
+    {
+        if (! self::isElektronikEnabled()) {
+            $query->where('is_serial', false);
+        }
+
+        return $query;
     }
 
     /**
@@ -159,6 +209,7 @@ class SettingService
     {
         try {
             $tz = new \DateTimeZone(self::getTimezone());
+
             return (new \DateTime('now', $tz))->format('P');
         } catch (\Exception $e) {
             return '+07:00';
@@ -201,7 +252,7 @@ class SettingService
 
             // Region = first segment ('Asia/Jakarta' -> 'Asia', 'UTC' -> 'UTC')
             $region = str_contains($tz, '/') ? explode('/', $tz)[0] : $tz;
-            $label = ($friendlyLabels[$tz] ?? $tz) . ' (' . $offset . ')';
+            $label = ($friendlyLabels[$tz] ?? $tz).' ('.$offset.')';
 
             $grouped[$region][] = [
                 'value' => $tz,
@@ -286,7 +337,7 @@ class SettingService
         $decimalPlaces = (int) self::get('number.percent_decimal_places', 2);
         $decimalSeparator = self::get('currency.decimal_separator', ',');
 
-        return number_format($value, $decimalPlaces, $decimalSeparator, '') . '%';
+        return number_format($value, $decimalPlaces, $decimalSeparator, '').'%';
     }
 
     // =========================================================================
@@ -343,8 +394,8 @@ class SettingService
     /**
      * Apply rounding based on settings.
      *
-     * @param float $value Value to round
-     * @param string $type 'purchase' or 'sales'
+     * @param  float  $value  Value to round
+     * @param  string  $type  'purchase' or 'sales'
      */
     public static function applyRounding(float $value, string $type = 'sales'): float
     {
@@ -378,8 +429,10 @@ class SettingService
             'purchase_order' => 'POR',
             'purchase_return' => 'RPB', // Retur Pembelian
             'sales' => 'INV',
+            'manual_sales' => 'SOM',
             'sales_return' => 'RPJ',    // Retur Penjualan
             'payment_hutang' => 'PBH',  // Pembayaran Hutang
+            'payment_piutang' => 'PPI',
             'stock_opname' => 'OPN',
             'adjustment' => 'ADJ',
             'transfer' => 'TRF',
@@ -400,10 +453,14 @@ class SettingService
      * Format: {PREFIX}-{YYMM}-{SEQUENCE:4}
      * Example: PO-2501-0001
      */
-    public static function generateDocumentNumber(string $type, string $table, string $column = 'nomor_dokumen'): string
-    {
+    public static function generateDocumentNumber(
+        string $type,
+        string $table,
+        string $column = 'nomor_dokumen',
+        Carbon|string|null $date = null,
+    ): string {
         $prefix = self::getPrefix($type);
-        $now = self::now();
+        $now = $date instanceof Carbon ? $date : ($date ? self::parseDate($date) : self::now());
         $yearMonth = $now->format('ym'); // 2501 for January 2025
 
         $pattern = "{$prefix}-{$yearMonth}-%";
@@ -453,6 +510,11 @@ class SettingService
                 'table' => 'doc_pembayaran_hutang',
                 'default' => 'PBH',
             ],
+            'payment_piutang' => [
+                'label' => 'Pembayaran Piutang',
+                'table' => 'doc_pembayaran_piutang',
+                'default' => 'PPI',
+            ],
             'stock_opname' => [
                 'label' => 'Stock Opname',
                 'table' => 'doc_stock_opname',
@@ -479,9 +541,16 @@ class SettingService
                 'default' => 'HPC',
             ],
             'sales' => [
-                'label' => 'Penjualan',
+                'label' => 'Penjualan POS',
                 'table' => 'doc_sales',
                 'default' => 'INV',
+                'where' => ['source' => 'pos'],
+            ],
+            'manual_sales' => [
+                'label' => 'Penjualan Manual',
+                'table' => 'doc_sales',
+                'default' => 'SOM',
+                'where' => ['source' => 'manual'],
             ],
             'sales_return' => [
                 'label' => 'Retur Penjualan',
@@ -518,26 +587,37 @@ class SettingService
 
         $result = [];
 
+        // Batch: one aggregate query per physical table (sales uses GROUP BY source).
+        $aggByType = [];
+        $tablesDone = [];
+        foreach ($documentTypes as $type => $config) {
+            if (! $config['table'] || isset($tablesDone[$config['table'].'|'.json_encode($config['where'] ?? [])])) {
+                continue;
+            }
+            $numberColumn = $config['number_column'] ?? 'nomor_dokumen';
+            $where = $config['where'] ?? [];
+            $cacheKey = $config['table'].'|'.json_encode($where);
+            $tablesDone[$cacheKey] = true;
+
+            $query = DB::table($config['table']);
+            foreach ($where as $column => $value) {
+                $query->where($column, $value);
+            }
+
+            $row = $query->selectRaw('count(*) as c, max(`'.$numberColumn.'`) as last_doc')->first();
+            $aggByType[$type] = [
+                'count' => (int) ($row->c ?? 0),
+                'last' => $row->last_doc ?? null,
+            ];
+        }
+
         foreach ($documentTypes as $type => $config) {
             $prefix = self::getPrefix($type);
             $preview = sprintf('%s-%s-0001', $prefix, $yearMonth);
 
-            $lastDocument = null;
-            $documentCount = 0;
-            $isLocked = false;
-
-            if ($config['table']) {
-                // Get document count
-                $documentCount = DB::table($config['table'])->count();
-                $isLocked = $documentCount > 0;
-
-                // Get last document number (any month). Some tables use a
-                // different column name (e.g. doc_promo → kode_promo).
-                $numberColumn = $config['number_column'] ?? 'nomor_dokumen';
-                $lastDocument = DB::table($config['table'])
-                    ->orderByDesc($numberColumn)
-                    ->value($numberColumn);
-            }
+            $documentCount = $aggByType[$type]['count'] ?? 0;
+            $lastDocument = $aggByType[$type]['last'] ?? null;
+            $isLocked = $documentCount > 0;
 
             $result[] = [
                 'type' => $type,
@@ -562,6 +642,7 @@ class SettingService
     {
         $key = "prefix.{$type}";
         self::set($key, strtoupper(trim($prefix)), 'string');
+
         return true;
     }
 
@@ -591,9 +672,6 @@ class SettingService
             'allow_manual_discount' => (bool) self::get('promo.allow_manual_discount', true),
             'max_manual_discount_percent' => (float) self::get('promo.max_manual_discount_percent', 100),
             'max_manual_discount_nominal' => self::get('promo.max_manual_discount_nominal'),
-            // Auto-apply promo modul (baru)
-            'auto_apply' => (bool) self::get('promo.auto_apply', true),
-            'show_label' => (bool) self::get('promo.show_label', true),
         ];
     }
 
@@ -632,7 +710,7 @@ class SettingService
     /**
      * Check if a scheduler is enabled.
      *
-     * @param string $type Scheduler type (e.g., 'price_change')
+     * @param  string  $type  Scheduler type (e.g., 'price_change')
      */
     public static function isSchedulerEnabled(string $type): bool
     {
@@ -642,7 +720,7 @@ class SettingService
     /**
      * Get scheduler cooldown in minutes.
      *
-     * @param string $type Scheduler type (e.g., 'price_change')
+     * @param  string  $type  Scheduler type (e.g., 'price_change')
      */
     public static function getSchedulerCooldown(string $type): int
     {
@@ -652,11 +730,11 @@ class SettingService
     /**
      * Get scheduler max documents per batch.
      *
-     * @param string $type Scheduler type (e.g., 'price_change')
+     * @param  string  $type  Scheduler type (e.g., 'price_change')
      */
     public static function getSchedulerMaxBatch(string $type): int
     {
-        return (int) self::get("scheduler.{$type}_max_batch", 50);
+        return max(1, min(500, (int) self::get("scheduler.{$type}_max_batch", 50)));
     }
 
     // =========================================================================
@@ -688,7 +766,7 @@ class SettingService
     public static function getLogoUrl(): ?string
     {
         $logo = self::get('store.logo');
-        if (!$logo) {
+        if (! $logo) {
             return null;
         }
 
@@ -698,7 +776,7 @@ class SettingService
         }
 
         // Otherwise, build the URL
-        return asset('storage/' . $logo);
+        return asset('storage/'.$logo);
     }
 
     /**
@@ -707,7 +785,7 @@ class SettingService
     public static function getIconUrl(): ?string
     {
         $icon = self::get('store.icon');
-        if (!$icon) {
+        if (! $icon) {
             return null;
         }
 
@@ -717,7 +795,7 @@ class SettingService
         }
 
         // Otherwise, build the URL
-        return asset('storage/' . $icon);
+        return asset('storage/'.$icon);
     }
 
     /**
@@ -726,7 +804,7 @@ class SettingService
     public static function getLoginBackgroundUrl(): ?string
     {
         $bg = self::get('store.login_background');
-        if (!$bg) {
+        if (! $bg) {
             return null;
         }
 
@@ -736,6 +814,6 @@ class SettingService
         }
 
         // Otherwise, build the URL
-        return asset('storage/' . $bg);
+        return asset('storage/'.$bg);
     }
 }

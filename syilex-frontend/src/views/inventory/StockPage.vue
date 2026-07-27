@@ -5,14 +5,21 @@ import { onMounted, ref, computed } from 'vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import MoneySummaryPanel from '@/components/common/MoneySummaryPanel.vue';
+import CollapsibleSection from '@/components/common/CollapsibleSection.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 
 const notify = useNotification();
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 const { formatQty, formatCurrency, formatUnitHierarchy, formatStockBreakdown, todayString } = useFormatters();
 
 // Permissions
@@ -60,6 +67,32 @@ const selectedWarehouse = ref(null);
 const selectedStatus = ref('active');
 const lowStockOnly = ref(false);
 
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedWarehouse.value) n++;
+    if (selectedStatus.value && selectedStatus.value !== 'active') n++;
+    if (lowStockOnly.value) n++;
+    return n;
+});
+
+const summaryItems = computed(() => {
+    const items = [
+        { label: 'Total Produk', value: formatQty(summary.value.total_products) },
+        { label: 'Total Gudang', value: formatQty(summary.value.total_warehouses) },
+        { label: 'Total Qty', value: formatQty(summary.value.total_qty) }
+    ];
+    if (canViewHpp.value) {
+        items.push({ label: 'Total Nilai', value: formatCurrency(summary.value.total_value) });
+    }
+    items.push(
+        { label: 'Stok Menipis', value: formatQty(summary.value.low_stock_count), tone: 'orange' },
+        { label: 'Stok Negatif', value: formatQty(summary.value.negative_stock_count), tone: 'danger' }
+    );
+    return items;
+});
+
+const summaryCols = computed(() => (canViewHpp.value ? 6 : 5));
+
 // Pagination & Sort
 const lazyParams = ref({
     first: 0,
@@ -69,7 +102,7 @@ const lazyParams = ref({
 });
 
 const statusOptions = ref([
-    { label: 'Semua Status', value: null },
+    { label: 'Semua Status', value: 'all' },
     { label: 'Aktif', value: 'active' },
     { label: 'Nonaktif', value: 'inactive' }
 ]);
@@ -91,11 +124,6 @@ onMounted(async () => {
 
     await Promise.all([loadStocks(), loadSummary(), loadValuation()]);
 });
-
-function toggleLowStockFilter() {
-    lowStockOnly.value = !lowStockOnly.value;
-    onFilterChange();
-}
 
 async function loadValuation() {
     // E2: guard — only when user has stok.view_hpp (backend returns 403 otherwise)
@@ -168,6 +196,15 @@ async function loadSummary() {
         const params = {};
         if (selectedWarehouse.value) {
             params.warehouse_id = selectedWarehouse.value;
+        }
+        if (searchQuery.value?.trim()) {
+            params.search = searchQuery.value.trim();
+        }
+        if (selectedStatus.value) {
+            params.status = selectedStatus.value;
+        }
+        if (lowStockOnly.value) {
+            params.low_stock = true;
         }
 
         const response = await inventoryStocksApi.getSummary(params);
@@ -320,65 +357,26 @@ function viewStockCard(product, stock) {
         <!-- Toolbar -->
         <Toolbar class="mb-6">
             <template #end>
-                <div class="flex flex-wrap gap-2 items-center">
-                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-32" filter showClear @change="onFilterChange" />
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" filter showClear @change="onFilterChange" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilterChange" />
                     <div class="flex items-center gap-2">
                         <Checkbox v-model="lowStockOnly" :binary="true" inputId="lowStock" @change="onFilterChange" />
                         <label for="lowStock" class="text-surface-700 dark:text-surface-200 cursor-pointer whitespace-nowrap text-sm">Menipis</label>
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="onResetAll" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
-        <!-- Summary Cards -->
-        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Total Produk</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatQty(summary.total_products) }}</div>
-            </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Total Gudang</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatQty(summary.total_warehouses) }}</div>
-            </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Total Qty (Base Unit)</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatQty(summary.total_qty) }}</div>
-            </div>
-            <div v-if="canViewHpp" class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
-                <div class="text-surface-500 text-sm mb-1">Total Nilai</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_value) }}</div>
-            </div>
-            <div
-                class="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4 cursor-pointer hover:ring-2 hover:ring-orange-400 transition"
-                :class="{ 'ring-2 ring-orange-500': lowStockOnly }"
-                @click="toggleLowStockFilter"
-                role="button"
-                tabindex="0"
-                @keydown.enter="toggleLowStockFilter"
-                aria-label="Filter stok menipis"
-            >
-                <div class="text-orange-600 dark:text-orange-400 text-sm mb-1 flex items-center gap-1">
-                    Stok Menipis
-                    <i v-if="lowStockOnly" class="pi pi-filter-fill text-xs"></i>
-                </div>
-                <div class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ formatQty(summary.low_stock_count) }}</div>
-            </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
-                <div class="text-red-600 dark:text-red-400 text-sm mb-1">Stok Negatif</div>
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatQty(summary.negative_stock_count) }}</div>
-            </div>
-        </div>
+        <MoneySummaryPanel title="Ringkasan Stok" :items="summaryItems" :cols="summaryCols" />
 
-        <!-- E2: Valuation per Warehouse -->
-        <div v-if="canViewHpp && valuation.items.length > 0" class="mb-4 bg-surface-0 dark:bg-surface-900 rounded-lg border border-surface-200 dark:border-surface-700 p-4">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="font-semibold text-surface-800 dark:text-surface-100">Valuation per Gudang</h3>
-                <span class="text-sm text-surface-500"
-                    >Total: <span class="font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(valuation.grand_total_value) }}</span></span
-                >
-            </div>
+        <CollapsibleSection
+            v-if="canViewHpp && valuation.items.length > 0"
+            title="Valuation per Gudang"
+            :subtitle="formatCurrency(valuation.grand_total_value)"
+            meta="Total nilai inventori per gudang"
+        >
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <div v-for="item in valuation.items" :key="item.warehouse_id" class="bg-surface-50 dark:bg-surface-800 rounded-lg p-3 border border-surface-100 dark:border-surface-700">
                     <div class="flex items-center justify-between mb-1">
@@ -389,7 +387,7 @@ function viewStockCard(product, stock) {
                     <div class="text-xs text-surface-500 mt-1">{{ formatQty(item.qty_total) }} qty · {{ item.product_count }} produk</div>
                 </div>
             </div>
-        </div>
+        </CollapsibleSection>
 
         <!-- DataTable with Row Expansion -->
         <DataTable
@@ -439,7 +437,7 @@ function viewStockCard(product, stock) {
                     <div>
                         <div class="flex items-center gap-2">
                             <span class="font-medium">{{ data.nama_produk }}</span>
-                            <Tag v-if="data.is_serial" value="SERIAL" severity="help" class="text-xs" v-tooltip.top="'HPP rata-rata tertimbang — modal riil per-unit di modul serial'" />
+                            <Tag v-if="serialEnabled && data.is_serial" value="SERIAL" severity="help" class="text-xs" v-tooltip.top="'HPP rata-rata tertimbang — modal riil per-unit di modul serial'" />
                             <Tag v-else value="RETAIL" severity="secondary" class="text-xs" />
                         </div>
                         <div v-if="data.brand" class="text-sm text-surface-500">{{ data.brand.nama_brand }}</div>
@@ -494,10 +492,11 @@ function viewStockCard(product, stock) {
                 </template>
             </Column>
 
-            <!-- Actions -->
-            <Column :exportable="false" style="min-width: 80px" alignFrozen="right" frozen>
+            <Column header="Aksi" :exportable="false" style="min-width: 80px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" outlined rounded severity="info" @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail"  />
+                    </RowActionButtons>
                 </template>
             </Column>
 
@@ -538,9 +537,11 @@ function viewStockCard(product, stock) {
                                 <Tag :value="getStockLabel(stock.qty, data.minimum_stok)" :severity="getStockSeverity(stock.qty, data.minimum_stok)" />
                             </template>
                         </Column>
-                        <Column header="Aksi" style="min-width: 100px">
+                        <Column header="Aksi" style="min-width: 100px" alignFrozen="right" frozen>
                             <template #body="{ data: stock }">
-                                <Button icon="pi pi-history" outlined rounded size="small" severity="secondary" @click="viewStockCard(data, stock)" v-tooltip.top="'Kartu Stok'" />
+                                <RowActionButtons>
+                        <Button icon="pi pi-history" severity="secondary" text rounded size="small" @click="viewStockCard(data, stock)" v-tooltip.top="'Kartu Stok'" aria-label="Kartu Stok"  />
+                    </RowActionButtons>
                             </template>
                         </Column>
                     </DataTable>

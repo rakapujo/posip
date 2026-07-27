@@ -8,6 +8,7 @@ use App\Models\DocHppCorrection;
 use App\Models\DocPurchaseOrder;
 use App\Models\DocRepack;
 use App\Models\DocSales;
+use App\Models\DocSalesReturn;
 use App\Models\DocSerialChange;
 use App\Models\DocSerialHppCorrection;
 use App\Models\DocSerialIntake;
@@ -15,8 +16,9 @@ use App\Models\DocStockOpname;
 use App\Models\DocTransfer;
 use App\Models\InventoryStock;
 use App\Models\MasterProduk;
-use App\Services\SettingService;
 use App\Models\SupplierHutang;
+use App\Services\ReportHelperService;
+use App\Services\SettingService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -41,10 +43,17 @@ class DashboardController extends BaseApiController
 
             $salesData = ['count' => (int) $salesToday->cnt];
 
-            // Omzet only if user can view HPP (financial data)
-            if ($user->can('stok.view_hpp')) {
-                $salesData['omzet'] = (float) ($salesToday->total ?? 0);
-            }
+            // Omzet = laporan revenue (bukan HPP)
+            $salesData['omzet'] = (float) ($salesToday->total ?? 0);
+
+            // B1.1: Pendapatan Line = SUM line nett (setelah diskon nota, excl. biaya/PPN/pembulatan) —
+            // same date scope (hari ini, status completed) sebagai pembanding omzet grand_total.
+            $salesData['pendapatan_line'] = (float) DB::table('doc_sales_detail as d')
+                ->join('doc_sales as s', 's.id', '=', 'd.sales_id')
+                ->where('s.status', 'completed')
+                ->whereDate('s.tanggal', $today)
+                ->selectRaw('COALESCE(SUM('.ReportHelperService::salesLineNettExpr('d', 's').'), 0) as t')
+                ->value('t');
 
             $data['sales_today'] = $salesData;
         }
@@ -64,8 +73,7 @@ class DashboardController extends BaseApiController
                 })->whereHas('warehouse', function ($q) {
                     $q->where('status', 'active');
                 })->whereRaw('inventory_stock.qty < (SELECT minimum_stok FROM master_produk WHERE master_produk.id = inventory_stock.product_id)')
-                ->where('qty', '>', 0)
-                ->count(),
+                    ->count(),
             ];
         }
 
@@ -92,10 +100,11 @@ class DashboardController extends BaseApiController
             'serial_intake' => ['model' => DocSerialIntake::class, 'permission' => 'serial-intake.approve'],
             'serial_change' => ['model' => DocSerialChange::class, 'permission' => 'serial-change.approve'],
             'serial_hpp' => ['model' => DocSerialHppCorrection::class, 'permission' => 'serial-hpp.approve'],
+            'sales' => ['model' => DocSales::class, 'permission' => 'sales.approve'],
         ];
 
         // Modul Elektronik nonaktif → jangan tampilkan kartu/approval serial di dashboard.
-        if (!SettingService::isElektronikEnabled()) {
+        if (! SettingService::isElektronikEnabled()) {
             unset($approvalModules['serial_intake'], $approvalModules['serial_change'], $approvalModules['serial_hpp']);
         }
 
@@ -108,13 +117,18 @@ class DashboardController extends BaseApiController
                 }
             }
         }
-        if (!empty($pendingApproval)) {
+        if ($user->can('retur-jual.approve')) {
+            $count = DocSalesReturn::where('source', 'manual')->whereIn('status', ['draft', 'lock'])->count();
+            if ($count > 0) {
+                $pendingApproval['sales_return'] = $count;
+            }
+        }
+        if (! empty($pendingApproval)) {
             $data['pending_approval'] = $pendingApproval;
         }
 
         // Sales Chart (7 days) — laporan.view (single GROUP BY query)
         if ($user->can('laporan.view')) {
-            $canViewFinancial = $user->can('stok.view_hpp');
             $startDate = $today->copy()->subDays(6);
 
             // Single query: count + sum grouped by date
@@ -132,40 +146,82 @@ class DashboardController extends BaseApiController
                 $dateKey = $date->format('Y-m-d');
                 $row = $chartRows[$dateKey] ?? null;
 
-                $entry = [
+                $salesChart[] = [
                     'date' => $dateKey,
                     'label' => $date->format('d/m'),
                     'count' => $row ? (int) $row->cnt : 0,
+                    'total' => $row ? (float) $row->total : 0,
                 ];
-
-                if ($canViewFinancial) {
-                    $entry['total'] = $row ? (float) $row->total : 0;
-                }
-
-                $salesChart[] = $entry;
             }
 
             $data['sales_chart'] = $salesChart;
         }
 
-        // Payment Methods Chart — laporan.view + stok.view_hpp
-        if ($user->can('laporan.view') && $user->can('stok.view_hpp')) {
-            $data['payment_methods'] = DB::table('doc_sales_payments')
+        // Payment Methods Chart — laporan.view (POS tender ∪ settle piutang)
+        if ($user->can('laporan.view')) {
+            $from = $today->copy()->subDays(6)->toDateString();
+            $to = $today->toDateString();
+
+            $posPayments = DB::table('doc_sales_payments')
                 ->join('doc_sales', 'doc_sales.id', '=', 'doc_sales_payments.sales_id')
                 ->join('master_metode_pembayaran', 'master_metode_pembayaran.id', '=', 'doc_sales_payments.metode_pembayaran_id')
                 ->where('doc_sales.status', 'completed')
-                ->whereDate('doc_sales.tanggal', '>=', $today->copy()->subDays(6))
-                ->groupBy('doc_sales_payments.metode_pembayaran_id', 'master_metode_pembayaran.nama_pembayaran')
+                ->whereDate('doc_sales.tanggal', '>=', $from)
+                ->whereDate('doc_sales.tanggal', '<=', $to)
+                ->groupBy('master_metode_pembayaran.nama_pembayaran', 'master_metode_pembayaran.metode')
                 ->select(
                     'master_metode_pembayaran.nama_pembayaran as label',
+                    'master_metode_pembayaran.metode as metode',
                     DB::raw('SUM(doc_sales_payments.nominal) as total')
                 )
-                ->orderByDesc('total')
-                ->get()
-                ->map(fn ($item) => [
-                    'label' => $item->label,
-                    'total' => (float) $item->total,
+                ->get();
+
+            // B1.2: tunai net — kurangi kembalian, sama seperti CashFlowReportController /
+            // PaymentMethodReportController ACC-2 (tunai_diterima - kembalian). Non-tunai unchanged.
+            $kembalian = (float) DB::table('doc_sales as s')
+                ->where('s.status', 'completed')
+                ->whereDate('s.tanggal', '>=', $from)
+                ->whereDate('s.tanggal', '<=', $to)
+                ->whereExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('doc_sales_payments as pay')
+                        ->join('master_metode_pembayaran as m', 'm.id', '=', 'pay.metode_pembayaran_id')
+                        ->whereColumn('pay.sales_id', 's.id')
+                        ->where('m.metode', 'tunai');
+                })
+                ->sum('s.kembalian');
+
+            $tunaiTotal = (float) $posPayments->where('metode', 'tunai')->sum('total');
+            if ($kembalian > 0 && $tunaiTotal > 0) {
+                $factor = max(0, $tunaiTotal - $kembalian) / $tunaiTotal;
+                $posPayments = $posPayments->map(function ($row) use ($factor) {
+                    if ($row->metode === 'tunai') {
+                        $row->total = round((float) $row->total * $factor, 2);
+                    }
+
+                    return $row;
+                });
+            }
+
+            $piutangPayments = DB::table('doc_pembayaran_piutang')
+                ->where('status', 'completed')
+                ->where('total_bayar_cash', '>', 0)
+                ->whereBetween('tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
+                ->select(
+                    DB::raw("CASE metode_pembayaran WHEN 'transfer' THEN 'Bayar Piutang (Transfer)' ELSE 'Bayar Piutang (Cash)' END as label"),
+                    DB::raw('SUM(total_bayar_cash) as total')
+                )
+                ->groupBy('metode_pembayaran')
+                ->get();
+
+            $data['payment_methods'] = $posPayments->concat($piutangPayments)
+                ->groupBy('label')
+                ->map(fn ($group, $label) => [
+                    'label' => $label,
+                    'total' => (float) $group->sum('total'),
                 ])
+                ->sortByDesc('total')
+                ->values()
                 ->toArray();
         }
 
@@ -196,6 +252,7 @@ class DashboardController extends BaseApiController
         // Recent Sales (5 latest) — laporan.view
         if ($user->can('laporan.view')) {
             $recentQuery = DocSales::with('customer:id,nama')
+                ->where('status', 'completed')
                 ->orderByDesc('tanggal')
                 ->orderByDesc('created_at')
                 ->limit(5);
@@ -208,9 +265,7 @@ class DashboardController extends BaseApiController
                     'status' => $sale->status,
                 ];
 
-                if ($user->can('stok.view_hpp')) {
-                    $item['grand_total'] = (float) $sale->grand_total;
-                }
+                $item['grand_total'] = (float) $sale->grand_total;
 
                 return $item;
             })->toArray();
@@ -226,7 +281,6 @@ class DashboardController extends BaseApiController
                 ->where('master_produk.status', 'active')
                 ->where('master_warehouse.status', 'active')
                 ->whereRaw('inventory_stock.qty < master_produk.minimum_stok')
-                ->where('inventory_stock.qty', '>', 0)
                 ->select(
                     'master_produk.kode_produk as kode',
                     'master_produk.nama_produk as nama',
@@ -248,7 +302,7 @@ class DashboardController extends BaseApiController
         }
 
         // Pending Approval Items (top 10) — *.approve
-        if (!empty($pendingApproval)) {
+        if (! empty($pendingApproval)) {
             $pendingItems = [];
 
             $moduleModels = [
@@ -258,10 +312,16 @@ class DashboardController extends BaseApiController
                 'repack' => ['model' => DocRepack::class, 'label' => 'Repack'],
                 'hpp' => ['model' => DocHppCorrection::class, 'label' => 'HPP Correction'],
                 'po' => ['model' => DocPurchaseOrder::class, 'label' => 'Purchase Order'],
+                'sales' => ['model' => DocSales::class, 'label' => 'Penjualan', 'route' => 'sales'],
+                'serial_intake' => ['model' => DocSerialIntake::class, 'label' => 'Pembelian Serial', 'route' => 'serial-intake'],
+                'serial_change' => ['model' => DocSerialChange::class, 'label' => 'Perubahan Data Serial', 'route' => 'serial-change'],
+                'serial_hpp' => ['model' => DocSerialHppCorrection::class, 'label' => 'Koreksi HPP Serial', 'route' => 'serial-hpp'],
             ];
 
             foreach ($moduleModels as $key => $config) {
-                if (!isset($pendingApproval[$key])) continue;
+                if (! isset($pendingApproval[$key])) {
+                    continue;
+                }
 
                 $items = $config['model']::where('status', 'draft')
                     ->orderByDesc('created_at')
@@ -269,12 +329,30 @@ class DashboardController extends BaseApiController
                     ->get(['nomor_dokumen', 'created_at'])
                     ->map(fn ($item) => [
                         'module' => $key,
+                        'route' => $config['route'] ?? $key,
                         'label' => $config['label'],
                         'nomor' => $item->nomor_dokumen,
                         'tanggal' => $item->created_at->format('Y-m-d'),
                     ])
                     ->toArray();
 
+                $pendingItems = array_merge($pendingItems, $items);
+            }
+
+            if (isset($pendingApproval['sales_return'])) {
+                $items = DocSalesReturn::where('source', 'manual')
+                    ->whereIn('status', ['draft', 'lock'])
+                    ->orderByDesc('created_at')
+                    ->limit(3)
+                    ->get(['nomor_dokumen', 'created_at'])
+                    ->map(fn ($item) => [
+                        'module' => 'sales_return',
+                        'route' => 'sales-returns',
+                        'label' => 'Retur Penjualan',
+                        'nomor' => $item->nomor_dokumen,
+                        'tanggal' => $item->created_at->format('Y-m-d'),
+                    ])
+                    ->toArray();
                 $pendingItems = array_merge($pendingItems, $items);
             }
 

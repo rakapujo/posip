@@ -5,12 +5,13 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exports\CustomersExport;
 use App\Http\Controllers\Api\BaseApiController;
 use App\Models\MasterCustomer;
-use App\Models\MasterTipeCustomer;
 use App\Models\MasterKategoriCustomer;
+use App\Models\MasterTipeCustomer;
 use App\Services\CustomerRules;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Maatwebsite\Excel\Facades\Excel;
 
 class CustomerController extends BaseApiController
@@ -21,13 +22,13 @@ class CustomerController extends BaseApiController
     public function index(Request $request): JsonResponse
     {
         // Check permission
-        if (!auth()->user()->can('customer.view')) {
+        if (! auth()->user()->can('customer.view')) {
             return $this->error('Unauthorized', 403);
         }
 
         $query = MasterCustomer::with([
             'tipeCustomer:id,ulid,kode_tipe,nama_tipe,diskon_tipe,diskon_nilai',
-            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai'
+            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai',
         ]);
 
         // Search
@@ -35,9 +36,9 @@ class CustomerController extends BaseApiController
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('kode_customer', 'like', "%{$search}%")
-                  ->orWhere('nama', 'like', "%{$search}%")
-                  ->orWhere('telepon', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+                    ->orWhere('nama', 'like', "%{$search}%")
+                    ->orWhere('telepon', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
             });
         }
 
@@ -75,12 +76,12 @@ class CustomerController extends BaseApiController
         // Handle sorting by relation fields with JOIN
         if ($sortField === 'tipe_customer_nama') {
             $query->leftJoin('master_tipe_customer', 'master_customer.tipe_customer_id', '=', 'master_tipe_customer.id')
-                  ->orderBy('master_tipe_customer.nama_tipe', $sortOrder)
-                  ->select('master_customer.*');
+                ->orderBy('master_tipe_customer.nama_tipe', $sortOrder)
+                ->select('master_customer.*');
         } elseif ($sortField === 'kategori_customer_nama') {
             $query->leftJoin('master_kategori_customer', 'master_customer.kategori_customer_id', '=', 'master_kategori_customer.id')
-                  ->orderBy('master_kategori_customer.nama_kategori', $sortOrder)
-                  ->select('master_customer.*');
+                ->orderBy('master_kategori_customer.nama_kategori', $sortOrder)
+                ->select('master_customer.*');
         } elseif (in_array($sortField, $sortableFields)) {
             $query->orderBy($sortField, $sortOrder);
         } else {
@@ -108,7 +109,7 @@ class CustomerController extends BaseApiController
     public function store(Request $request): JsonResponse
     {
         // Check permission
-        if (!auth()->user()->can('customer.create')) {
+        if (! auth()->user()->can('customer.create')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -118,7 +119,7 @@ class CustomerController extends BaseApiController
                 'string',
                 'max:20',
                 'regex:/^[A-Za-z0-9-]+$/',
-                'unique:master_customer,kode_customer',
+                Rule::unique('master_customer', 'kode_customer')->whereNull('deleted_at'),
             ],
             'nama' => 'required|string|max:100',
             'telepon' => 'required|string|max:20',
@@ -128,6 +129,7 @@ class CustomerController extends BaseApiController
             'npwp' => 'nullable|string|max:30',
             'tipe_customer_ulid' => 'nullable|string|exists:master_tipe_customer,ulid',
             'kategori_customer_ulid' => 'nullable|string|exists:master_kategori_customer,ulid',
+            'tempo_default' => 'sometimes|integer|min:0|max:3650',
             'jenis' => 'required|in:walk_in,spesifik',
             'status' => 'required|in:active,inactive',
         ], [
@@ -140,7 +142,7 @@ class CustomerController extends BaseApiController
 
         // Get tipe customer if provided
         $tipeCustomerId = null;
-        if (!empty($validated['tipe_customer_ulid'])) {
+        if (! empty($validated['tipe_customer_ulid'])) {
             $tipeCustomer = MasterTipeCustomer::where('ulid', $validated['tipe_customer_ulid'])->first();
             if ($message = CustomerRules::storeInactiveTipeBlockMessage($tipeCustomer)) {
                 return $this->error($message, 422);
@@ -150,7 +152,7 @@ class CustomerController extends BaseApiController
 
         // Get kategori customer if provided
         $kategoriCustomerId = null;
-        if (!empty($validated['kategori_customer_ulid'])) {
+        if (! empty($validated['kategori_customer_ulid'])) {
             $kategoriCustomer = MasterKategoriCustomer::where('ulid', $validated['kategori_customer_ulid'])->first();
             if ($message = CustomerRules::storeInactiveKategoriBlockMessage($kategoriCustomer)) {
                 return $this->error($message, 422);
@@ -169,6 +171,7 @@ class CustomerController extends BaseApiController
             'npwp' => $validated['npwp'] ?? null,
             'tipe_customer_id' => $tipeCustomerId,
             'kategori_customer_id' => $kategoriCustomerId,
+            'tempo_default' => $validated['tempo_default'] ?? 0,
             'jenis' => $validated['jenis'],
             'status' => $validated['status'],
         ]);
@@ -176,7 +179,7 @@ class CustomerController extends BaseApiController
         // Load relationships
         $customer->load([
             'tipeCustomer:id,ulid,kode_tipe,nama_tipe,diskon_tipe,diskon_nilai',
-            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai'
+            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai',
         ]);
 
         return $this->success([
@@ -190,7 +193,7 @@ class CustomerController extends BaseApiController
     public function show(string $ulid): JsonResponse
     {
         // Check permission
-        if (!auth()->user()->can('customer.view')) {
+        if (! auth()->user()->can('customer.view')) {
             return $this->error('Unauthorized', 403);
         }
 
@@ -198,10 +201,10 @@ class CustomerController extends BaseApiController
             'tipeCustomer:id,ulid,kode_tipe,nama_tipe,diskon_tipe,diskon_nilai',
             'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai',
             'createdBy:id,name,email',
-            'updatedBy:id,name,email'
+            'updatedBy:id,name,email',
         ])->where('ulid', $ulid)->first();
 
-        if (!$customer) {
+        if (! $customer) {
             return $this->error('Customer tidak ditemukan', 404);
         }
 
@@ -217,13 +220,13 @@ class CustomerController extends BaseApiController
     public function update(Request $request, string $ulid): JsonResponse
     {
         // Check permission
-        if (!auth()->user()->can('customer.update')) {
+        if (! auth()->user()->can('customer.update')) {
             return $this->error('Unauthorized', 403);
         }
 
         $customer = MasterCustomer::where('ulid', $ulid)->first();
 
-        if (!$customer) {
+        if (! $customer) {
             return $this->error('Customer tidak ditemukan', 404);
         }
 
@@ -242,6 +245,7 @@ class CustomerController extends BaseApiController
             'npwp' => 'nullable|string|max:30',
             'tipe_customer_ulid' => 'nullable|string|exists:master_tipe_customer,ulid',
             'kategori_customer_ulid' => 'nullable|string|exists:master_kategori_customer,ulid',
+            'tempo_default' => 'sometimes|integer|min:0|max:3650',
             'jenis' => 'required|in:walk_in,spesifik',
             'status' => 'required|in:active,inactive',
         ]);
@@ -251,7 +255,7 @@ class CustomerController extends BaseApiController
 
         // Get tipe customer if provided
         $tipeCustomerId = null;
-        if (!empty($validated['tipe_customer_ulid'])) {
+        if (! empty($validated['tipe_customer_ulid'])) {
             $tipeCustomer = MasterTipeCustomer::where('ulid', $validated['tipe_customer_ulid'])->first();
             if ($message = CustomerRules::inactiveTipeBlockMessage($tipeCustomer, $customer->tipe_customer_id)) {
                 return $this->error($message, 422);
@@ -261,7 +265,7 @@ class CustomerController extends BaseApiController
 
         // Get kategori customer if provided
         $kategoriCustomerId = null;
-        if (!empty($validated['kategori_customer_ulid'])) {
+        if (! empty($validated['kategori_customer_ulid'])) {
             $kategoriCustomer = MasterKategoriCustomer::where('ulid', $validated['kategori_customer_ulid'])->first();
             if ($message = CustomerRules::inactiveKategoriBlockMessage($kategoriCustomer, $customer->kategori_customer_id)) {
                 return $this->error($message, 422);
@@ -287,6 +291,7 @@ class CustomerController extends BaseApiController
             'npwp' => $validated['npwp'] ?? null,
             'tipe_customer_id' => $tipeCustomerId,
             'kategori_customer_id' => $kategoriCustomerId,
+            'tempo_default' => $validated['tempo_default'] ?? $customer->tempo_default,
             'jenis' => $validated['jenis'],
             'status' => $validated['status'],
         ]);
@@ -294,7 +299,7 @@ class CustomerController extends BaseApiController
         // Load relationships
         $customer->load([
             'tipeCustomer:id,ulid,kode_tipe,nama_tipe,diskon_tipe,diskon_nilai',
-            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai'
+            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai',
         ]);
 
         return $this->success([
@@ -308,13 +313,13 @@ class CustomerController extends BaseApiController
     public function toggleStatus(string $ulid): JsonResponse
     {
         // Check permission
-        if (!auth()->user()->can('customer.update')) {
+        if (! auth()->user()->can('customer.update')) {
             return $this->error('Unauthorized', 403);
         }
 
         $customer = MasterCustomer::where('ulid', $ulid)->first();
 
-        if (!$customer) {
+        if (! $customer) {
             return $this->error('Customer tidak ditemukan', 404);
         }
 
@@ -332,7 +337,7 @@ class CustomerController extends BaseApiController
         // Load relationships
         $customer->load([
             'tipeCustomer:id,ulid,kode_tipe,nama_tipe,diskon_tipe,diskon_nilai',
-            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai'
+            'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai',
         ]);
 
         $message = $newStatus === 'active'
@@ -349,13 +354,13 @@ class CustomerController extends BaseApiController
     public function destroy(string $ulid): JsonResponse
     {
         // Check permission
-        if (!auth()->user()->can('customer.delete')) {
+        if (! auth()->user()->can('customer.delete')) {
             return $this->error('Unauthorized', 403);
         }
 
         $customer = MasterCustomer::where('ulid', $ulid)->first();
 
-        if (!$customer) {
+        if (! $customer) {
             return $this->error('Customer tidak ditemukan', 404);
         }
 
@@ -363,10 +368,13 @@ class CustomerController extends BaseApiController
             return $this->error($message, 422);
         }
 
-        // Permanently delete
+        // Soft-delete: free unique kode, then archive (no restore UI)
+        $suffix = '-D'.$customer->id;
+        $base = substr($customer->kode_customer, 0, max(1, 20 - strlen($suffix)));
+        $customer->update(['kode_customer' => $base.$suffix]);
         $customer->delete();
 
-        return $this->success(null, 'Customer berhasil dihapus permanen');
+        return $this->success(null, 'Customer berhasil diarsipkan');
     }
 
     /**
@@ -374,23 +382,27 @@ class CustomerController extends BaseApiController
      */
     public function export(Request $request)
     {
-        if (!auth()->user()->can('customer.view')) {
+        if (! auth()->user()->can('customer.view')) {
             return $this->error('Unauthorized', 403);
         }
 
         $tipeCustomerId = null;
         if ($request->filled('tipe_customer_ulid')) {
             $tipeCustomer = MasterTipeCustomer::where('ulid', $request->tipe_customer_ulid)->first();
-            if ($tipeCustomer) $tipeCustomerId = $tipeCustomer->id;
+            if ($tipeCustomer) {
+                $tipeCustomerId = $tipeCustomer->id;
+            }
         }
 
         $kategoriCustomerId = null;
         if ($request->filled('kategori_customer_ulid')) {
             $kategoriCustomer = MasterKategoriCustomer::where('ulid', $request->kategori_customer_ulid)->first();
-            if ($kategoriCustomer) $kategoriCustomerId = $kategoriCustomer->id;
+            if ($kategoriCustomer) {
+                $kategoriCustomerId = $kategoriCustomer->id;
+            }
         }
 
-        $filename = 'master_customer_' . date('Y-m-d_His') . '.xlsx';
+        $filename = 'master_customer_'.date('Y-m-d_His').'.xlsx';
 
         return Excel::download(
             new CustomersExport(
@@ -412,13 +424,23 @@ class CustomerController extends BaseApiController
         $query = MasterCustomer::active()
             ->with([
                 'tipeCustomer:id,ulid,kode_tipe,nama_tipe,diskon_tipe,diskon_nilai',
-                'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai'
+                'kategoriCustomer:id,ulid,kode_kategori,nama_kategori,diskon_tipe,diskon_nilai',
             ])
-            ->select('id', 'ulid', 'kode_customer', 'nama', 'telepon', 'jenis', 'tipe_customer_id', 'kategori_customer_id');
+            ->select('id', 'ulid', 'kode_customer', 'nama', 'telepon', 'jenis', 'tempo_default', 'tipe_customer_id', 'kategori_customer_id');
 
         // Filter by jenis if provided
         if ($request->filled('jenis')) {
             $query->where('jenis', $request->jenis);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('kode_customer', 'like', "%{$search}%")
+                    ->orWhere('nama', 'like', "%{$search}%")
+                    ->orWhere('telepon', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
         }
 
         $customers = $query->orderBy('nama')->get()->makeVisible('id');

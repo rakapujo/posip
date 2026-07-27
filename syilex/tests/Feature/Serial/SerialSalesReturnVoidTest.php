@@ -76,6 +76,7 @@ class SerialSalesReturnVoidTest extends TestCase
             'default_metode_pembayaran_id' => $this->cash->id, 'active_user_id' => $this->user->id,
             'status' => 'active', 'created_by' => $this->user->id,
         ]);
+        $this->terminal->allowedPaymentMethods()->attach([$this->cash->id]);
 
         $this->shift = PosTerminalShift::create([
             'ulid' => (string) Str::ulid(), 'terminal_id' => $this->terminal->id,
@@ -126,7 +127,8 @@ class SerialSalesReturnVoidTest extends TestCase
         foreach ($costs as $i => $c) {
             $units[] = SerialUnit::create([
                 'product_id' => $this->serial->id, 'warehouse_id' => $this->warehouse->id,
-                'serial_number' => 'SN-' . ($i + 1), 'harga_modal' => $c, 'cost_per_unit' => $c, 'status' => 'tersedia',
+                'serial_number' => 'SN-' . ($i + 1), 'harga_modal' => $c, 'cost_per_unit' => $c,
+                'harga_jual' => max((float) $c, 1), 'status' => 'tersedia',
             ]);
         }
         return $units;

@@ -130,6 +130,9 @@ export function useReceiptEscPos() {
         } else if (u.battery_condition) {
             parts.push(`Bat ${u.battery_condition}`);
         }
+        if (u.battery_cycle_count !== null && u.battery_cycle_count !== undefined && u.battery_cycle_count !== '') {
+            parts.push(`Cyc ${u.battery_cycle_count}`);
+        }
         if (u.account_status) parts.push(u.account_status);
         return { main: parts.join(' . '), catatan: u.catatan || '' };
     }
@@ -224,9 +227,11 @@ export function useReceiptEscPos() {
         for (let i = 1; i <= 3; i++) {
             const hasil = Number(data[`diskon_nota_${i}_hasil`] || 0);
             if (hasil > 0) {
-                // Label fallback: live cart label → persisted label → generic "Disc N"
                 const liveLabel = data[`_disc_label_${i}`] || data[`diskon_nota_${i}_label`];
-                const label = liveLabel ? fmtLabel(liveLabel, data[`diskon_nota_${i}_tipe`], data[`diskon_nota_${i}_nilai`]) : fmtLabel(`Disc ${i}`, data[`diskon_nota_${i}_tipe`], data[`diskon_nota_${i}_nilai`]);
+                const fallback = i === 3 ? 'Disc Manual' : `Disc ${i}`;
+                const label = liveLabel
+                    ? fmtLabel(liveLabel, data[`diskon_nota_${i}_tipe`], data[`diskon_nota_${i}_nilai`])
+                    : fmtLabel(fallback, data[`diskon_nota_${i}_tipe`], data[`diskon_nota_${i}_nilai`]);
                 buf.text(_twoCol('  ' + label, '-' + fmtC(hasil), cw) + '\n');
             }
         }
@@ -296,7 +301,6 @@ export function useReceiptEscPos() {
             }
             const totalRetur = returns.reduce((s, r) => s + Number(r.grand_total || 0), 0);
             buf.text(_twoCol('Total Semua Retur', fmtC(totalRetur), cw) + '\n');
-            buf.text(_twoCol('  Refund Tunai', fmtC(totalRetur), cw) + '\n');
             buf.cmd(CMD.BOLD_ON);
             buf.text(_twoCol('NILAI BERSIH', fmtC(Number(data.grand_total) - totalRetur), cw) + '\n');
             buf.cmd(CMD.BOLD_OFF);
@@ -465,19 +469,21 @@ export function useReceiptEscPos() {
         buf.text(_twoCol('Status', ': ' + shiftStatus, cw) + '\n');
         buf.text(_line('-', cw));
 
-        // Penjualan — breakdown parity with useShiftReport.js PDF
+        // Penjualan — Biaya Pembayaran before OMZET (same order as PDF)
         const penjualanLines = buildShiftPenjualanLines(p, fmtC, _twoCol, cw);
-        if (penjualanLines.length) {
-            buf.cmd(CMD.BOLD_ON).text(penjualanLines[0] + '\n').cmd(CMD.BOLD_OFF);
-            for (let i = 1; i < penjualanLines.length - 1; i++) {
-                buf.text(penjualanLines[i] + '\n');
-            }
-            if (penjualanLines.length > 1) {
-                buf.cmd(CMD.BOLD_ON).text(penjualanLines[penjualanLines.length - 1] + '\n').cmd(CMD.BOLD_OFF);
+        const omzetLine = penjualanLines.length ? penjualanLines[penjualanLines.length - 1] : null;
+        const bodyLines = penjualanLines.slice(0, -1);
+        if (bodyLines.length) {
+            buf.cmd(CMD.BOLD_ON).text(bodyLines[0] + '\n').cmd(CMD.BOLD_OFF);
+            for (let i = 1; i < bodyLines.length; i++) {
+                buf.text(bodyLines[i] + '\n');
             }
         }
         const _totalBiayaPembayaran = payments.reduce((s, pb) => s + Number(pb.biaya_tambahan || 0), 0);
         if (_totalBiayaPembayaran > 0) buf.text(_twoCol('Biaya Pembayaran', fmtC(_totalBiayaPembayaran), cw) + '\n');
+        if (omzetLine) {
+            buf.cmd(CMD.BOLD_ON).text(omzetLine + '\n').cmd(CMD.BOLD_OFF);
+        }
         buf.text(_line('-', cw));
 
         // Unit Serial Terjual (hanya kalau ada isinya)
@@ -496,7 +502,9 @@ export function useReceiptEscPos() {
                 if (u.kode_internal && u.serial_number) meta.push(`SN ${u.serial_number}`);
                 if (u.grade) meta.push(`Grade ${u.grade}`);
                 if (u.battery_health !== null && u.battery_health !== undefined) meta.push(`Bat ${u.battery_health}%`);
+                if (u.battery_cycle_count !== null && u.battery_cycle_count !== undefined) meta.push(`Cyc ${u.battery_cycle_count}`);
                 if (u.account_status) meta.push(`Akun ${u.account_status}`);
+                if (u.catatan) meta.push(`Cat ${u.catatan}`);
                 if (meta.length) buf.text(`  ${meta.join(' | ')}\n`);
             }
             buf.text(_line('-', cw));

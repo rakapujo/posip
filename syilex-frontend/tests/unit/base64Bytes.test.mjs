@@ -1,10 +1,5 @@
 import { TestRunner } from './testRunner.mjs';
-import {
-    base64ToBytes,
-    bytesToBase64,
-    hasDrawerBeforeCut,
-    lastIndexOfBytes
-} from '../../src/composables/print/base64Bytes.js';
+import { base64ToBytes, bytesToBase64, hasDrawerBeforeCut, lastIndexOfBytes } from '../../src/composables/print/base64Bytes.js';
 import { buildFeedAndCutBytes } from '../../src/composables/print/escposFeedCut.js';
 
 const runner = new TestRunner('base64Bytes + escposFeedCut');

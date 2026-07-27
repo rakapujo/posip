@@ -104,6 +104,91 @@ trait RevertsSerialUnits
     }
 
     /**
+     * Free-mode sales return: kembalikan unit TERJUAL → TERSEDIA tanpa wajib sale_id tertentu.
+     * Opsional filter customer_id lewat sale.customer_id.
+     *
+     * @param  array     $ulids
+     * @param  int       $productId
+     * @param  int       $warehouseId
+     * @param  string    $docType
+     * @param  int|null  $docId
+     * @param  string|null $docNo
+     * @param  mixed     $tanggal
+     * @param  int|null  $customerId
+     * @return Collection<int, SerialUnit>
+     */
+    protected function revertSoldUnitsFree(
+        array $ulids,
+        int $productId,
+        int $warehouseId,
+        string $docType,
+        ?int $docId,
+        ?string $docNo,
+        $tanggal,
+        ?int $customerId = null
+    ): Collection {
+        $ulids = array_values(array_unique(array_filter($ulids, fn ($u) => $u !== null && $u !== '')));
+
+        if (count($ulids) === 0) {
+            throw ValidationException::withMessages([
+                'serial_unit_ids' => ['Belum ada unit serial yang dipilih untuk dikembalikan.'],
+            ]);
+        }
+
+        $units = SerialUnit::whereIn('ulid', $ulids)
+            ->with('sale:id,customer_id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('ulid');
+
+        $errors = [];
+        $missing = array_diff($ulids, $units->keys()->all());
+        if (count($missing) > 0) {
+            $errors[] = 'Sebagian unit serial tidak ditemukan.';
+        }
+
+        foreach ($units as $unit) {
+            if ((int) $unit->product_id !== $productId) {
+                $errors[] = "Unit {$unit->kode_internal} (SN {$unit->serial_number}) bukan milik produk ini.";
+            } elseif ($unit->status !== SerialUnit::STATUS_TERJUAL) {
+                $errors[] = "Unit {$unit->kode_internal} (SN {$unit->serial_number}) tidak berstatus terjual.";
+            } elseif ($customerId !== null && (int) ($unit->sale?->customer_id ?? 0) !== $customerId) {
+                $errors[] = "Unit {$unit->kode_internal} (SN {$unit->serial_number}) bukan penjualan customer ini.";
+            }
+        }
+
+        if (count($errors) > 0) {
+            throw ValidationException::withMessages(['serial_unit_ids' => array_values(array_unique($errors))]);
+        }
+
+        foreach ($units as $unit) {
+            $unit->update([
+                'status' => SerialUnit::STATUS_TERSEDIA,
+                'sale_id' => null,
+                'sale_detail_id' => null,
+                'sold_at' => null,
+                'warehouse_id' => $warehouseId,
+            ]);
+
+            SerialUnitMovement::record([
+                'serial_unit_id' => $unit->id,
+                'doc_type' => $docType,
+                'doc_id' => $docId,
+                'doc_no' => $docNo,
+                'movement_type' => 'IN',
+                'from_warehouse_id' => null,
+                'to_warehouse_id' => $warehouseId,
+                'from_status' => SerialUnit::STATUS_TERJUAL,
+                'to_status' => SerialUnit::STATUS_TERSEDIA,
+                'tanggal' => $tanggal,
+                'notes' => 'Retur bebas (tanpa nota)',
+            ]);
+        }
+
+        return collect($ulids)->map(fn ($u) => $units->get($u))->values();
+    }
+
+    /**
      * Rekalkulasi avg_cost agregat produk serial = rata cost_per_unit unit TERSEDIA (0 bila habis).
      * Simpan + sync ke inventory_stock. Kembalikan avg baru.
      */

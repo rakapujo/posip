@@ -11,7 +11,7 @@ use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
 
-class ReturPatternExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class ReturPatternExport implements FromCollection, ShouldAutoSize, WithHeadings, WithMapping, WithStyles
 {
     use UsesExportSheetStyles;
 
@@ -32,6 +32,8 @@ class ReturPatternExport implements FromCollection, WithHeadings, WithMapping, W
             ->join('doc_sales_returns as r', 'r.id', '=', 'rd.return_id')
             ->join('master_produk as p', 'p.id', '=', 'rd.product_id')
             ->leftJoin('master_kategori as k', 'k.id', '=', 'p.kategori_id')
+            ->whereNull('p.deleted_at')
+            ->whereIn('r.status', ['lock', 'approved'])
             ->whereBetween('r.tanggal', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59'])
             ->when($terminalId, fn ($q) => $q->where('r.terminal_id', $terminalId))
             ->when($kategoriId, fn ($q) => $q->where('p.kategori_id', $kategoriId));

@@ -24,8 +24,12 @@ class GrossProfitByKategoriExport implements FromCollection, WithHeadings, WithM
         protected string $dateFrom,
         protected string $dateTo,
         protected ?int $terminalId = null,
+        protected ?int $warehouseId = null,
     ) {
-        $this->rows = GrossProfitReportResolver::byKategoriRows($dateFrom, $dateTo, $terminalId);
+        $this->rows = GrossProfitReportResolver::byKategoriRows($dateFrom, $dateTo, [
+            'terminal_id' => $terminalId,
+            'warehouse_id' => $warehouseId,
+        ]);
     }
 
     public function collection(): Collection

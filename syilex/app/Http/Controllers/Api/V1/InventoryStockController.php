@@ -55,10 +55,12 @@ class InventoryStockController extends BaseApiController
                 $q->where('warehouse_id', $warehouseId);
             });
         } else {
-            // Load all stocks with warehouse relation
-            $query->with(['inventoryStocks.warehouse:id,ulid,kode_warehouse,nama_warehouse']);
-            // Sum qty from all warehouses
-            $query->withSum('inventoryStocks', 'qty');
+            // Active warehouses only
+            $activeWh = fn ($q) => $q->whereHas('warehouse', fn ($w) => $w->where('status', 'active'));
+            $query->with(['inventoryStocks' => function ($q) use ($activeWh) {
+                $activeWh($q)->with('warehouse:id,ulid,kode_warehouse,nama_warehouse');
+            }]);
+            $query->withSum(['inventoryStocks as inventory_stocks_sum_qty' => $activeWh], 'qty');
         }
 
         // Search
@@ -71,18 +73,21 @@ class InventoryStockController extends BaseApiController
             });
         }
 
-        // Filter by status
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        } else {
-            // Default: only active products
+        // Filter by status (status=all → no filter; missing → default active)
+        $status = $request->input('status');
+        if ($status !== null && $status !== '' && $status !== 'all') {
+            $query->where('status', $status);
+        } elseif ($status !== 'all') {
             $query->where('status', 'active');
         }
 
-        // Filter low stock only
+        // Filter low stock only (scope to selected warehouse when set)
         if ($request->boolean('low_stock')) {
-            $query->whereHas('inventoryStocks', function ($q) {
+            $query->whereHas('inventoryStocks', function ($q) use ($warehouseId) {
                 $q->whereColumn('qty', '<', 'master_produk.minimum_stok');
+                if ($warehouseId) {
+                    $q->where('warehouse_id', $warehouseId);
+                }
             });
         }
 
@@ -278,42 +283,58 @@ class InventoryStockController extends BaseApiController
         }
 
         $canViewHpp = auth()->user()->can('stok.view_hpp');
-
         $warehouseId = $request->input('warehouse_id');
 
         $query = InventoryStock::query()
-            ->activeProduct()
-            ->activeWarehouse();
+            ->activeWarehouse()
+            ->join('master_produk', 'master_produk.id', '=', 'inventory_stock.product_id')
+            ->whereNull('master_produk.deleted_at');
 
-        if ($warehouseId) {
-            $query->where('warehouse_id', $warehouseId);
+        // Mirror list filters
+        $status = $request->input('status');
+        if ($status !== null && $status !== '' && $status !== 'all') {
+            $query->where('master_produk.status', $status);
+        } elseif ($status !== 'all') {
+            $query->where('master_produk.status', 'active');
         }
 
-        $totalItems = MasterProduk::active()->count();
-        $totalWarehouses = MasterWarehouse::active()->count();
+        if ($warehouseId) {
+            $query->where('inventory_stock.warehouse_id', $warehouseId);
+        }
 
-        // Get all stocks for calculations
-        $stocks = $query->with('product:id,minimum_stok')->get();
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('master_produk.kode_produk', 'like', "%{$search}%")
+                  ->orWhere('master_produk.barcode', 'like', "%{$search}%")
+                  ->orWhere('master_produk.nama_produk', 'like', "%{$search}%");
+            });
+        }
 
-        $totalQty = $stocks->sum('qty');
-        $totalValue = $canViewHpp ? $stocks->sum(function ($stock) {
-            return $stock->qty * $stock->avg_cost;
-        }) : null;
+        if ($request->boolean('low_stock')) {
+            $query->whereColumn('inventory_stock.qty', '<', 'master_produk.minimum_stok');
+        }
 
-        $lowStockCount = $stocks->filter(function ($stock) {
-            return $stock->product && $stock->qty < $stock->product->minimum_stok;
-        })->count();
+        $agg = $query->toBase()->selectRaw('
+                COUNT(DISTINCT inventory_stock.product_id) as total_products,
+                COALESCE(SUM(inventory_stock.qty), 0) as total_qty,
+                COALESCE(SUM(inventory_stock.qty * inventory_stock.avg_cost), 0) as total_value,
+                SUM(CASE WHEN inventory_stock.qty < master_produk.minimum_stok THEN 1 ELSE 0 END) as low_stock_count,
+                SUM(CASE WHEN inventory_stock.qty < 0 THEN 1 ELSE 0 END) as negative_stock_count
+            ')->first();
 
-        $negativeStockCount = $stocks->where('qty', '<', 0)->count();
+        $totalWarehouses = $warehouseId
+            ? 1
+            : MasterWarehouse::active()->count();
 
         return $this->success([
             'summary' => [
-                'total_products' => $totalItems,
+                'total_products' => (int) ($agg->total_products ?? 0),
                 'total_warehouses' => $totalWarehouses,
-                'total_qty' => $totalQty,
-                'total_value' => $totalValue,
-                'low_stock_count' => $lowStockCount,
-                'negative_stock_count' => $negativeStockCount,
+                'total_qty' => (int) ($agg->total_qty ?? 0),
+                'total_value' => $canViewHpp ? (float) ($agg->total_value ?? 0) : null,
+                'low_stock_count' => (int) ($agg->low_stock_count ?? 0),
+                'negative_stock_count' => (int) ($agg->negative_stock_count ?? 0),
             ],
             'can_view_hpp' => $canViewHpp,
         ]);

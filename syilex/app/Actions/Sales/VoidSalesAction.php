@@ -31,6 +31,13 @@ class VoidSalesAction
             ]);
         }
 
+        $sales->loadMissing('shift');
+        if ($sales->shift && $sales->shift->ended_at !== null) {
+            throw ValidationException::withMessages([
+                'shift' => ['Shift sudah ditutup, transaksi tidak dapat di-void.'],
+            ]);
+        }
+
         return DB::transaction(function () use ($sales, $reason) {
             $sales->load('details');
 

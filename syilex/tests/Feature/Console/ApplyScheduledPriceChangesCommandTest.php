@@ -25,7 +25,6 @@ class ApplyScheduledPriceChangesCommandTest extends TestCase
         parent::setUp();
 
         SettingService::set('scheduler.price_change_enabled', true, 'boolean');
-        SettingService::set('scheduler.price_change_cooldown', 5, 'integer');
         SettingService::set('scheduler.price_change_max_batch', 50, 'integer');
 
         $this->user = User::factory()->create();
@@ -107,6 +106,48 @@ class ApplyScheduledPriceChangesCommandTest extends TestCase
         $this->product->refresh();
         $this->assertSame(144000.0, (float) $this->product->harga_1);
     }
+
+    #[Test]
+    public function command_uses_max_batch_setting_when_limit_omitted(): void
+    {
+        SettingService::set('scheduler.price_change_max_batch', 1, 'integer');
+        $this->actingAs($this->user);
+        $this->createScheduledPriceChange(now()->subMinute()->toDateTimeString(), 111000);
+        $other = MasterProduk::factory()->create([
+            'harga_1' => 200000,
+            'harga_2' => 100000,
+            'harga_3' => 40000,
+            'harga_4' => 20000,
+            'status' => 'active',
+        ]);
+        $doc = DocPriceChange::create([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'PCH-CMD-' . uniqid(),
+            'tanggal_pengajuan' => '2026-04-10 00:00:00',
+            'tanggal_berlaku' => now()->subMinute()->toDateTimeString(),
+            'status' => 'scheduled',
+            'created_by' => $this->user->id,
+        ]);
+        DocPriceChangeDetail::create([
+            'price_change_id' => $doc->id,
+            'product_id' => $other->id,
+            'harga_1_lama' => 200000,
+            'harga_2_lama' => 100000,
+            'harga_3_lama' => 40000,
+            'harga_4_lama' => 20000,
+            'harga_1_baru' => 222000,
+            'harga_2_baru' => 111000,
+            'harga_3_baru' => 44400,
+            'harga_4_baru' => 22200,
+            'alasan' => 'PENYESUAIAN_PASAR',
+        ]);
+
+        $this->artisan('price-change:apply')->assertSuccessful();
+
+        $applied = DocPriceChange::where('status', 'applied')->count();
+        $this->assertSame(1, $applied);
+    }
+
     #[Test]
     public function schedule_registers_price_change_command(): void
     {

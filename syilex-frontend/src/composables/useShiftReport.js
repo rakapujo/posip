@@ -3,6 +3,7 @@ import { useFormatters } from '@/composables/useFormatters';
 import { useSettingsStore } from '@/stores/settings';
 import { useNotification } from '@/composables/useNotification';
 import { posApi } from '@/api';
+import { createFittedThermalPdf } from '@/composables/print/fittedThermalPdf';
 
 /**
  * Composable for Shift Report functionality
@@ -219,7 +220,9 @@ export function useShiftReport() {
                 if (u.kode_internal && u.serial_number) meta.push(`SN ${u.serial_number}`);
                 if (u.grade) meta.push(`Grade ${u.grade}`);
                 if (u.battery_health !== null && u.battery_health !== undefined) meta.push(`Bat ${u.battery_health}%`);
+                if (u.battery_cycle_count !== null && u.battery_cycle_count !== undefined) meta.push(`Cyc ${u.battery_cycle_count}`);
                 if (u.account_status) meta.push(`Akun ${u.account_status}`);
+                if (u.catatan) meta.push(`Cat ${u.catatan}`);
                 if (meta.length) {
                     ensureSpace(lineHeight);
                     doc.text(`  ${meta.join(' | ')}`, margin, y);
@@ -343,30 +346,12 @@ export function useShiftReport() {
     };
 
     /**
-     * Create jsPDF instance sized for thermal shift reports (80mm roll).
-     * 500mm height matches receipt PDF — avoids clipping KAS / Ringkasan sections.
-     */
-    const createShiftReportPdfDoc = async () => {
-        const { jsPDF } = await import('jspdf');
-        return new jsPDF({ unit: 'mm', format: [80, 500] });
-    };
-
-    /**
-     * Trim single-page thermal PDF to actual content height.
-     */
-    const finalizeShiftReportPdf = (doc, contentBottomY) => {
-        if (doc.getNumberOfPages() === 1) {
-            doc.internal.pageSize.height = Math.max(contentBottomY + 10, 40);
-        }
-    };
-
-    /**
      * Print shift report
      * @param {Object} data - Shift report data (optional, uses shiftReportData if not provided)
      */
     const printShiftReport = async (data = null) => {
-        // Ignore event objects (when called from @click without arguments)
-        const reportData = data && typeof data === 'object' && data.shift ? data : shiftReportData.value;
+        // Ignore click/pointer events — only accept real shift report payloads
+        const reportData = data?.shift?.ulid || data?.shift?.id ? data : shiftReportData.value;
         if (!reportData) {
             console.warn('[useShiftReport] printShiftReport called with no data');
             return;
@@ -379,26 +364,27 @@ export function useShiftReport() {
             return;
         }
 
-        const doc = await createShiftReportPdfDoc();
-        const finalY = buildShiftReportPdf(reportData, doc);
-        finalizeShiftReportPdf(doc, finalY);
+        const doc = await createFittedThermalPdf((d) => buildShiftReportPdf(reportData, d));
 
         const pdfBlob = doc.output('blob');
         const url = URL.createObjectURL(pdfBlob);
-        const printWindow = window.open(url);
+        const printWindow = window.open(url, '_blank');
         if (!printWindow) {
             URL.revokeObjectURL(url);
             notify.warn('Popup diblokir browser. Izinkan popup untuk print, atau gunakan Download PDF.');
             return;
         }
-        printWindow.addEventListener(
-            'load',
-            () => {
+        const doPrint = () => {
+            try {
+                printWindow.focus();
                 printWindow.print();
-                setTimeout(() => URL.revokeObjectURL(url), 60_000);
-            },
-            { once: true }
-        );
+            } catch {
+                /* user can print manually from the tab */
+            }
+        };
+        printWindow.addEventListener('load', () => setTimeout(doPrint, 800), { once: true });
+        setTimeout(doPrint, 1500);
+        setTimeout(() => URL.revokeObjectURL(url), 120_000);
     };
 
     /**
@@ -406,8 +392,8 @@ export function useShiftReport() {
      * @param {Object} data - Shift report data (optional, uses shiftReportData if not provided)
      */
     const downloadShiftReportPdf = async (data = null) => {
-        // Ignore event objects (when called from @click without arguments)
-        const reportData = data && typeof data === 'object' && data.shift ? data : shiftReportData.value;
+        // Ignore click/pointer events — only accept real shift report payloads
+        const reportData = data?.shift?.ulid || data?.shift?.id ? data : shiftReportData.value;
         if (!reportData) {
             console.warn('[useShiftReport] downloadShiftReportPdf called with no data');
             return;
@@ -420,9 +406,7 @@ export function useShiftReport() {
             return;
         }
 
-        const doc = await createShiftReportPdfDoc();
-        const finalY = buildShiftReportPdf(reportData, doc);
-        finalizeShiftReportPdf(doc, finalY);
+        const doc = await createFittedThermalPdf((d) => buildShiftReportPdf(reportData, d));
 
         // Download with safe filename
         const terminalCode = reportData.shift?.terminal?.kode_terminal || 'UNKNOWN';

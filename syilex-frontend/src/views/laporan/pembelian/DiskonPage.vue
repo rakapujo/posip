@@ -1,43 +1,64 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { purchaseReportApi } from '@/api';
 import { useFormatters } from '@/composables/useFormatters';
 import { useReportList } from '@/composables/useReportList';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 const { formatCurrency, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
+const canViewHarga = computed(() => authStore.can('po.view_harga'));
 const canExport = computed(() => authStore.can('laporan.export'));
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 
 const selectedSupplier = ref(null);
 const selectedSource = ref(null);
-const sourceOptions = [
-    { label: 'Semua Sumber', value: null },
-    { label: 'Purchase Order', value: 'po' },
-    { label: 'Serial', value: 'serial' }
+const reportMode = ref('bruto');
+const modeOptions = [
+    { label: 'Bruto', value: 'bruto' },
+    { label: 'Net', value: 'net' }
 ];
+const sourceOptions = computed(() => {
+    const opts = [
+        { label: 'Semua Sumber', value: null },
+        { label: 'Purchase Order', value: 'po' }
+    ];
+    if (serialEnabled.value) opts.push({ label: 'Serial', value: 'serial' });
+    return opts;
+});
 
-const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, lazyParams, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams } = useReportList({
+const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, lazyParams, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams, loadData, loadDropdowns } = useReportList({
     fetchList: (params) => purchaseReportApi.getDiskon(params),
     exportFn: purchaseReportApi.exportDiskon,
     exportFilenameFn: () => `laporan_diskon_pembelian_${todayString()}.xlsx`,
     fetchDropdowns: purchaseReportApi.getDropdowns,
     getExtraFilters: () => ({
         supplier_id: selectedSupplier.value,
-        source: selectedSource.value
+        source: selectedSource.value,
+        mode: reportMode.value
     }),
     onResetFilters: () => {
         selectedSupplier.value = null;
         selectedSource.value = null;
+        reportMode.value = 'bruto';
     },
     listErrorLabel: 'laporan diskon pembelian',
-    defaultSortField: 'tanggal_po'
+    defaultSortField: 'tanggal_po',
+    autoLoad: false
 });
 
 const suppliers = computed(() => dropdowns.value.suppliers ?? []);
+
+onMounted(() => {
+    if (!canViewHarga.value) return;
+    loadData();
+    loadDropdowns();
+});
 
 function formatDisc(tipe, nilai, hasil, arrow = '\u2192') {
     if (!tipe || tipe === 'none' || !hasil || parseFloat(hasil) === 0) return '-';
@@ -81,6 +102,11 @@ async function exportPdf() {
 
 <template>
     <div class="card">
+        <Message v-if="!canViewHarga" severity="warn" :closable="false" class="mb-4">
+            Anda tidak memiliki izin melihat harga pembelian (po.view_harga). Laporan diskon tidak dapat dimuat.
+        </Message>
+
+        <template v-else>
         <!-- Toolbar -->
         <Toolbar class="mb-6">
             <template #start>
@@ -88,6 +114,7 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
+                    <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
                     <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilterChange" />
                     <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" class="w-36" @change="onFilterChange" />
                     <div class="w-40">
@@ -101,23 +128,25 @@ async function exportPdf() {
             </template>
         </Toolbar>
 
+        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: baris, ringkasan, dan export sudah dikurangi retur</Message>
+
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Jumlah PO</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.jumlah_po }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.jumlah_po }}</div>
             </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Total Subtotal</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_subtotal) }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_subtotal) }}</div>
             </div>
-            <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                 <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Diskon</div>
-                <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
+                <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
             </div>
-            <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+            <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                 <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Total Setelah Diskon</div>
-                <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_setelah_diskon) }}</div>
+                <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_setelah_diskon) }}</div>
             </div>
         </div>
 
@@ -214,5 +243,6 @@ async function exportPdf() {
                 </template>
             </Column>
         </DataTable>
+        </template>
     </div>
 </template>

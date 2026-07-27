@@ -118,9 +118,7 @@ class CustomerPromoReportController extends BaseApiController
                 ->where('kategori_customer_id', $k->id)
                 ->count();
 
-            $eligible = $promos->filter(function ($p) use ($k) {
-                return (int) $p->customer_category_id === (int) $k->id;
-            });
+            $eligible = CustomerPromoReportResolver::eligiblePromosForKategori($k, $promos);
 
             return [
                 'kategori_id' => $k->id,
@@ -180,12 +178,11 @@ class CustomerPromoReportController extends BaseApiController
             });
         }
 
-        // Paginate — sort by promo count di-handle post-fetch karena count dihitung di PHP
+        // promo_line_count/terjaring dihitung di PHP (per-customer via $promos) — harus resolve
+        // SEMUA baris dulu sebelum filter only_terjaring + sort + paginate, supaya total & urutan benar.
         $q->orderBy('c.kode_customer');
 
-        $paginator = $q->paginate($perPage);
-
-        $items = collect($paginator->items())->map(function ($c) use ($promos) {
+        $items = $q->get()->map(function ($c) use ($promos) {
             $tipeDisc = CustomerPromoReportResolver::formatAutoDisc($c->tipe_disc_tipe, (float) ($c->tipe_disc_nilai ?? 0));
             $katDisc = CustomerPromoReportResolver::formatAutoDisc($c->kat_disc_tipe, (float) ($c->kat_disc_nilai ?? 0));
 
@@ -208,24 +205,27 @@ class CustomerPromoReportController extends BaseApiController
             ];
         });
 
-        // Filter only_terjaring post-fetch (sudah dihitung terjaring per row)
         if ($request->boolean('only_terjaring')) {
             $items = $items->filter(fn ($i) => $i['terjaring'])->values();
         }
 
-        // Sort by promo_line_count DESC kalau default
         $sort = $request->input('sort', 'promo_desc');
         if ($sort === 'promo_desc') {
             $items = $items->sortByDesc('promo_line_count')->values();
         }
 
+        $total = $items->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $currentPage = max(1, min($lastPage, (int) $request->input('page', 1)));
+        $paged = $items->slice(($currentPage - 1) * $perPage, $perPage)->values();
+
         return $this->success([
-            'items' => $items,
+            'items' => $paged,
             'pagination' => [
-                'current_page' => $paginator->currentPage(),
-                'last_page' => $paginator->lastPage(),
-                'per_page' => $paginator->perPage(),
-                'total' => $paginator->total(),
+                'current_page' => $currentPage,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
             ],
         ]);
     }

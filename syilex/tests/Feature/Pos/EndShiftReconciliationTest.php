@@ -32,6 +32,8 @@ class EndShiftReconciliationTest extends TestCase
         parent::setUp();
 
         $this->user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'pos.access', 'guard_name' => 'web']);
+        $this->user->givePermissionTo('pos.access');
         $this->actingAs($this->user);
 
         $this->warehouse = MasterWarehouse::factory()->create(['created_by' => $this->user->id]);
@@ -143,7 +145,7 @@ class EndShiftReconciliationTest extends TestCase
         $this->makeCashTx('setor_awal', 100_000);
         $this->makeCashTx('kas_masuk', 50_000);
         $this->makeCashTx('kas_keluar', 20_000, 'Beli galon');
-        $this->makeCashTx('kas_keluar', 30_000, 'Refund retur INV-001');
+        $this->makeCashTx('refund_retur', 30_000, 'Refund retur INV-001');
 
         $this->postJson("/api/v1/pos-terminals/{$this->terminal->ulid}/end-shift", [
             'saldo_fisik' => 100_000,
@@ -388,10 +390,11 @@ class EndShiftReconciliationTest extends TestCase
           ->assertJsonValidationErrors(['closing_notes']);
     }
 
-    /** end-shift pada terminal yang tidak sedang dipakai (active_user null) → 422. */
+    /** end-shift pada terminal yang tidak sedang dipakai (active_user null + tanpa shift open) → 422. */
     public function test_end_shift_on_idle_terminal_is_rejected(): void
     {
-        // lepas terminal terlebih dahulu.
+        // Tutup shift dulu; active_user null saja masih "in use" jika ada orphan open shift.
+        $this->shift->update(['ended_at' => now()]);
         $this->terminal->update(['active_user_id' => null]);
 
         $this->postJson("/api/v1/pos-terminals/{$this->terminal->ulid}/end-shift", [

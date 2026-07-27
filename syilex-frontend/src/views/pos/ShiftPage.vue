@@ -1,11 +1,14 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { shiftsApi } from '@/api';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useShiftReport } from '@/composables/useShiftReport';
 import { usePrintAdapter } from '@/composables/print/usePrintAdapter';
 import { useReceiptEscPos } from '@/composables/useReceiptEscPos';
+import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import ShiftReportDialog from '@/components/pos/ShiftReportDialog.vue';
 
 const { formatDateTime, formatCurrency, getPrimeDateFormatShort, toDateString } = useFormatters();
@@ -16,16 +19,22 @@ const escpos = useReceiptEscPos();
 const { shiftReportDialog, shiftReportData, loadingShiftReport, loadShiftReport, printShiftReport: browserPrintShiftReport, downloadShiftReportPdf, closeShiftReport } = useShiftReport();
 
 const printShiftReport = async () => {
-    if (shiftReportData.value) {
-        await printAdapter.reconnect();
-        const bytes = escpos.buildShiftReport(shiftReportData.value, { charWidth: 42, feedLines: 4, compact: false });
-        const result = await printAdapter.printRaw(bytes);
-        if (result.success) return;
+    if (!shiftReportData.value) {
+        notify.warn('Data laporan shift tidak tersedia');
+        return;
     }
-    browserPrintShiftReport();
+    if (printAdapter.isReadyToThermal()) {
+        try {
+            await printAdapter.reconnect();
+            const bytes = escpos.buildShiftReport(shiftReportData.value, { charWidth: 42, feedLines: 4, compact: false });
+            const result = await printAdapter.printRaw(bytes);
+            if (result.success) return;
+        } catch (e) {
+            console.warn('[printShiftReport] thermal failed', e);
+        }
+    }
+    await browserPrintShiftReport();
 };
-
-// ==================== STATE ====================
 
 const items = ref([]);
 const loading = ref(false);
@@ -35,8 +44,7 @@ const selectedStatus = ref(null);
 const startDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 const endDate = ref(new Date());
 
-// E5: Tab state & daily summary
-const activeTab = ref('per_shift'); // 'per_shift' | 'per_tanggal'
+const activeTab = ref('per_shift');
 const dailySummary = ref({ loading: false, items: [] });
 
 const statusOptions = ref([
@@ -53,7 +61,22 @@ const lazyParams = ref({
     sortOrder: -1
 });
 
-// ==================== DATA LOADING ====================
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    if (startDate.value && !isDefaultMonthStart(startDate.value)) n++;
+    if (endDate.value && !isDefaultToday(endDate.value)) n++;
+    return n;
+});
+
+function isDefaultMonthStart(d) {
+    const now = new Date();
+    return toDateString(d) === toDateString(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function isDefaultToday(d) {
+    return toDateString(d) === toDateString(new Date());
+}
 
 async function loadData() {
     loading.value = true;
@@ -83,7 +106,7 @@ async function loadData() {
             items.value = response.data.data.shifts || [];
             totalRecords.value = response.data.data.pagination?.total || 0;
         }
-    } catch (error) {
+    } catch {
         notify.loadListError('shift');
     } finally {
         loading.value = false;
@@ -115,25 +138,27 @@ function onTabChange(tab) {
     }
 }
 
-// ==================== SEARCH & FILTER ====================
-
 function doSearch() {
     lazyParams.value.first = 0;
     loadData();
+}
+
+function clearSearch() {
+    searchQuery.value = '';
+    doSearch();
 }
 
 function onFilterChange() {
     lazyParams.value.first = 0;
     loadData();
     if (activeTab.value === 'per_tanggal') {
-        dailySummary.value.items = []; // force reload with new filter
+        dailySummary.value.items = [];
         loadDailySummary();
     }
 }
 
 function resetFilters() {
     selectedStatus.value = null;
-    searchQuery.value = '';
     startDate.value = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     endDate.value = new Date();
     lazyParams.value.first = 0;
@@ -143,8 +168,6 @@ function resetFilters() {
         loadDailySummary();
     }
 }
-
-// ==================== PAGINATION & SORT ====================
 
 function onPage(event) {
     lazyParams.value.first = event.first;
@@ -157,8 +180,6 @@ function onSort(event) {
     lazyParams.value.sortOrder = event.sortOrder;
     loadData();
 }
-
-// ==================== HELPERS ====================
 
 function getShiftStatus(shift) {
     if (!shift.ended_at) return 'Aktif';
@@ -190,75 +211,68 @@ function getDuration(shift) {
 }
 
 function getClosedBy(shift) {
-    if (!shift.ended_at) return '-'; // Masih aktif
+    if (!shift.ended_at) return '-';
     if (shift.ended_by_force) {
         return shift.forced_by_user?.name || 'Admin';
     }
-    return shift.user?.name || '-'; // Ditutup sendiri oleh user yang mulai shift
+    return shift.user?.name || '-';
 }
-
-// ==================== SHIFT REPORT ====================
 
 function viewShiftReport(shift) {
     loadShiftReport(shift.ulid);
 }
 
-// ==================== LIFECYCLE ====================
-
 onMounted(() => {
     loadData();
-    printService.checkStatus();
+    printAdapter.checkStatus();
 });
 </script>
 
 <template>
     <div class="card">
-        <!-- Header -->
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
-            <h5 class="m-0 text-xl font-semibold">Riwayat Shift</h5>
-        </div>
+        <Toolbar class="mb-6">
+            <template #start>
+                <span class="text-xl font-semibold">Riwayat Shift</span>
+            </template>
+            <template #end>
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilterChange" />
+                    <div class="list-filter-control">
+                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                    </div>
+                    <div class="list-filter-control">
+                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                    </div>
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                </ListFiltersSheet>
+            </template>
+        </Toolbar>
 
-        <!-- Filters -->
-        <div class="flex flex-col md:flex-row gap-3 mb-4">
-            <div class="flex-1">
-                <IconField>
-                    <InputIcon class="pi pi-search" />
-                    <InputText v-model="searchQuery" placeholder="Cari terminal, user..." class="w-full" @keyup.enter="doSearch" />
-                </IconField>
-            </div>
-            <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-full md:w-48" @change="onFilterChange" />
-            <DatePicker v-model="startDate" placeholder="Dari Tanggal" :dateFormat="getPrimeDateFormatShort" showIcon showButtonBar fluid class="w-full md:w-40" @date-select="onFilterChange" @clear-click="onFilterChange" />
-            <DatePicker v-model="endDate" placeholder="Sampai Tanggal" :dateFormat="getPrimeDateFormatShort" showIcon showButtonBar fluid class="w-full md:w-40" @date-select="onFilterChange" @clear-click="onFilterChange" />
-            <Button icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" v-tooltip.top="'Reset Filter'" aria-label="Reset Filter" />
-        </div>
-
-        <!-- E5: Tab navigation -->
         <div class="mb-4 border-b border-surface-200 dark:border-surface-700 flex gap-1">
             <button
                 class="px-4 py-2 text-sm font-medium border-b-2 transition"
                 :class="activeTab === 'per_shift' ? 'border-primary text-primary' : 'border-transparent text-surface-600 dark:text-surface-400 hover:text-surface-900 dark:hover:text-surface-100'"
-                @click="onTabChange('per_shift')"
                 type="button"
+                @click="onTabChange('per_shift')"
             >
                 <i class="pi pi-list mr-1"></i> Per Shift
             </button>
             <button
                 class="px-4 py-2 text-sm font-medium border-b-2 transition"
                 :class="activeTab === 'per_tanggal' ? 'border-primary text-primary' : 'border-transparent text-surface-600 dark:text-surface-400 hover:text-surface-900 dark:hover:text-surface-100'"
-                @click="onTabChange('per_tanggal')"
                 type="button"
+                @click="onTabChange('per_tanggal')"
             >
                 <i class="pi pi-calendar mr-1"></i> Per Tanggal (Konsolidasi)
             </button>
         </div>
 
-        <!-- Tab: Per Tanggal -->
         <div v-if="activeTab === 'per_tanggal'">
             <DataTable :value="dailySummary.items" :loading="dailySummary.loading" dataKey="tanggal" stripedRows responsiveLayout="scroll">
                 <template #empty>
                     <div class="flex items-center justify-center py-8 text-surface-500">
                         <i class="pi pi-calendar mr-2"></i>
-                        Belum ada data. Klik filter tanggal lalu muat ulang.
+                        Belum ada data. Sesuaikan filter tanggal lalu muat ulang.
                     </div>
                 </template>
                 <Column field="tanggal" header="Tanggal" style="min-width: 130px">
@@ -296,7 +310,6 @@ onMounted(() => {
             </DataTable>
         </div>
 
-        <!-- Tab: Per Shift (existing DataTable) -->
         <DataTable
             v-if="activeTab === 'per_shift'"
             :value="items"
@@ -309,12 +322,16 @@ onMounted(() => {
             :sortOrder="lazyParams.sortOrder"
             :rowsPerPageOptions="[10, 25, 50]"
             paginator
-            @page="onPage"
-            @sort="onSort"
             dataKey="ulid"
             stripedRows
             responsiveLayout="scroll"
+            @page="onPage"
+            @sort="onSort"
         >
+            <template #header>
+                <DataTableHeader v-model="searchQuery" title="Daftar Shift" placeholder="Cari terminal, user..." @search="doSearch" @clear="clearSearch" />
+            </template>
+
             <template #empty>
                 <div class="flex items-center justify-center py-8 text-surface-500">
                     <i class="pi pi-clock mr-2"></i>
@@ -369,14 +386,15 @@ onMounted(() => {
                 </template>
             </Column>
 
-            <Column header="Aksi" :sortable="false" style="width: 80px" alignFrozen="right" frozen>
+            <Column header="Aksi" :sortable="false" style="min-width: 80px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" severity="info" text rounded size="small" @click="viewShiftReport(data)" v-tooltip.top="'Lihat Laporan'" aria-label="Lihat Laporan" />
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded size="small" @click="viewShiftReport(data)" v-tooltip.top="'Lihat Laporan'" aria-label="Lihat Laporan"  />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
 
-        <!-- Shift Report Dialog -->
         <ShiftReportDialog v-model:visible="shiftReportDialog" :data="shiftReportData" :loading="loadingShiftReport" @print="printShiftReport" @download="downloadShiftReportPdf" @close="closeShiftReport" />
     </div>
 </template>

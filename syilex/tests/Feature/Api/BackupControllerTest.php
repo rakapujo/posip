@@ -80,6 +80,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertForbidden();
     }
@@ -92,9 +93,23 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'wrong',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'Password salah');
+    }
+
+    public function test_restore_requires_backup_acknowledged(): void
+    {
+        $file = UploadedFile::fake()->create('backup.sql', 10, 'application/sql');
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/v1/backup/restore', [
+                'password' => 'secret123',
+                'file' => $file,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['backup_acknowledged']);
     }
 
     public function test_restore_rejects_unsupported_extension(): void
@@ -105,6 +120,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File harus berformat .zip atau .sql');
@@ -121,6 +137,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File bukan SQL dump yang valid');
@@ -140,9 +157,36 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'Arsip tidak berisi database.sql');
+
+        @unlink($tmpZip);
+    }
+
+    public function test_restore_rejects_zip_with_disallowed_entry(): void
+    {
+        $tmpZip = storage_path('app/test_bad_entry_' . uniqid() . '.zip');
+        $zip = new \ZipArchive();
+        $zip->open($tmpZip, \ZipArchive::CREATE);
+        $zip->addFromString(
+            'database.sql',
+            "CREATE TABLE master_produk (id int);\nCREATE TABLE settings (id int);\nCREATE TABLE doc_sales (id int);\nINSERT INTO settings VALUES (1);"
+        );
+        $zip->addFromString('evil.php', '<?php');
+        $zip->close();
+
+        $file = new UploadedFile($tmpZip, 'backup.zip', 'application/zip', null, true);
+
+        $this->actingAs($this->admin)
+            ->postJson('/api/v1/backup/restore', [
+                'password' => 'secret123',
+                'file' => $file,
+                'backup_acknowledged' => true,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Arsip berisi file tidak diizinkan: evil.php');
 
         @unlink($tmpZip);
     }
@@ -158,6 +202,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File bukan backup database POSIP yang valid. Tabel POSIP tidak ditemukan.');
@@ -193,7 +238,10 @@ class BackupControllerTest extends TestCase
     public function test_restore_requires_file(): void
     {
         $this->actingAs($this->admin)
-            ->postJson('/api/v1/backup/restore', ['password' => 'secret123'])
+            ->postJson('/api/v1/backup/restore', [
+                'password' => 'secret123',
+                'backup_acknowledged' => true,
+            ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['file']);
     }
@@ -204,7 +252,10 @@ class BackupControllerTest extends TestCase
         $file = UploadedFile::fake()->create('backup.sql', 10, 'application/sql');
 
         $this->actingAs($this->admin)
-            ->postJson('/api/v1/backup/restore', ['file' => $file])
+            ->postJson('/api/v1/backup/restore', [
+                'file' => $file,
+                'backup_acknowledged' => true,
+            ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['password']);
     }
@@ -228,6 +279,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File bukan SQL dump yang valid');
@@ -256,6 +308,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File bukan backup database POSIP yang valid. Tabel POSIP tidak ditemukan.');
@@ -278,6 +331,7 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File bukan backup database POSIP yang valid. Tabel POSIP tidak ditemukan.');
@@ -294,8 +348,17 @@ class BackupControllerTest extends TestCase
             ->postJson('/api/v1/backup/restore', [
                 'password' => 'secret123',
                 'file' => $file,
+                'backup_acknowledged' => true,
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', 'File ZIP tidak valid atau rusak');
+    }
+
+    /** Pesan sukses restore mengarahkan user reload/login (setelah clearCache di controller). */
+    public function test_restore_success_copy_mentions_reload_for_settings_refresh(): void
+    {
+        $src = file_get_contents(app_path('Http/Controllers/Api/V1/BackupController.php'));
+        $this->assertStringContainsString('SettingService::clearCache()', $src);
+        $this->assertStringContainsString('Muat ulang aplikasi / login ulang', $src);
     }
 }

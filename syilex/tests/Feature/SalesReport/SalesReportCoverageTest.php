@@ -18,6 +18,7 @@ use App\Models\User;
 use App\Services\ReportHelperService;
 use App\Services\SettingService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -54,16 +55,19 @@ class SalesReportCoverageTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['laporan.penjualan', 'laporan.export', 'stok.view_hpp'] as $perm) {
+        foreach (['laporan.penjualan', 'laporan.export', 'stok.view_hpp', 'pos.discount'] as $perm) {
             Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
         }
 
         SettingService::set('tax.tax_sales_percent', 0, 'integer');
         SettingService::set('rounding.sales_method', 'none', 'string');
         SettingService::set('stock.negative_mode', 'block', 'string');
+        // Checkout strips manual line/nota discounts without these (anti-fraud).
+        SettingService::set('promo.enabled', true, 'boolean');
+        SettingService::set('promo.allow_manual_discount', true, 'boolean');
 
         $this->viewer = User::factory()->create();
-        $this->viewer->givePermissionTo(['laporan.penjualan', 'laporan.export', 'stok.view_hpp']);
+        $this->viewer->givePermissionTo(['laporan.penjualan', 'laporan.export', 'stok.view_hpp', 'pos.discount']);
         $this->actingAs($this->viewer);
 
         $this->warehouse = MasterWarehouse::factory()->create(['status' => 'active']);
@@ -100,6 +104,7 @@ class SalesReportCoverageTest extends TestCase
             'status' => 'active',
             'created_by' => $this->viewer->id,
         ]);
+        $this->terminal->allowedPaymentMethods()->attach([$this->cash->id]);
 
         $this->shift = PosTerminalShift::create([
             'ulid' => (string) Str::ulid(),
@@ -394,6 +399,45 @@ class SalesReportCoverageTest extends TestCase
         $this->assertEquals(1000, (float) $res->json('data.summary.total_diskon'));
     }
 
+    public function test_financial_disc_nota_mode_net_reduces_by_linked_return(): void
+    {
+        $sale = $this->checkoutSale([
+            'discounts' => [
+                ['tipe' => 'none', 'nilai' => 0],
+                ['tipe' => 'none', 'nilai' => 0],
+                ['tipe' => 'percent', 'nilai' => 10],
+            ],
+            'payment_nominal' => 9000,
+        ]);
+
+        // Full return of sale: allocation = grand_total_return * (total_diskon / grand_total)
+        // ≈ 9000 * (1000 / 9000) = 1000 → net disc = 0
+        DB::table('doc_sales_returns')->insert([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'RTR-DISCNOTA-1',
+            'tanggal' => now()->toDateTimeString(),
+            'sales_id' => $sale->id,
+            'terminal_id' => $this->terminal->id,
+            'shift_id' => $this->shift->id,
+            'warehouse_id' => $this->warehouse->id,
+            'customer_id' => $this->customer->id,
+            'refund_method' => 'cash',
+            'status' => 'approved',
+            'source' => 'pos',
+            'grand_total' => (float) $sale->grand_total,
+            'created_by' => $this->viewer->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $bruto = $this->getJson($this->q('/api/v1/sales-financial-report/disc-nota', ['mode' => 'bruto']))->assertOk();
+        $this->assertEquals(1000, (float) $bruto->json('data.summary.total_diskon'));
+
+        $net = $this->getJson($this->q('/api/v1/sales-financial-report/disc-nota', ['mode' => 'net']))->assertOk();
+        $this->assertEquals(0, (float) $net->json('data.summary.total_diskon'));
+        $this->assertEquals('net', $net->json('data.mode'));
+    }
+
     public function test_financial_biaya_includes_biaya_kirim(): void
     {
         $sale = $this->checkoutSale([
@@ -413,6 +457,8 @@ class SalesReportCoverageTest extends TestCase
     {
         SettingService::set('rounding.sales_method', 'round', 'string');
         SettingService::set('rounding.sales_precision', 100, 'integer');
+        // Checkout rebuild harga dari master — set harga_4 supaya total butuh pembulatan.
+        $this->product->update(['harga_4' => 9999]);
 
         $sale = $this->checkoutSale([
             'items' => [$this->retailItem([

@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Auth;
  * Ledger histori unit serial (paralel StockCard, tapi level unit).
  * Dicatat saat dokumen di-approve/lock untuk tiap unit yang berpindah/berubah status.
  * Append-only. Jaga invariant: tiap mutasi serial_units.warehouse_id/status WAJIB
- * punya movement padanan di transaksi yang sama (analog CLAUDE.md §2C stock invariant).
+ * punya movement padanan di transaksi yang sama (analog AI-AGENT.md §2C stock invariant).
  */
 class SerialUnitMovement extends Model
 {

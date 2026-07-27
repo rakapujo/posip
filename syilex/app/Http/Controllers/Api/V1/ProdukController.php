@@ -77,8 +77,11 @@ class ProdukController extends BaseApiController
             $query->where('status', $request->status);
         }
 
-        // Filter by serial flag (modul serial — dropdown produk serial di Input Pembelian Serial)
-        if ($request->filled('is_serial')) {
+        // Filter by serial flag (modul serial — dropdown produk serial di Input Pembelian Serial).
+        // Saat Modul Elektronik OFF: paksa non-serial, abaikan filter is_serial=1 dari request.
+        if (! SettingService::isElektronikEnabled()) {
+            $query->where('is_serial', false);
+        } elseif ($request->filled('is_serial')) {
             $query->where('is_serial', $request->boolean('is_serial'));
         }
 
@@ -148,7 +151,7 @@ class ProdukController extends BaseApiController
             'tipe_id' => 'nullable|exists:master_tipe,id',
             'kategori_id' => 'nullable|exists:master_kategori,id',
             'grup_id' => 'nullable|exists:master_grup,id',
-            'gambar' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'gambar' => 'nullable|string|max:500',
             'minimum_stok' => $minStokRule,
             'unit_1' => $unitRule,
             'konversi_1' => $konvRule,
@@ -181,7 +184,7 @@ class ProdukController extends BaseApiController
         if ($isSerial) {
             $validated = $this->applySerialScaffolding($validated);
         } else {
-            $validationResult = $this->validateUnitsAndPrices($validated);
+            $validationResult = ProdukRules::validateUnitsAndPrices($validated);
             if ($validationResult !== true) {
                 return $this->error($validationResult, 422);
             }
@@ -204,12 +207,16 @@ class ProdukController extends BaseApiController
         // Calculate prices if AUTO mode (serial: skip — harga master tak dipakai, harga riil per-unit)
         $priceMode = SettingService::getPriceInputMode();
         if (!$isSerial && $priceMode === 'auto') {
-            $validated = $this->calculatePrices($validated);
+            $validated = ProdukRules::calculateAutoPrices($validated);
         }
 
-        // Handle image upload — webp + smart-resize via UploadService (konsisten dgn upload lain)
-        if ($request->hasFile('gambar')) {
-            $validated['gambar'] = $uploadService->uploadImage($request->file('gambar'), 'products')['path'];
+        // Gambar: path/URL dari ImageUpload (/uploads → WebP), bukan multipart file
+        if (array_key_exists('gambar', $validated)) {
+            $normalized = $this->normalizeProdukGambarPath($validated['gambar'], $uploadService);
+            if ($normalized instanceof JsonResponse) {
+                return $normalized;
+            }
+            $validated['gambar'] = $normalized;
         }
 
         // Create produk
@@ -217,6 +224,10 @@ class ProdukController extends BaseApiController
 
         // Load relations for response
         $produk->load(['brand:id,ulid,nama_brand', 'tipe:id,ulid,nama_tipe', 'kategori:id,ulid,nama_kategori', 'grup:id,ulid,nama_grup']);
+        $produk->makeVisible(['id']);
+        if (! auth()->user()->can('stok.view_hpp')) {
+            $produk->makeHidden(['avg_cost']);
+        }
 
         return $this->success([
             'produk' => $produk,
@@ -273,10 +284,11 @@ class ProdukController extends BaseApiController
         }
 
         // Build complete warehouse stocks array
-        $warehouseStocks = $allWarehouses->map(function ($warehouse) use ($existingStocks, $produk) {
+        $canViewHpp = auth()->user()->can('stok.view_hpp');
+        $warehouseStocks = $allWarehouses->map(function ($warehouse) use ($existingStocks, $produk, $canViewHpp) {
             $stock = $existingStocks[$warehouse->id] ?? null;
 
-            return [
+            $row = [
                 'warehouse_id' => $warehouse->id,
                 'warehouse' => [
                     'id' => $warehouse->id,
@@ -286,12 +298,19 @@ class ProdukController extends BaseApiController
                     'status' => $warehouse->status,
                 ],
                 'qty' => $stock ? (int) $stock->qty : 0,
-                'avg_cost' => $stock ? (float) $stock->avg_cost : (float) $produk->avg_cost,
             ];
+            if ($canViewHpp) {
+                $row['avg_cost'] = $stock ? (float) $stock->avg_cost : (float) $produk->avg_cost;
+            }
+
+            return $row;
         });
 
         // Replace inventoryStocks with complete warehouse stocks
         $produk->setRelation('inventoryStocks', collect());
+        if (! $canViewHpp) {
+            $produk->makeHidden(['avg_cost']);
+        }
         $produkArray = $produk->toArray();
         $produkArray['warehouse_stocks'] = $warehouseStocks;
 
@@ -336,7 +355,7 @@ class ProdukController extends BaseApiController
             'tipe_id' => 'nullable|exists:master_tipe,id',
             'kategori_id' => 'nullable|exists:master_kategori,id',
             'grup_id' => 'nullable|exists:master_grup,id',
-            'gambar' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'gambar' => 'nullable|string|max:500',
             'minimum_stok' => $minStokRule,
             'unit_1' => $unitRule,
             'konversi_1' => $konvRule,
@@ -367,7 +386,7 @@ class ProdukController extends BaseApiController
         if ($isSerial) {
             $validated = $this->applySerialScaffolding($validated);
         } else {
-            $validationResult = $this->validateUnitsAndPrices($validated);
+            $validationResult = ProdukRules::validateUnitsAndPrices($validated);
             if ($validationResult !== true) {
                 return $this->error($validationResult, 422);
             }
@@ -389,13 +408,23 @@ class ProdukController extends BaseApiController
         // Calculate prices if AUTO mode (serial: skip)
         $priceMode = SettingService::getPriceInputMode();
         if (!$isSerial && $priceMode === 'auto') {
-            $validated = $this->calculatePrices($validated);
+            $validated = ProdukRules::calculateAutoPrices($validated);
         }
 
-        // Handle image upload — webp + smart-resize; hapus gambar lama via oldPath
-        if ($request->hasFile('gambar')) {
-            $validated['gambar'] = $uploadService
-                ->uploadImage($request->file('gambar'), 'products', $produk->gambar)['path'];
+        // Gambar: path/URL dari ImageUpload; hapus file lama jika diganti/dikosongkan
+        if (array_key_exists('gambar', $validated)) {
+            $normalized = $this->normalizeProdukGambarPath($validated['gambar'], $uploadService);
+            if ($normalized instanceof JsonResponse) {
+                return $normalized;
+            }
+            if ($produk->gambar && $produk->gambar !== $normalized) {
+                try {
+                    $uploadService->deleteFile($produk->gambar);
+                } catch (\Throwable) {
+                    Storage::disk('public')->delete($produk->gambar);
+                }
+            }
+            $validated['gambar'] = $normalized;
         }
 
         // Update produk
@@ -403,6 +432,9 @@ class ProdukController extends BaseApiController
 
         // Load relations for response
         $produk->load(['brand:id,ulid,nama_brand', 'tipe:id,ulid,nama_tipe', 'kategori:id,ulid,nama_kategori', 'grup:id,ulid,nama_grup']);
+        if (! auth()->user()->can('stok.view_hpp')) {
+            $produk->makeHidden(['avg_cost']);
+        }
 
         return $this->success([
             'produk' => $produk,
@@ -481,7 +513,7 @@ class ProdukController extends BaseApiController
     /**
      * Delete produk image.
      */
-    public function deleteImage(string $ulid): JsonResponse
+    public function deleteImage(string $ulid, UploadService $uploadService): JsonResponse
     {
         if (!auth()->user()->can('produk.update')) {
             return $this->error('Unauthorized', 403);
@@ -494,7 +526,11 @@ class ProdukController extends BaseApiController
         }
 
         if ($produk->gambar) {
-            Storage::disk('public')->delete($produk->gambar);
+            try {
+                $uploadService->deleteFile($produk->gambar);
+            } catch (\Throwable) {
+                Storage::disk('public')->delete($produk->gambar);
+            }
             $produk->update(['gambar' => null]);
         }
 
@@ -545,8 +581,11 @@ class ProdukController extends BaseApiController
             });
         }
 
-        // Filter produk serial / non-serial (mis. Register Unit Serial hanya butuh serial)
-        if ($request->filled('is_serial')) {
+        // Filter produk serial / non-serial (mis. Register Unit Serial hanya butuh serial).
+        // Saat Modul Elektronik OFF: paksa non-serial, abaikan filter is_serial=1 dari request.
+        if (! SettingService::isElektronikEnabled()) {
+            $query->where('is_serial', false);
+        } elseif ($request->filled('is_serial')) {
             $query->where('is_serial', $request->boolean('is_serial'));
         }
 
@@ -602,200 +641,21 @@ class ProdukController extends BaseApiController
     }
 
     /**
-     * Validate units and prices according to business rules.
+     * Normalisasi gambar dari ImageUpload (URL atau path) → path relatif folder products.
      *
-     * @return true|string True if valid, error message otherwise
+     * @return string|null|JsonResponse
      */
-    private function validateUnitsAndPrices(array $data): bool|string
+    private function normalizeProdukGambarPath(mixed $gambar, UploadService $uploadService): string|null|JsonResponse
     {
-        $konversi_1 = (int) $data['konversi_1'];
-        $konversi_2 = (int) $data['konversi_2'];
-        $konversi_3 = (int) $data['konversi_3'];
-        $konversi_4 = (int) $data['konversi_4']; // Always 1
-
-        // Validate konversi order: STRICTLY DECREASING (except when = 1)
-        // Rule: konversi_1 > konversi_2 > konversi_3 >= 1
-        // Exception: if konversi = 1, subsequent konversi can also be 1 (auto-lock)
-
-        // Check konversi_1 vs konversi_2
-        if ($konversi_1 < $konversi_2) {
-            return 'Konversi Unit 1 harus lebih besar dari Konversi Unit 2';
-        }
-        if ($konversi_1 === $konversi_2 && $konversi_1 > 1) {
-            return 'Konversi Unit 1 dan Unit 2 tidak boleh sama (kecuali = 1)';
+        if ($gambar === null || $gambar === '') {
+            return null;
         }
 
-        // Check konversi_2 vs konversi_3
-        if ($konversi_2 < $konversi_3) {
-            return 'Konversi Unit 2 harus lebih besar dari Konversi Unit 3';
-        }
-        if ($konversi_2 === $konversi_3 && $konversi_2 > 1) {
-            return 'Konversi Unit 2 dan Unit 3 tidak boleh sama (kecuali = 1)';
+        $path = $uploadService->toStoragePath((string) $gambar);
+        if ($uploadService->extractFolderFromPath($path) !== 'products') {
+            return $this->error('Path gambar produk tidak valid (folder harus products).', 422);
         }
 
-        // Check konversi_3 vs konversi_4 (konversi_4 always = 1)
-        if ($konversi_3 < $konversi_4) {
-            return 'Konversi Unit 3 harus lebih besar atau sama dengan Konversi Unit 4';
-        }
-
-        // Price validation (MANUAL mode only)
-        // Rule: Harga tidak boleh sama/lebih besar dari atasnya KECUALI locked (harus sama)
-        $priceMode = SettingService::getPriceInputMode();
-
-        // Normalize unit names for comparison
-        $units = [
-            1 => strtoupper(trim($data['unit_1'])),
-            2 => strtoupper(trim($data['unit_2'])),
-            3 => strtoupper(trim($data['unit_3'])),
-            4 => strtoupper(trim($data['unit_4'])),
-        ];
-
-        // Determine which units are locked (auto-lock)
-        $lockFrom = null;
-        if ($konversi_1 === 1) {
-            $lockFrom = 1;
-        } elseif ($konversi_2 === 1) {
-            $lockFrom = 2;
-        } elseif ($konversi_3 === 1) {
-            $lockFrom = 3;
-        }
-
-        // Get harga values
-        $harga_1 = (float) $data['harga_1'];
-        $harga_2 = (float) $data['harga_2'];
-        $harga_3 = (float) $data['harga_3'];
-        $harga_4 = (float) $data['harga_4'];
-
-        // MANUAL mode: Validate price rules
-        // Rule 1: Harga tidak boleh sama/lebih besar dari atasnya KECUALI locked (harus sama)
-        // Rule 2: PPU (Price Per Unit) harus naik (beli eceran lebih mahal per unit)
-        if ($priceMode === 'manual') {
-            // Calculate PPU (Price Per Unit) = harga / konversi
-            $ppu_1 = $konversi_1 > 0 ? $harga_1 / $konversi_1 : 0;
-            $ppu_2 = $konversi_2 > 0 ? $harga_2 / $konversi_2 : 0;
-            $ppu_3 = $konversi_3 > 0 ? $harga_3 / $konversi_3 : 0;
-            $ppu_4 = $harga_4; // konversi_4 = 1, so ppu_4 = harga_4
-
-            // Check harga_2 vs harga_1
-            if ($harga_1 > 0 && $harga_2 > 0) {
-                if ($lockFrom === 1) {
-                    // Locked from unit 1: h2 must = h1
-                    if (abs($harga_2 - $harga_1) > 0.01) {
-                        return 'Harga Unit 2 harus sama dengan Harga Unit 1 (locked)';
-                    }
-                } else {
-                    // Not locked: h2 must be < h1 (harga turun)
-                    if ($harga_2 >= $harga_1) {
-                        $formatted = SettingService::formatCurrency($harga_1);
-                        return "Harga Unit 2 harus lebih kecil dari Harga Unit 1 (< {$formatted})";
-                    }
-                    // Also check PPU ascending (ppu2 >= ppu1)
-                    if ($ppu_2 < $ppu_1) {
-                        $ppuFormatted1 = SettingService::formatCurrency(round($ppu_1));
-                        $ppuFormatted2 = SettingService::formatCurrency(round($ppu_2));
-                        return "PPU Unit 2 terlalu murah ({$ppuFormatted2}/unit < {$ppuFormatted1}/unit)";
-                    }
-                }
-            }
-
-            // Check harga_3 vs harga_2
-            if ($harga_2 > 0 && $harga_3 > 0) {
-                if ($lockFrom !== null && $lockFrom <= 2) {
-                    // Locked from unit 1 or 2: h3 must = lock source
-                    $lockSourceHarga = $lockFrom === 1 ? $harga_1 : $harga_2;
-                    if (abs($harga_3 - $lockSourceHarga) > 0.01) {
-                        return "Harga Unit 3 harus sama dengan Harga Unit {$lockFrom} (locked)";
-                    }
-                } else {
-                    // Not locked: h3 must be < h2 (harga turun)
-                    if ($harga_3 >= $harga_2) {
-                        $formatted = SettingService::formatCurrency($harga_2);
-                        return "Harga Unit 3 harus lebih kecil dari Harga Unit 2 (< {$formatted})";
-                    }
-                    // Also check PPU ascending (ppu3 >= ppu2)
-                    if ($ppu_3 < $ppu_2) {
-                        $ppuFormatted2 = SettingService::formatCurrency(round($ppu_2));
-                        $ppuFormatted3 = SettingService::formatCurrency(round($ppu_3));
-                        return "PPU Unit 3 terlalu murah ({$ppuFormatted3}/unit < {$ppuFormatted2}/unit)";
-                    }
-                }
-            }
-
-            // Check harga_4 vs harga_3
-            if ($harga_3 > 0 && $harga_4 > 0) {
-                if ($lockFrom !== null && $lockFrom <= 3) {
-                    // Locked: h4 must = lock source
-                    $lockSourceHarga = $lockFrom === 1 ? $harga_1 : ($lockFrom === 2 ? $harga_2 : $harga_3);
-                    if (abs($harga_4 - $lockSourceHarga) > 0.01) {
-                        return "Harga Unit 4 harus sama dengan Harga Unit {$lockFrom} (locked)";
-                    }
-                } else {
-                    // Not locked: h4 must be < h3 (harga turun)
-                    if ($harga_4 >= $harga_3) {
-                        $formatted = SettingService::formatCurrency($harga_3);
-                        return "Harga Unit 4 harus lebih kecil dari Harga Unit 3 (< {$formatted})";
-                    }
-                    // Also check PPU ascending (ppu4 >= ppu3)
-                    if ($ppu_4 < $ppu_3) {
-                        $ppuFormatted3 = SettingService::formatCurrency(round($ppu_3));
-                        $ppuFormatted4 = SettingService::formatCurrency(round($ppu_4));
-                        return "PPU Unit 4 terlalu murah ({$ppuFormatted4}/unit < {$ppuFormatted3}/unit)";
-                    }
-                }
-            }
-        }
-
-        // Validate auto-lock: locked units must have same name and konversi
-        if ($lockFrom !== null) {
-            $sourceUnit = $units[$lockFrom];
-
-            for ($i = $lockFrom + 1; $i <= 4; $i++) {
-                // Check unit name
-                if ($units[$i] !== $sourceUnit) {
-                    return "Unit {$i} harus sama dengan Unit {$lockFrom} ({$sourceUnit}) karena Konversi = 1";
-                }
-                // Check konversi
-                $currentKonversi = (int) $data["konversi_{$i}"];
-                if ($currentKonversi !== 1) {
-                    return "Konversi Unit {$i} harus = 1 karena mengikuti Unit {$lockFrom}";
-                }
-            }
-        }
-
-        // Validate unique unit names (except for locked units)
-        $checkedUnits = [];
-        $unlockLimit = $lockFrom ?? 4;
-
-        for ($i = 1; $i <= $unlockLimit; $i++) {
-            $unitName = $units[$i];
-            foreach ($checkedUnits as $prevIndex => $prevName) {
-                if ($unitName === $prevName) {
-                    return "Unit {$i} ({$unitName}) tidak boleh sama dengan Unit {$prevIndex} kecuali melalui mekanisme auto-lock (konversi = 1)";
-                }
-            }
-            $checkedUnits[$i] = $unitName;
-        }
-
-        return true;
-    }
-
-    /**
-     * Calculate prices based on harga_1 (AUTO mode).
-     * harga_n = (harga_1 / konversi_1) * konversi_n
-     */
-    private function calculatePrices(array $data): array
-    {
-        $harga_1 = (float) $data['harga_1'];
-        $konversi_1 = (int) $data['konversi_1'];
-
-        if ($konversi_1 > 0) {
-            $basePrice = $harga_1 / $konversi_1; // Price per smallest unit
-
-            $data['harga_2'] = round($basePrice * (int) $data['konversi_2'], 2);
-            $data['harga_3'] = round($basePrice * (int) $data['konversi_3'], 2);
-            $data['harga_4'] = round($basePrice * 1, 2); // konversi_4 = 1
-        }
-
-        return $data;
+        return $path;
     }
 }

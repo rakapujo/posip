@@ -23,7 +23,7 @@ class UpdateSerialHppCorrectionAction
             throw ValidationException::withMessages(['status' => ['Hanya draft yang dapat diedit.']]);
         }
 
-        [$product, $serialUnits] = $this->validateHppPayload((int) $data['product_id'], $data['units']);
+        [$product, $serialUnits] = $this->validateHppPayload((int) $data['product_id'], $data['units'], $correction->id);
         $units = $data['units'];
 
         return DB::transaction(function () use ($correction, $product, $data, $units, $serialUnits) {

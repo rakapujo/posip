@@ -374,4 +374,221 @@ class StockCardApiHppResetTest extends TestCase
         $this->assertSame('HPP_RESET', $cards[0]['transaction_type']);
         $this->assertSame(1, $res->json('data.pagination.total'));
     }
+
+    /**
+     * G — Movement biasa (PURCHASE lalu SALES, bukan hanya HPP_RESET) HARUS tampil
+     * di endpoint kartu stok (movement) DAN masuk kalkulasi hpp-summary dengan
+     * stok.view_hpp. Ini melengkapi test lain di file ini yang hanya seputar
+     * HPP_RESET secara terisolasi.
+     */
+    #[Test]
+    public function normal_purchase_and_sale_stock_cards_appear_in_movement_and_hpp_summary(): void
+    {
+        StockCard::$skipObserver = true;
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 5, 'avg_cost' => 10000]
+        );
+        StockCard::$skipObserver = false;
+
+        // PURCHASE: masuk 10 @10000 (avg_cost tetap 10000 karena stok awal kosong sebelum ini).
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'PURCHASE',
+            'transaction_no' => 'PO-G-001',
+            'tanggal' => now()->subDays(2),
+            'qty_in' => 10, 'qty_out' => 0, 'qty_balance' => 10,
+            'cost_per_unit' => 10000, 'total_cost' => 100000,
+            'avg_cost_before' => 0, 'avg_cost_after' => 10000,
+            'created_by' => $this->user->id,
+        ]);
+
+        // SALES: keluar 4 @10000 (HPP tidak berubah pada SALES — by design).
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'SALES',
+            'transaction_no' => 'INV-G-001',
+            'tanggal' => now()->subDay(),
+            'qty_in' => 0, 'qty_out' => 4, 'qty_balance' => 6,
+            'cost_per_unit' => 10000, 'total_cost' => 40000,
+            'avg_cost_before' => 10000, 'avg_cost_after' => 10000,
+            'created_by' => $this->user->id,
+        ]);
+
+        // Movement endpoint: kedua baris tampil, kolom HPP terlihat (stok.view_hpp).
+        $movementRes = $this->actingAs($this->user)
+            ->getJson("/api/v1/inventory/stock-cards?product_id={$this->product->ulid}")
+            ->assertOk();
+
+        $types = collect($movementRes->json('data.stock_cards'))->pluck('transaction_type');
+        $this->assertContains('PURCHASE', $types);
+        $this->assertContains('SALES', $types);
+
+        $purchaseRow = collect($movementRes->json('data.stock_cards'))->firstWhere('transaction_type', 'PURCHASE');
+        $this->assertEqualsWithDelta(10000.0, (float) $purchaseRow['cost_per_unit'], 0.0);
+
+        // hpp-summary: avg_cost akhir = 10000 (tidak berubah oleh SALES), nilai masuk/keluar eksak.
+        $summaryRes = $this->actingAs($this->user)
+            ->getJson("/api/v1/inventory/stock-cards/hpp-summary?product_id={$this->product->ulid}")
+            ->assertOk();
+
+        $summary = $summaryRes->json('data.summary');
+        $this->assertEquals(10000, (float) $summary['avg_cost_akhir']);
+        $this->assertEquals(100000, (float) $summary['total_nilai_masuk'], '10 x 10000 dari PURCHASE');
+        $this->assertEquals(40000, (float) $summary['total_nilai_keluar'], '4 x 10000 dari SALES');
+        $this->assertEquals(5, (int) $summary['qty_stok'], 'qty dari InventoryStock aktual');
+        $this->assertEquals(50000, (float) $summary['nilai_stok'], '5 x HPP akhir 10000');
+        // A: 10000 − 0; B: 50000 − (100000 − 40000) = −10000; C: 0 koreksi
+        $this->assertEquals(10000, (float) $summary['delta_hpp_unit']);
+        $this->assertEquals(-10000, (float) $summary['selisih_vs_mutasi']);
+        $this->assertEquals(0, (int) $summary['koreksi_count']);
+        $this->assertNull($summary['koreksi_last_no']);
+    }
+
+    /** KS-B1: HPP_CORRECTION (qty_balance=0, null WH) must not poison ending/opening saldo. */
+    #[Test]
+    public function summary_skips_hpp_only_rows_for_balance(): void
+    {
+        StockCard::$skipObserver = true;
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 10, 'avg_cost' => 10000]
+        );
+        StockCard::$skipObserver = false;
+
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'PURCHASE',
+            'tanggal' => now()->subDay(),
+            'qty_in' => 10, 'qty_out' => 0, 'qty_balance' => 10,
+            'cost_per_unit' => 10000, 'total_cost' => 100000,
+            'avg_cost_before' => 0, 'avg_cost_after' => 10000,
+            'created_by' => $this->user->id,
+        ]);
+
+        // Later HPP-only row with qty_balance=0 + null warehouse (would poison without skip)
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => null,
+            'transaction_type' => 'HPP_CORRECTION',
+            'tanggal' => now(),
+            'qty_in' => 0, 'qty_out' => 0, 'qty_balance' => 0,
+            'cost_per_unit' => 0, 'total_cost' => 0,
+            'avg_cost_before' => 10000, 'avg_cost_after' => 12000,
+            'created_by' => $this->user->id,
+        ]);
+
+        $summary = $this->actingAs($this->user)
+            ->getJson("/api/v1/inventory/stock-cards/summary?product_id={$this->product->ulid}")
+            ->assertOk()
+            ->json('data.summary');
+
+        $this->assertSame(10, (int) $summary['ending_balance']);
+    }
+
+    /** HM-M1: hpp_changed_only must NOT zero out nilai keluar from SALES. */
+    #[Test]
+    public function hpp_summary_ignores_hpp_changed_only_for_nilai(): void
+    {
+        StockCard::$skipObserver = true;
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 6, 'avg_cost' => 10000]
+        );
+        StockCard::$skipObserver = false;
+
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'PURCHASE',
+            'tanggal' => now()->subDays(2),
+            'qty_in' => 10, 'qty_out' => 0, 'qty_balance' => 10,
+            'cost_per_unit' => 10000, 'total_cost' => 100000,
+            'avg_cost_before' => 0, 'avg_cost_after' => 10000,
+            'created_by' => $this->user->id,
+        ]);
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'SALES',
+            'tanggal' => now()->subDay(),
+            'qty_in' => 0, 'qty_out' => 4, 'qty_balance' => 6,
+            'cost_per_unit' => 10000, 'total_cost' => 40000,
+            'avg_cost_before' => 10000, 'avg_cost_after' => 10000, // unchanged HPP
+            'created_by' => $this->user->id,
+        ]);
+
+        $withFlag = $this->actingAs($this->user)
+            ->getJson("/api/v1/inventory/stock-cards/hpp-summary?product_id={$this->product->ulid}&hpp_changed_only=1")
+            ->assertOk()
+            ->json('data.summary');
+
+        $this->assertEquals(100000, (float) $withFlag['total_nilai_masuk']);
+        $this->assertEquals(40000, (float) $withFlag['total_nilai_keluar'], 'SALES nilai tetap dihitung meski flag dikirim');
+    }
+
+    /** Penjelasan HPP C: count + last no untuk HPP_CORRECTION di periode. */
+    #[Test]
+    public function hpp_summary_counts_correction_rows(): void
+    {
+        StockCard::$skipObserver = true;
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 10, 'avg_cost' => 100]
+        );
+        StockCard::$skipObserver = false;
+
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => $this->warehouse->id,
+            'transaction_type' => 'PURCHASE',
+            'transaction_no' => 'PO-CORR-1',
+            'tanggal' => now()->subDays(2),
+            'qty_in' => 10, 'qty_out' => 0, 'qty_balance' => 10,
+            'cost_per_unit' => 5000, 'total_cost' => 50000,
+            'avg_cost_before' => 0, 'avg_cost_after' => 5000,
+            'created_by' => $this->user->id,
+        ]);
+        StockCard::create([
+            'product_id' => $this->product->id,
+            'warehouse_id' => null,
+            'transaction_type' => 'HPP_CORRECTION',
+            'transaction_no' => 'HPC-TEST-1',
+            'tanggal' => now()->subDay(),
+            'qty_in' => 0, 'qty_out' => 0, 'qty_balance' => 0,
+            'cost_per_unit' => 0, 'total_cost' => 0,
+            'avg_cost_before' => 5000, 'avg_cost_after' => 100,
+            'created_by' => $this->user->id,
+        ]);
+
+        $summary = $this->actingAs($this->user)
+            ->getJson("/api/v1/inventory/stock-cards/hpp-summary?product_id={$this->product->ulid}")
+            ->assertOk()
+            ->json('data.summary');
+
+        $this->assertEquals(100, (float) $summary['avg_cost_akhir']);
+        // Awal dari first.avg_cost_before=0, akhir=100 → Δ = 100
+        $this->assertEquals(100.0, (float) $summary['delta_hpp_unit']);
+        $this->assertEquals(1, (int) $summary['koreksi_count']);
+        $this->assertSame('HPC-TEST-1', $summary['koreksi_last_no']);
+        $this->assertSame('HPP_CORRECTION', $summary['koreksi_last_type']);
+        // nilai_stok 10*100=1000; masuk 50000; keluar 0 → selisih 1000-50000 = -49000
+        $this->assertEquals(1000, (float) $summary['nilai_stok']);
+        $this->assertEquals(-49000, (float) $summary['selisih_vs_mutasi']);
+    }
+
+    /** HM-S0: list with hpp_changed_only requires view_hpp (not merely stok.view). */
+    #[Test]
+    public function index_hpp_changed_only_requires_view_hpp(): void
+    {
+        $viewer = User::factory()->create();
+        $viewer->givePermissionTo('stok.view');
+
+        $this->actingAs($viewer)
+            ->getJson("/api/v1/inventory/stock-cards?product_id={$this->product->ulid}&hpp_changed_only=1")
+            ->assertStatus(403);
+    }
 }

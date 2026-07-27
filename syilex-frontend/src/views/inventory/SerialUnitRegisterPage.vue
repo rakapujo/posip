@@ -7,15 +7,17 @@ import { useNotification } from '@/composables/useNotification';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import SerialLabelPrintDialog from '@/components/common/SerialLabelPrintDialog.vue';
 
 const router = useRouter();
 const notify = useNotification();
-const { formatCurrency, formatPercent, formatDateTime } = useFormatters();
+const { formatCurrency, formatNumber, formatPercent, formatDateTime } = useFormatters();
 const authStore = useAuthStore();
 
 // Cost (modal + HPP landed) sensitif → hanya untuk yang berizin lihat HPP (backend juga strip)
 const canViewHpp = computed(() => authStore.can('stok.view_hpp'));
+const canViewSales = computed(() => authStore.can('sales.view'));
 const { exporting, exportListPdf } = useExportPdf();
 const exportingExcel = ref(false);
 
@@ -40,6 +42,14 @@ const warehouses = ref([]);
 const selectedWarehouse = ref(null);
 const selectedStatus = ref(null);
 let filterTimeout = null;
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedProduct.value) n++;
+    if (selectedWarehouse.value) n++;
+    if (selectedStatus.value) n++;
+    return n;
+});
 
 const statusOptions = [
     { label: 'Tersedia', value: 'tersedia' },
@@ -143,22 +153,44 @@ function openIntake(intake) {
     router.push({ name: 'inventory-serial-intake', query: { detail: intake.ulid } });
 }
 
+function openSale(sale) {
+    if (!sale?.ulid || !canViewSales.value) return;
+    router.push({ name: 'penjualan-sales', query: { detail: sale.ulid } });
+}
+
 function statusSeverity(status) {
     if (status === 'tersedia') return 'success';
     if (status === 'terjual') return 'info';
     return 'secondary';
 }
 
+/** Fetch semua halaman filter aktif (cap 100/page — jangan naikkan getPerPage BE). */
+async function fetchAllFiltered() {
+    const all = [];
+    let page = 1;
+    let lastPage = 1;
+    do {
+        const res = await serialUnitsApi.getAll({ ...buildParams(), page, per_page: 100 });
+        if (!res.data.success) throw new Error('fetch failed');
+        const data = res.data.data;
+        all.push(...(data.items || []));
+        lastPage = data.pagination?.last_page || 1;
+        page++;
+    } while (page <= lastPage);
+    return all;
+}
+
 // Export PDF daftar (hormati filter aktif)
 async function exportPdf() {
-    const params = { ...buildParams(), page: 1, per_page: 999999 };
     let data;
     try {
-        const res = await serialUnitsApi.getAll(params);
-        if (!res.data.success) return;
-        data = res.data.data.items;
+        data = await fetchAllFiltered();
     } catch {
         notify.exportError();
+        return;
+    }
+    if (!data.length) {
+        notify.error('Tidak ada unit untuk di-export');
         return;
     }
 
@@ -178,7 +210,9 @@ async function exportPdf() {
         { header: 'Grade', width: 12, align: 'center', accessor: (r) => r.grade || '-' },
         { header: 'Baterai', width: 20, accessor: (r) => r.battery_condition || '-' },
         { header: 'Health', width: 16, align: 'right', accessor: (r) => (r.battery_health != null ? formatPercent(r.battery_health) : '-') },
+        { header: 'Cycle', width: 12, align: 'right', accessor: (r) => (r.battery_cycle_count != null ? formatNumber(r.battery_cycle_count) : '-') },
         { header: 'Akun', width: 18, align: 'center', accessor: (r) => r.account_status || '-' },
+        { header: 'Catatan', width: 28, accessor: (r) => r.catatan || '-' },
         { header: 'Status', width: 16, align: 'center', accessor: (r) => (r.status || '-').toUpperCase() },
         { header: 'Asal Dok.', width: 26, accessor: (r) => r.intake?.nomor_dokumen || '-' }
     ];
@@ -223,8 +257,7 @@ async function openPrint() {
     }
     loadingPrint.value = true;
     try {
-        const res = await serialUnitsApi.getAll({ ...buildParams(), page: 1, per_page: 999999 });
-        const data = res.data?.success ? res.data.data.items : [];
+        const data = await fetchAllFiltered();
         if (!data.length) {
             notify.error('Tidak ada unit untuk dicetak');
             return;
@@ -248,21 +281,45 @@ onMounted(async () => {
     <div class="card">
         <Toolbar class="mb-6">
             <template #start>
-                <span class="text-xl font-semibold">Register Unit Serial</span>
+                <Button
+                    :label="selectedUnits.length ? `Cetak Label (${selectedUnits.length})` : 'Cetak Label'"
+                    icon="pi pi-print"
+                    severity="primary"
+                    :loading="loadingPrint"
+                    @click="openPrint"
+                    v-tooltip.bottom="'Cetak label barcode unit (terpilih / semua sesuai filter)'"
+                />
             </template>
             <template #end>
-                <div class="flex gap-2">
-                    <Button
-                        :label="selectedUnits.length ? `Cetak Label (${selectedUnits.length})` : 'Cetak Label'"
-                        icon="pi pi-print"
-                        severity="primary"
-                        :loading="loadingPrint"
-                        @click="openPrint"
-                        v-tooltip.bottom="'Cetak label barcode unit (terpilih / semua sesuai filter)'"
-                    />
-                    <Button label="Export Excel" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" />
-                    <Button label="Export PDF" icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportPdf" />
-                </div>
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <AutoComplete
+                        v-model="selectedProduct"
+                        :suggestions="productOptions"
+                        optionLabel="nama_produk"
+                        placeholder="Filter produk serial..."
+                        :loading="loadingProducts"
+                        class="w-72"
+                        inputClass="w-full"
+                        forceSelection
+                        @complete="onProductSearch"
+                        @item-select="onFilter"
+                        @clear="onFilter"
+                        dropdown
+                    >
+                        <template #option="{ option }">
+                            <div class="flex flex-col">
+                                <span class="font-medium">{{ option.kode_produk }} - {{ option.nama_produk }}</span>
+                                <span class="text-sm text-surface-500">{{ option.barcode }}</span>
+                            </div>
+                        </template>
+                        <template #chip="{ value }">
+                            <span>{{ value.kode_produk }} - {{ value.nama_produk }}</span>
+                        </template>
+                    </AutoComplete>
+                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" filter showClear @change="onFilter" />
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" showClear @change="onFilter" />
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 
@@ -280,36 +337,6 @@ onMounted(async () => {
                 <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Terjual</div>
                 <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ summary.terjual }}</div>
             </div>
-        </div>
-
-        <!-- Filters -->
-        <div class="flex flex-wrap gap-2 mb-4">
-            <AutoComplete
-                v-model="selectedProduct"
-                :suggestions="productOptions"
-                optionLabel="nama_produk"
-                placeholder="Filter produk serial..."
-                :loading="loadingProducts"
-                class="w-72"
-                inputClass="w-full"
-                @complete="onProductSearch"
-                @item-select="onFilter"
-                @clear="onFilter"
-                dropdown
-            >
-                <template #option="{ option }">
-                    <div class="flex flex-col">
-                        <span class="font-medium">{{ option.kode_produk }} - {{ option.nama_produk }}</span>
-                        <span class="text-sm text-surface-500">{{ option.barcode }}</span>
-                    </div>
-                </template>
-                <template #chip="{ value }">
-                    <span>{{ value.kode_produk }} - {{ value.nama_produk }}</span>
-                </template>
-            </AutoComplete>
-            <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" class="w-44" filter showClear @change="onFilter" />
-            <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" class="w-36" showClear @change="onFilter" />
-            <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
         </div>
 
         <DataTable
@@ -333,7 +360,14 @@ onMounted(async () => {
             scrollable
         >
             <template #header>
-                <DataTableHeader v-model="searchQuery" title="Daftar Unit" placeholder="Cari kode internal / nomor seri..." @search="doSearch" @clear="clearSearch" />
+                <DataTableHeader v-model="searchQuery" title="Register Unit Serial" placeholder="Cari kode internal / nomor seri..." @search="doSearch" @clear="clearSearch">
+                    <template #extra>
+                        <div class="flex gap-2">
+                            <Button icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
+                            <Button icon="pi pi-file-pdf" severity="help" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                        </div>
+                    </template>
+                </DataTableHeader>
             </template>
 
             <template #empty>
@@ -406,11 +440,19 @@ onMounted(async () => {
                 <template #body="{ data }">{{ data.battery_health != null ? formatPercent(data.battery_health) : '—' }}</template>
             </Column>
 
+            <Column header="Cycle" style="min-width: 80px" bodyClass="text-right">
+                <template #body="{ data }">{{ data.battery_cycle_count != null ? formatNumber(data.battery_cycle_count) : '—' }}</template>
+            </Column>
+
             <Column header="Akun" style="min-width: 100px; text-align: center">
                 <template #body="{ data }">
                     <Tag v-if="data.account_status" :value="data.account_status" :severity="data.account_status === 'unlocked' ? 'success' : 'danger'" />
                     <span v-else>—</span>
                 </template>
+            </Column>
+
+            <Column header="Catatan" style="min-width: 140px">
+                <template #body="{ data }">{{ data.catatan || '—' }}</template>
             </Column>
 
             <Column header="Gudang" style="min-width: 130px">
@@ -422,6 +464,22 @@ onMounted(async () => {
                     <a v-if="data.intake?.ulid" href="#" class="font-mono text-primary hover:underline" @click.prevent="openIntake(data.intake)" v-tooltip.top="'Buka dokumen pembelian serial'">
                         {{ data.intake.nomor_dokumen }}
                     </a>
+                    <span v-else>—</span>
+                </template>
+            </Column>
+
+            <Column header="Nota Jual" style="min-width: 150px">
+                <template #body="{ data }">
+                    <a
+                        v-if="data.sale?.ulid && canViewSales"
+                        href="#"
+                        class="font-mono text-primary hover:underline"
+                        @click.prevent="openSale(data.sale)"
+                        v-tooltip.top="'Buka nota penjualan'"
+                    >
+                        {{ data.sale.nomor_dokumen }}
+                    </a>
+                    <span v-else-if="data.sale?.nomor_dokumen" class="font-mono">{{ data.sale.nomor_dokumen }}</span>
                     <span v-else>—</span>
                 </template>
             </Column>

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Reports;
 
 use App\Http\Controllers\Api\BaseApiController;
+use App\Services\ReportHelperService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -12,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Metric:
  *  - Jumlah transaksi completed
- *  - Omzet total
+ *  - Omzet total (mode=bruto|net — net dikurangi retur lock|approved milik kasir ybs)
  *  - Rata-rata per transaksi
  *  - Jumlah void
  *  - Jumlah retur (yang dibuat kasir ini)
@@ -25,27 +26,32 @@ class KasirPerformanceReportController extends BaseApiController
 {
     public function index(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('laporan.performa')) {
+        if (! auth()->user()->can('laporan.performa')) {
             return $this->forbidden('Anda tidak memiliki akses untuk melihat laporan.');
         }
 
-        $request->validate([
+        $request->validate(array_merge([
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date|after_or_equal:date_from',
             'terminal_id' => 'nullable|integer',
             'user_id' => 'nullable|integer',
+            'source' => 'nullable|in:pos,manual,all',
             'sort' => 'nullable|in:omzet_desc,omzet_asc,trx_desc,void_desc,retur_desc',
-        ]);
+        ], ReportHelperService::modeRules()));
 
         $from = $request->input('date_from', now()->startOfMonth()->toDateString());
         $to = $request->input('date_to', now()->toDateString());
         $terminalId = $request->filled('terminal_id') ? (int) $request->terminal_id : null;
         $userId = $request->filled('user_id') ? (int) $request->user_id : null;
+        $mode = ReportHelperService::resolveMode($request);
+        // B3.5: default 'pos' dipertahankan (backward compat — kasir historically POS-only), override via param.
+        $source = in_array($request->input('source'), ['pos', 'manual', 'all'], true) ? $request->input('source') : 'pos';
 
         // Sales per kasir
         $salesAgg = DB::table('doc_sales as s')
             ->join('users as u', 'u.id', '=', 's.created_by')
-            ->whereBetween('s.tanggal', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->when($source !== 'all', fn ($q) => $q->where('s.source', $source))
+            ->whereBetween('s.tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
             ->when($terminalId, fn ($q) => $q->where('s.terminal_id', $terminalId))
             ->when($userId, fn ($q) => $q->where('s.created_by', $userId))
             ->select(
@@ -63,7 +69,8 @@ class KasirPerformanceReportController extends BaseApiController
         // Line discount aggregate (per sale → sum diskon_total di detail)
         $lineDisc = DB::table('doc_sales_detail as d')
             ->join('doc_sales as s', 's.id', '=', 'd.sales_id')
-            ->whereBetween('s.tanggal', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->when($source !== 'all', fn ($q) => $q->where('s.source', $source))
+            ->whereBetween('s.tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
             ->where('s.status', 'completed')
             ->when($terminalId, fn ($q) => $q->where('s.terminal_id', $terminalId))
             ->when($userId, fn ($q) => $q->where('s.created_by', $userId))
@@ -77,7 +84,9 @@ class KasirPerformanceReportController extends BaseApiController
 
         // Retur yang diproses kasir (creator retur)
         $returAgg = DB::table('doc_sales_returns as r')
-            ->whereBetween('r.tanggal', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->when($source !== 'all', fn ($q) => $q->where('r.source', $source))
+            ->where('r.status', 'approved')
+            ->whereBetween('r.tanggal', [$from.' 00:00:00', $to.' 23:59:59'])
             ->when($terminalId, fn ($q) => $q->where('r.terminal_id', $terminalId))
             ->when($userId, fn ($q) => $q->where('r.created_by', $userId))
             ->select(
@@ -89,15 +98,20 @@ class KasirPerformanceReportController extends BaseApiController
             ->get()
             ->keyBy('user_id');
 
+        // B1.3: retur (lock|approved) untuk omzet net — beda scope dari $returAgg (approved-only, buat kolom retur_count/nominal).
+        $returNetAgg = ReportHelperService::salesReturnMoneyByKasirSubquery($from.' 00:00:00', $to.' 23:59:59', $terminalId, $source)
+            ->get()
+            ->keyBy('user_id');
+
         // Shift per kasir: jumlah + breakdown normal vs paksa
         $shiftAgg = DB::table('pos_terminal_shifts as sh')
-            ->whereBetween('sh.started_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->whereBetween('sh.started_at', [$from.' 00:00:00', $to.' 23:59:59'])
             ->when($terminalId, fn ($q) => $q->where('sh.terminal_id', $terminalId))
             ->when($userId, fn ($q) => $q->where('sh.user_id', $userId))
             ->select(
                 'sh.user_id',
                 DB::raw('COUNT(*) as shift_total'),
-                DB::raw("SUM(CASE WHEN sh.ended_by_force = 1 THEN 1 ELSE 0 END) as shift_paksa"),
+                DB::raw('SUM(CASE WHEN sh.ended_by_force = 1 THEN 1 ELSE 0 END) as shift_paksa'),
                 DB::raw('COALESCE(SUM(sh.selisih), 0) as total_selisih')
             )
             ->groupBy('sh.user_id')
@@ -107,21 +121,28 @@ class KasirPerformanceReportController extends BaseApiController
         // Merge all
         $allUserIds = $salesAgg->keys()
             ->merge($returAgg->keys())
+            ->merge($returNetAgg->keys())
             ->merge($shiftAgg->keys())
             ->unique();
 
-        $rows = $allUserIds->map(function ($userId) use ($salesAgg, $lineDisc, $returAgg, $shiftAgg) {
+        // Batch-fetch nama untuk user tanpa sales (retur/shift only) — anti N+1.
+        $userNames = DB::table('users')->whereIn('id', $allUserIds)->pluck('name', 'id');
+
+        $rows = $allUserIds->map(function ($userId) use ($salesAgg, $lineDisc, $returAgg, $returNetAgg, $shiftAgg, $mode, $userNames) {
             $sale = $salesAgg->get($userId);
             $line = $lineDisc->get($userId);
             $retur = $returAgg->get($userId);
             $shift = $shiftAgg->get($userId);
 
             $trx = (int) ($sale->trx_completed ?? 0);
-            $omzet = (float) ($sale->omzet ?? 0);
+            $omzetBruto = (float) ($sale->omzet ?? 0);
+            $omzet = $mode === 'net'
+                ? max(0, $omzetBruto - (float) ($returNetAgg->get($userId)->ret_money ?? 0))
+                : $omzetBruto;
 
             return [
                 'user_id' => (int) $userId,
-                'user_name' => $sale->user_name ?? ($this->lookupUserName($userId) ?? '-'),
+                'user_name' => $sale->user_name ?? ($userNames->get($userId) ?: '-'),
                 'trx_completed' => $trx,
                 'trx_voided' => (int) ($sale->trx_voided ?? 0),
                 'omzet' => $omzet,
@@ -147,13 +168,10 @@ class KasirPerformanceReportController extends BaseApiController
 
         return $this->success([
             'period' => ['from' => $from, 'to' => $to],
+            'mode' => $mode,
+            'source' => $source,
             'items' => $rows->values(),
         ]);
     }
 
-    private function lookupUserName(int $userId): ?string
-    {
-        $name = DB::table('users')->where('id', $userId)->value('name');
-        return $name ?: null;
-    }
 }

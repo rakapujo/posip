@@ -10,6 +10,13 @@ use Illuminate\Support\Facades\DB;
 
 class ShiftController extends BaseApiController
 {
+    private function canViewAllShifts(): bool
+    {
+        $user = auth()->user();
+
+        return $user->can('terminal.force-release') || $user->can('settings.view');
+    }
+
     /**
      * Display a listing of shifts (read-only).
      */
@@ -24,6 +31,10 @@ class ShiftController extends BaseApiController
             'user:id,ulid,name',
             'forcedByUser:id,ulid,name',
         ]);
+
+        if (! $this->canViewAllShifts()) {
+            $query->where('user_id', auth()->id());
+        }
 
         // Search by terminal kode/nama or user name
         if ($request->filled('search')) {
@@ -106,12 +117,14 @@ class ShiftController extends BaseApiController
 
         $from = $request->input('date_from', now()->startOfMonth()->toDateString());
         $to = $request->input('date_to', now()->toDateString());
+        $scopeOwn = ! $this->canViewAllShifts();
 
         // Aggregate shift per (tanggal, terminal)
         $shiftsQ = DB::table('pos_terminal_shifts as sh')
             ->leftJoin('master_pos_terminal as t', 't.id', '=', 'sh.terminal_id')
             ->leftJoin('users as u', 'u.id', '=', 'sh.user_id')
             ->whereBetween(DB::raw('DATE(sh.started_at)'), [$from, $to])
+            ->when($scopeOwn, fn ($q) => $q->where('sh.user_id', auth()->id()))
             ->when($request->filled('terminal_id'),
                 fn ($q) => $q->where('sh.terminal_id', $request->terminal_id))
             ->select(
@@ -133,6 +146,7 @@ class ShiftController extends BaseApiController
             ->join('pos_terminal_shifts as sh', 'sh.id', '=', 's.shift_id')
             ->where('s.status', 'completed')
             ->whereBetween(DB::raw('DATE(sh.started_at)'), [$from, $to])
+            ->when($scopeOwn, fn ($q) => $q->where('sh.user_id', auth()->id()))
             ->when($request->filled('terminal_id'),
                 fn ($q) => $q->where('sh.terminal_id', $request->terminal_id))
             ->select(

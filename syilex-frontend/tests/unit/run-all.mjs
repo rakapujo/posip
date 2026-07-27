@@ -13,7 +13,9 @@ const suites = [
     'shiftPenjualanEscpos.test.mjs',
     'printIsolation.test.mjs',
     'printPolicy.test.mjs',
-    'deadCodeGuard.test.mjs'
+    'pdfPageSizeGuard.test.mjs',
+    'deadCodeGuard.test.mjs',
+    'masterUiGuard.test.mjs'
 ];
 
 let failed = 0;

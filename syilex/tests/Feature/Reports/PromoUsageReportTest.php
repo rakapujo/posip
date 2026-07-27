@@ -110,9 +110,10 @@ class PromoUsageReportTest extends TestCase
             'shift_id' => $this->shiftId,
             'warehouse_id' => $this->warehouseId,
             'customer_id' => $this->customerId,
-            'subtotal' => $qty * $harga,
+            // subtotal = Σ line jumlah (after line disc); nota disc → total_setelah_diskon
+            'subtotal' => $jumlah,
             'total_setelah_diskon' => $jumlah,
-            'total_diskon' => $diskonTotal,
+            'total_diskon' => 0,
             'grand_total' => $jumlah,
             'total_bayar' => $jumlah,
             'kembalian' => 0,
@@ -603,6 +604,112 @@ class PromoUsageReportTest extends TestCase
     /**
      * show: promo ada tapi belum dipakai → top_products & top_customers kosong, tak error.
      */
+    /**
+     * B0.4: retur lock/approved harus netting diskon_total DAN revenue_net di summary()
+     * dan index() — mirip GrossProfit (S1), bukan raw diskon_total/jumlah dari sales line.
+     */
+    public function test_summary_and_index_nett_dengan_retur_lock_approved(): void
+    {
+        $promo = $this->makePromo('PRM-RET', 'Retur Net');
+        // Sale: qty 10 @1000, diskon line 1000 → jumlah 9000
+        $salesId = $this->makeSaleWithPromoItem($promo->id, 10, 1000, 1000);
+        $salesDetailId = DB::table('doc_sales_detail')->where('sales_id', $salesId)->value('id');
+
+        // Retur 4 dari 10 (lock) → prorata diskon returned = (4/10)*1000 = 400; revenue returned = 4*1000 = 4000
+        $returnId = DB::table('doc_sales_returns')->insertGetId([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'RET-' . fake()->unique()->numerify('######'),
+            'tanggal' => now()->toDateTimeString(),
+            'sales_id' => $salesId,
+            'terminal_id' => $this->terminalId,
+            'shift_id' => $this->shiftId,
+            'warehouse_id' => $this->warehouseId,
+            'customer_id' => $this->customerId,
+            'subtotal' => 4000,
+            'grand_total' => 4000,
+            'refund_method' => 'cash',
+            'status' => 'lock',
+            'created_by' => $this->viewer->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('doc_sales_return_detail')->insert([
+            'return_id' => $returnId,
+            'sales_detail_id' => $salesDetailId,
+            'product_id' => DB::table('doc_sales_detail')->where('id', $salesDetailId)->value('product_id'),
+            'unit' => 'PCS',
+            'konversi' => 1,
+            'qty' => 4,
+            'qty_base' => 4,
+            'harga_satuan' => 1000,
+            'jumlah' => 4000,
+            'hpp_at_time' => 500,
+        ]);
+
+        $summary = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/promo-usage/summary')
+            ->assertOk()->json('data');
+
+        // diskon: 1000 - 400 = 600; revenue: 9000 - 4000 = 5000
+        $this->assertEquals(600, $summary['diskon_total']);
+        $this->assertEquals(5000, $summary['revenue_net']);
+
+        $items = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/promo-usage')
+            ->assertOk()->json('data.items');
+
+        $this->assertEquals('PRM-RET', $items[0]['kode_promo']);
+        $this->assertEquals(600, $items[0]['diskon_total']);
+        $this->assertEquals(5000, $items[0]['revenue_net']);
+    }
+
+    /**
+     * Retur berstatus draft (belum lock/approved) TIDAK boleh mengurangi netting.
+     */
+    public function test_retur_draft_tidak_netting(): void
+    {
+        $promo = $this->makePromo('PRM-DRAFT', 'Draft Retur');
+        $salesId = $this->makeSaleWithPromoItem($promo->id, 5, 1000, 500);
+        $salesDetailId = DB::table('doc_sales_detail')->where('sales_id', $salesId)->value('id');
+
+        $returnId = DB::table('doc_sales_returns')->insertGetId([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'RET-' . fake()->unique()->numerify('######'),
+            'tanggal' => now()->toDateTimeString(),
+            'sales_id' => $salesId,
+            'terminal_id' => $this->terminalId,
+            'shift_id' => $this->shiftId,
+            'warehouse_id' => $this->warehouseId,
+            'customer_id' => $this->customerId,
+            'subtotal' => 2000,
+            'grand_total' => 2000,
+            'refund_method' => 'cash',
+            'status' => 'draft',
+            'created_by' => $this->viewer->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('doc_sales_return_detail')->insert([
+            'return_id' => $returnId,
+            'sales_detail_id' => $salesDetailId,
+            'product_id' => DB::table('doc_sales_detail')->where('id', $salesDetailId)->value('product_id'),
+            'unit' => 'PCS',
+            'konversi' => 1,
+            'qty' => 2,
+            'qty_base' => 2,
+            'harga_satuan' => 1000,
+            'jumlah' => 2000,
+            'hpp_at_time' => 500,
+        ]);
+
+        $summary = $this->actingAs($this->viewer)
+            ->getJson('/api/v1/reports/promo-usage/summary')
+            ->assertOk()->json('data');
+
+        $this->assertEquals(500, $summary['diskon_total']);
+        $this->assertEquals(4500, $summary['revenue_net']);
+    }
+
     public function test_show_promo_belum_dipakai_kosong(): void
     {
         $promo = $this->makePromo('PRM-IDLE', 'Idle');

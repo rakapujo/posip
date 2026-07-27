@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exports\MasterListExport;
 use App\Http\Controllers\Api\BaseApiController;
 use App\Http\Controllers\Concerns\HandlesSimpleMasterCrud;
+use App\Models\MasterProduk;
 use App\Models\MasterTipe;
 
 class TipeController extends BaseApiController
@@ -39,9 +40,21 @@ class TipeController extends BaseApiController
                 'deleted' => 'Tipe Produk berhasil dihapus permanen',
                 'not_found' => 'Tipe Produk tidak ditemukan',
             ],
+            'before_toggle' => function (MasterTipe $tipe) {
+                if ($tipe->status === 'active') {
+                    if ($message = \App\Services\TipeRules::deactivationBlockMessage($tipe)) {
+                        return $this->error($message, 422);
+                    }
+                }
+
+                return null;
+            },
             'can_delete' => function (MasterTipe $tipe) {
                 if ($tipe->kategoris()->exists()) {
                     return $this->error('Tidak dapat menghapus Tipe Produk karena masih memiliki Kategori', 422);
+                }
+                if (MasterProduk::where('tipe_id', $tipe->id)->exists()) {
+                    return $this->error('Tidak dapat menghapus Tipe Produk karena masih digunakan oleh produk', 422);
                 }
 
                 return null;

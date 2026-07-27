@@ -40,34 +40,46 @@ class DiskonReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk melihat nilai diskon pembelian.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
         [$dateFrom, $dateToEnd] = ReportHelperService::parseDateRange($request);
 
         $source = ReportHelperService::resolveSource($request);
+        $mode = ReportHelperService::resolveMode($request);
+        $applyNet = $mode === 'net' && $source !== 'serial';
 
         $query = DB::query()
             ->fromSub(PurchaseReportSource::documents($dateFrom, $dateToEnd, $source), 'dpo')
             ->join('master_supplier as ms', 'ms.id', '=', 'dpo.supplier_id')
-            ->where('dpo.total_diskon_header', '>', 0)
-            ->select(
-                'dpo.ulid',
-                'dpo.sumber',
-                'dpo.tanggal_po',
-                'dpo.nomor_dokumen',
-                'ms.nama_supplier',
-                'dpo.subtotal',
-                'dpo.diskon_1_tipe',
-                'dpo.diskon_1_nilai',
-                'dpo.diskon_1_hasil',
-                'dpo.diskon_2_tipe',
-                'dpo.diskon_2_nilai',
-                'dpo.diskon_2_hasil',
-                'dpo.diskon_3_tipe',
-                'dpo.diskon_3_nilai',
-                'dpo.diskon_3_hasil',
-                'dpo.total_diskon_header',
-                'dpo.total_setelah_diskon'
+            ->where('dpo.total_diskon_header', '>', 0);
+
+        // ACC-3 Wave B: LEFT JOIN retur beli per PO so mode=net nets the list row itself.
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnByPoSubquery($dateFrom, $dateToEnd),
+                'pret',
+                fn ($join) => $join->on('pret.po_id', '=', 'dpo.id')->whereRaw("dpo.sumber = 'po'")
             );
+        }
+
+        $query->select([
+            'dpo.ulid',
+            'dpo.sumber',
+            'dpo.tanggal_po',
+            'dpo.nomor_dokumen',
+            'ms.nama_supplier',
+            $applyNet ? DB::raw('GREATEST(dpo.subtotal - COALESCE(pret.ret_money, 0), 0) as subtotal') : 'dpo.subtotal',
+            'dpo.diskon_1_tipe',
+            'dpo.diskon_1_nilai',
+            'dpo.diskon_1_hasil',
+            'dpo.diskon_2_tipe',
+            'dpo.diskon_2_nilai',
+            'dpo.diskon_2_hasil',
+            'dpo.diskon_3_tipe',
+            'dpo.diskon_3_nilai',
+            'dpo.diskon_3_hasil',
+            $applyNet ? DB::raw('GREATEST(dpo.total_diskon_header - COALESCE(pret.ret_disc, 0), 0) as total_diskon_header') : 'dpo.total_diskon_header',
+            $applyNet ? DB::raw('GREATEST(dpo.total_setelah_diskon - COALESCE(pret.ret_money, 0), 0) as total_setelah_diskon') : 'dpo.total_setelah_diskon',
+        ]);
 
         // Filters
         if ($request->filled('supplier_id')) {
@@ -98,12 +110,27 @@ class DiskonReportController extends BaseApiController
             $summaryQuery->where('dpo.nomor_dokumen', 'like', "%{$request->search}%");
         }
 
-        $summaryRaw = $summaryQuery->select(
-            DB::raw('COUNT(*) as jumlah_po'),
-            DB::raw('COALESCE(SUM(dpo.subtotal), 0) as total_subtotal'),
-            DB::raw('COALESCE(SUM(dpo.total_diskon_header), 0) as total_diskon'),
-            DB::raw('COALESCE(SUM(dpo.total_setelah_diskon), 0) as total_setelah_diskon')
-        )->first();
+        // ACC-3 Wave B: mode=net nets per-row via LEFT JOIN; summary aggregates the same netted expressions.
+        if ($applyNet) {
+            $summaryQuery->leftJoinSub(
+                ReportHelperService::purchaseReturnByPoSubquery($dateFrom, $dateToEnd),
+                'pret',
+                fn ($join) => $join->on('pret.po_id', '=', 'dpo.id')->whereRaw("dpo.sumber = 'po'")
+            );
+            $summaryRaw = $summaryQuery->selectRaw(
+                'COUNT(*) as jumlah_po,
+                 COALESCE(SUM(GREATEST(dpo.subtotal - COALESCE(pret.ret_money, 0), 0)), 0) as total_subtotal,
+                 COALESCE(SUM(GREATEST(dpo.total_diskon_header - COALESCE(pret.ret_disc, 0), 0)), 0) as total_diskon,
+                 COALESCE(SUM(GREATEST(dpo.total_setelah_diskon - COALESCE(pret.ret_money, 0), 0)), 0) as total_setelah_diskon'
+            )->first();
+        } else {
+            $summaryRaw = $summaryQuery->select(
+                DB::raw('COUNT(*) as jumlah_po'),
+                DB::raw('COALESCE(SUM(dpo.subtotal), 0) as total_subtotal'),
+                DB::raw('COALESCE(SUM(dpo.total_diskon_header), 0) as total_diskon'),
+                DB::raw('COALESCE(SUM(dpo.total_setelah_diskon), 0) as total_setelah_diskon')
+            )->first();
+        }
 
         $summary = [
             'jumlah_po' => $summaryRaw->jumlah_po ?? 0,
@@ -112,7 +139,7 @@ class DiskonReportController extends BaseApiController
             'total_setelah_diskon' => round((float) ($summaryRaw->total_setelah_diskon ?? 0), 2),
         ];
 
-        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary, ['source' => $source]));
+        return $this->success(ReportHelperService::buildPaginatedResponse($paginator, $summary, ['source' => $source, 'mode' => $mode]));
     }
 
     public function exportDiskon(Request $request)
@@ -125,7 +152,7 @@ class DiskonReportController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses untuk melihat nilai diskon pembelian.');
         }
 
-        $request->validate(ReportHelperService::dateRangeRules());
+        $request->validate(array_merge(ReportHelperService::dateRangeRules(), ReportHelperService::modeRules()));
 
         $filename = 'laporan_diskon_pembelian_' . date('Y-m-d_His') . '.xlsx';
 
@@ -135,6 +162,7 @@ class DiskonReportController extends BaseApiController
             $request->filled('supplier_id') ? (int) $request->supplier_id : null,
             $request->input('search'),
             ReportHelperService::resolveSource($request),
+            ReportHelperService::resolveMode($request),
         ), $filename);
     }
 }

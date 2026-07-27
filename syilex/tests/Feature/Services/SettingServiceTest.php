@@ -3,12 +3,15 @@
 namespace Tests\Feature\Services;
 
 use App\Models\DocPriceChange;
+use App\Models\MasterCustomer;
+use App\Models\MasterWarehouse;
 use App\Models\Setting;
 use App\Services\SettingService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
 class SettingServiceTest extends TestCase
 {
@@ -23,6 +26,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals('PRD-001', SettingService::formatCode('prd-001'));
         $this->assertEquals('PRD-001', SettingService::formatCode('  prd-001  '));
     }
+
     #[Test]
     public function format_code_returns_null_for_null()
     {
@@ -40,6 +44,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals('hello world', SettingService::formatName('  hello world  '));
         $this->assertEquals('Mixed Case', SettingService::formatName('Mixed Case'));
     }
+
     #[Test]
     public function format_name_uppercases_when_mode_is_all()
     {
@@ -48,6 +53,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals('HELLO WORLD', SettingService::formatName('hello world'));
         $this->assertEquals('MIXED CASE', SettingService::formatName('Mixed Case'));
     }
+
     #[Test]
     public function format_name_returns_null_for_null()
     {
@@ -67,6 +73,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals(11000, $result['tax_amount']);
         $this->assertEquals(111000, $result['total_amount']);
     }
+
     #[Test]
     public function calculate_tax_inclusive_extracts_tax_from_amount()
     {
@@ -77,6 +84,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals(11000, $result['tax_amount']);
         $this->assertEquals(111000, $result['total_amount']);
     }
+
     #[Test]
     public function calculate_tax_with_zero_percent()
     {
@@ -98,6 +106,7 @@ class SettingServiceTest extends TestCase
 
         $this->assertEquals(12345.67, SettingService::applyRounding(12345.67, 'sales'));
     }
+
     #[Test]
     public function apply_rounding_round_nearest_100()
     {
@@ -111,6 +120,7 @@ class SettingServiceTest extends TestCase
         // 12355 → 12400
         $this->assertEquals(12400, SettingService::applyRounding(12355, 'sales'));
     }
+
     #[Test]
     public function apply_rounding_floor_500()
     {
@@ -124,6 +134,7 @@ class SettingServiceTest extends TestCase
         // 12999 → 12500
         $this->assertEquals(12500, SettingService::applyRounding(12999, 'sales'));
     }
+
     #[Test]
     public function apply_rounding_ceil_1000()
     {
@@ -135,6 +146,7 @@ class SettingServiceTest extends TestCase
         // 12000 → 12000 (already at multiple)
         $this->assertEquals(12000, SettingService::applyRounding(12000, 'sales'));
     }
+
     #[Test]
     public function apply_rounding_purchase_type_independent_of_sales()
     {
@@ -162,6 +174,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals('Rp 12.345', SettingService::formatCurrency(12345));
         $this->assertEquals('Rp 1.000.000', SettingService::formatCurrency(1000000));
     }
+
     #[Test]
     public function format_currency_handles_negative_values()
     {
@@ -173,6 +186,7 @@ class SettingServiceTest extends TestCase
 
         $this->assertEquals('-Rp 12.345', SettingService::formatCurrency(-12345));
     }
+
     #[Test]
     public function format_currency_with_symbol_after()
     {
@@ -193,6 +207,8 @@ class SettingServiceTest extends TestCase
     {
         // Defaults diharmonisasi ke 3 karakter (lihat SettingService::getPrefix).
         $this->assertEquals('INV', SettingService::getPrefix('sales'));
+        $this->assertEquals('SOM', SettingService::getPrefix('manual_sales'));
+        $this->assertEquals('PPI', SettingService::getPrefix('payment_piutang'));
         $this->assertEquals('POR', SettingService::getPrefix('purchase_order'));
         $this->assertEquals('ADJ', SettingService::getPrefix('adjustment'));
         $this->assertEquals('PRM', SettingService::getPrefix('promo'));
@@ -221,36 +237,42 @@ class SettingServiceTest extends TestCase
         SettingService::clearCache();
         $this->assertEquals('Asia/Jakarta', SettingService::getTimezone());
     }
+
     #[Test]
     public function get_timezone_returns_setting_value_when_set()
     {
         SettingService::set('regional.timezone', 'Asia/Makassar', 'string');
         $this->assertEquals('Asia/Makassar', SettingService::getTimezone());
     }
+
     #[Test]
     public function get_timezone_offset_converts_jakarta_to_plus_seven()
     {
         SettingService::set('regional.timezone', 'Asia/Jakarta', 'string');
         $this->assertEquals('+07:00', SettingService::getTimezoneOffset());
     }
+
     #[Test]
     public function get_timezone_offset_converts_makassar_to_plus_eight()
     {
         SettingService::set('regional.timezone', 'Asia/Makassar', 'string');
         $this->assertEquals('+08:00', SettingService::getTimezoneOffset());
     }
+
     #[Test]
     public function get_timezone_offset_converts_jayapura_to_plus_nine()
     {
         SettingService::set('regional.timezone', 'Asia/Jayapura', 'string');
         $this->assertEquals('+09:00', SettingService::getTimezoneOffset());
     }
+
     #[Test]
     public function get_timezone_offset_converts_utc_to_zero()
     {
         SettingService::set('regional.timezone', 'UTC', 'string');
         $this->assertEquals('+00:00', SettingService::getTimezoneOffset());
     }
+
     #[Test]
     public function get_timezone_offset_falls_back_when_timezone_invalid()
     {
@@ -268,6 +290,7 @@ class SettingServiceTest extends TestCase
         SettingService::set('store.name', 'TOKO ABC', 'string');
         $this->assertSame('TOKO ABC', SettingService::get('store.name'));
     }
+
     #[Test]
     public function set_get_integer_di_cast_ke_int()
     {
@@ -277,6 +300,7 @@ class SettingServiceTest extends TestCase
         $this->assertSame(3, $value, 'Harus int murni, bukan string "3"');
         $this->assertIsInt($value);
     }
+
     #[Test]
     public function set_get_decimal_di_cast_ke_float()
     {
@@ -286,6 +310,7 @@ class SettingServiceTest extends TestCase
         $this->assertSame(12.5, $value);
         $this->assertIsFloat($value);
     }
+
     #[Test]
     public function set_get_boolean_true_dan_false_di_cast_ke_bool()
     {
@@ -296,6 +321,7 @@ class SettingServiceTest extends TestCase
         SettingService::set('promo.enabled', false, 'boolean');
         $this->assertFalse(SettingService::get('promo.enabled'));
     }
+
     #[Test]
     public function set_get_json_di_decode_ke_array_asosiatif()
     {
@@ -307,12 +333,14 @@ class SettingServiceTest extends TestCase
         $this->assertIsArray($value);
         $this->assertSame($data, $value, 'JSON round-trip harus identik');
     }
+
     #[Test]
     public function set_dengan_key_tanpa_titik_melempar_exception()
     {
         $this->expectException(\InvalidArgumentException::class);
         SettingService::set('tanpatitik', 'x', 'string');
     }
+
     #[Test]
     public function set_memperbarui_nilai_existing_bukan_membuat_duplikat()
     {
@@ -323,6 +351,7 @@ class SettingServiceTest extends TestCase
         $this->assertEquals(1, Setting::where('group', 'store')->where('key', 'phone')->count(),
             'firstOrNew harus update baris yang sama, bukan duplikat');
     }
+
     #[Test]
     public function get_mengembalikan_default_ketika_key_tidak_ada()
     {
@@ -339,6 +368,7 @@ class SettingServiceTest extends TestCase
         SettingService::clearCache();
         $this->assertSame('recursive', SettingService::getDiscountMode());
     }
+
     #[Test]
     public function get_discount_mode_mengikuti_setting_sum()
     {
@@ -361,6 +391,7 @@ class SettingServiceTest extends TestCase
         $this->assertFalse($settings['included_in_hpp'], 'Default included_in_hpp HARUS false');
         $this->assertIsBool($settings['included_in_hpp']);
     }
+
     #[Test]
     public function get_purchase_tax_settings_included_in_hpp_bisa_diaktifkan()
     {
@@ -387,6 +418,7 @@ class SettingServiceTest extends TestCase
 
         $this->assertSame(12345.67, SettingService::applyRounding(12345.67, 'sales'));
     }
+
     #[Test]
     public function apply_rounding_purchase_dan_sales_independen_dengan_nilai_eksak()
     {
@@ -413,6 +445,7 @@ class SettingServiceTest extends TestCase
 
         $this->assertSame($expected, $nomor);
     }
+
     #[Test]
     public function generate_document_number_format_prefix_3_char_dan_yymm()
     {
@@ -425,6 +458,7 @@ class SettingServiceTest extends TestCase
         $this->assertSame(3, strlen($parts[0]), 'Prefix harus 3 karakter');
         $this->assertSame(SettingService::now()->format('ym'), $parts[1]);
     }
+
     #[Test]
     public function generate_document_number_increment_dari_dokumen_terakhir()
     {
@@ -445,6 +479,7 @@ class SettingServiceTest extends TestCase
 
         $this->assertSame("PCH-{$ym}-0008", $nomor, 'Sequence harus lanjut dari 0007 → 0008');
     }
+
     #[Test]
     public function generate_document_number_memakai_prefix_kustom_dari_setting()
     {
@@ -465,6 +500,7 @@ class SettingServiceTest extends TestCase
         // Tidak ada di defaults & tidak ada setting → strtoupper(type).
         $this->assertSame('MYSTERY', SettingService::getPrefix('mystery'));
     }
+
     #[Test]
     public function get_prefix_3_char_untuk_semua_tipe_dokumen_inti()
     {
@@ -473,6 +509,33 @@ class SettingServiceTest extends TestCase
             $prefix = SettingService::getPrefix($type);
             $this->assertSame(3, strlen($prefix), "Prefix '{$type}' harus 3 karakter, dapat '{$prefix}'");
         }
+    }
+
+    #[Test]
+    public function sales_prefix_lock_is_scoped_by_source()
+    {
+        $warehouse = MasterWarehouse::factory()->create();
+        $customer = MasterCustomer::create([
+            'kode_customer' => 'PREFIX-CUST',
+            'nama' => 'Prefix Customer',
+            'telepon' => '0800',
+            'jenis' => 'spesifik',
+            'status' => 'active',
+        ]);
+
+        DB::table('doc_sales')->insert([
+            'ulid' => (string) Str::ulid(),
+            'nomor_dokumen' => 'SOM-2607-0001',
+            'source' => 'manual',
+            'tanggal' => now(),
+            'warehouse_id' => $warehouse->id,
+            'customer_id' => $customer->id,
+        ]);
+
+        $prefixes = collect(SettingService::getPrefixesWithInfo())->keyBy('type');
+
+        $this->assertTrue($prefixes['manual_sales']['is_locked']);
+        $this->assertFalse($prefixes['sales']['is_locked']);
     }
 
     // ============================================================

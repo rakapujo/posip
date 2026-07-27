@@ -9,7 +9,7 @@ const DB = {
     port: process.env.E2E_DB_PORT || '3306',
     database: process.env.E2E_DB_DATABASE || 'posip_db',
     username: process.env.E2E_DB_USERNAME || 'root',
-    password: process.env.E2E_DB_PASSWORD || '',
+    password: process.env.E2E_DB_PASSWORD || ''
 };
 
 const STORE = {
@@ -17,13 +17,13 @@ const STORE = {
     address: 'Jl. Raya Contoh No. 1, Jakarta',
     phone: '021-5550100',
     email: 'toko@posip.local',
-    npwp: '',
+    npwp: ''
 };
 
 const ADMIN = {
     name: 'Super Admin',
     email: 'admin@posip.com',
-    password: 'password',
+    password: 'password'
 };
 
 async function snap(page, name) {
@@ -32,7 +32,7 @@ async function snap(page, name) {
     await page.waitForTimeout(600);
     await page.screenshot({
         path: path.join(OUT_DIR, `${name}.png`),
-        fullPage: true,
+        fullPage: true
     });
 }
 

@@ -208,15 +208,14 @@ class SerialAdjustmentTest extends TestCase
             'serial_number' => 'SNB-1', 'harga_modal' => 1000, 'cost_per_unit' => 1500, 'status' => 'tersedia',
         ]);
 
-        // Adjustment di wh, tapi pilih unit yang ada di wh2
-        $res = $this->postJson('/api/v1/adjustments', [
+        // Adjustment di wh, tapi pilih unit yang ada di wh2 → ditolak early di create
+        $this->postJson('/api/v1/adjustments', [
             'warehouse_id' => $this->wh->id,
             'tanggal' => now()->toDateString(),
             'details' => [
                 ['product_id' => $this->serial->id, 'jenis' => 'kredit', 'qty' => 1, 'serial_unit_ids' => [$u2->ulid]],
             ],
-        ])->assertCreated();
-        $this->postJson("/api/v1/adjustments/{$res->json('data.adjustment.ulid')}/approve")->assertStatus(422);
+        ])->assertStatus(422);
 
         // Unit tak berubah
         $this->assertSame('tersedia', SerialUnit::where('ulid', $u2->ulid)->value('status'));
@@ -228,14 +227,13 @@ class SerialAdjustmentTest extends TestCase
         // unit[0] sudah rusak (bukan tersedia)
         SerialUnit::where('ulid', $units[0]->ulid)->update(['status' => 'rusak']);
 
-        $res = $this->postJson('/api/v1/adjustments', [
+        $this->postJson('/api/v1/adjustments', [
             'warehouse_id' => $this->wh->id,
             'tanggal' => now()->toDateString(),
             'details' => [
                 ['product_id' => $this->serial->id, 'jenis' => 'kredit', 'qty' => 1, 'serial_unit_ids' => [$units[0]->ulid]],
             ],
-        ])->assertCreated();
-        $this->postJson("/api/v1/adjustments/{$res->json('data.adjustment.ulid')}/approve")->assertStatus(422);
+        ])->assertStatus(422);
     }
     #[Test]
     public function adjustment_rejects_invalid_serial_unit_status()

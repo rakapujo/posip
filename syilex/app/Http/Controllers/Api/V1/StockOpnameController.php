@@ -164,6 +164,8 @@ class StockOpnameController extends BaseApiController
             return $this->created([
                 'opname' => $opname,
             ], 'Stock opname berhasil dibuat.');
+        } catch (ValidationException $e) {
+            return $this->validationError($e->errors(), $e->getMessage());
         } catch (\Exception $e) {
             return $this->error('Gagal membuat stock opname: ' . $e->getMessage(), 500);
         }
@@ -205,6 +207,13 @@ class StockOpnameController extends BaseApiController
 
         // Tempelkan rincian unit serial yang HADIR (serial_unit_ids_present) untuk detail + PDF
         $this->attachDocSerialUnits($opname->details, 'serial_unit_ids_present');
+
+        // Cost gate: strip avg_cost tanpa stok.view_hpp
+        if (!auth()->user()->can('stok.view_hpp')) {
+            foreach ($opname->details as $detail) {
+                $detail->product?->makeHidden(['avg_cost']);
+            }
+        }
 
         return $this->success([
             'opname' => $opname,
@@ -319,7 +328,7 @@ class StockOpnameController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('opname.create')) {
+        if (!auth()->user()->canAny(['opname.create', 'opname.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -330,9 +339,11 @@ class StockOpnameController extends BaseApiController
 
         $warehouseId = $request->warehouse_id;
         $search = $request->search;
+        $canHpp = auth()->user()->can('stok.view_hpp');
 
         $query = MasterProduk::active()
             ->select('id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'avg_cost', 'is_serial');
+        SettingService::constrainNonSerialWhenDisabled($query);
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -344,22 +355,27 @@ class StockOpnameController extends BaseApiController
 
         $products = $query->limit(20)->get();
 
-        // Add stock info for each product
-        $items = $products->map(function ($product) use ($warehouseId) {
-            $stock = InventoryStock::where('product_id', $product->id)
-                ->where('warehouse_id', $warehouseId)
-                ->first();
+        $stocks = InventoryStock::where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $products->pluck('id'))
+            ->get()
+            ->keyBy('product_id');
 
-            return [
+        $items = $products->map(function ($product) use ($stocks, $canHpp) {
+            $stock = $stocks->get($product->id);
+            $row = [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
                 'stok' => $stock ? (int) $stock->qty : 0,
-                'avg_cost' => (float) $product->avg_cost,
                 'is_serial' => (bool) $product->is_serial,
             ];
+            if ($canHpp) {
+                $row['avg_cost'] = (float) $product->avg_cost;
+            }
+
+            return $row;
         });
 
         return $this->success([
@@ -373,7 +389,7 @@ class StockOpnameController extends BaseApiController
      */
     public function loadAllProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('opname.create')) {
+        if (!auth()->user()->canAny(['opname.create', 'opname.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -385,6 +401,7 @@ class StockOpnameController extends BaseApiController
 
         $warehouseId = $request->warehouse_id;
         $perPage = $this->getPerPage($request, 50);
+        $canHpp = auth()->user()->can('stok.view_hpp');
 
         // Get all products that have stock in this warehouse (qty > 0 or has record)
         // Join with inventory_stock to get current qty
@@ -397,21 +414,28 @@ class StockOpnameController extends BaseApiController
             ->addSelect('inventory_stock.qty as stok')
             ->whereNotNull('inventory_stock.id') // Only products with inventory record
             ->orderBy('master_produk.kode_produk');
+        if (! SettingService::isElektronikEnabled()) {
+            $query->where('master_produk.is_serial', false);
+        }
 
         $products = $query->paginate($perPage);
 
         // Transform data
-        $items = collect($products->items())->map(function ($product) {
-            return [
+        $items = collect($products->items())->map(function ($product) use ($canHpp) {
+            $row = [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
                 'stok' => (int) ($product->stok ?? 0),
-                'avg_cost' => (float) $product->avg_cost,
                 'is_serial' => (bool) $product->is_serial,
             ];
+            if ($canHpp) {
+                $row['avg_cost'] = (float) $product->avg_cost;
+            }
+
+            return $row;
         });
 
         return $this->success([
@@ -430,6 +454,10 @@ class StockOpnameController extends BaseApiController
      */
     public function getStockSetting(): JsonResponse
     {
+        if (!auth()->user()->can('opname.view')) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'negative_stock_allowed' => SettingService::isNegativeStockAllowed(),
         ]);
@@ -441,7 +469,7 @@ class StockOpnameController extends BaseApiController
      */
     public function refreshStock(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('opname.create')) {
+        if (!auth()->user()->canAny(['opname.create', 'opname.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -453,27 +481,33 @@ class StockOpnameController extends BaseApiController
 
         $warehouseId = $request->warehouse_id;
         $productIds = $request->product_ids;
+        $canHpp = auth()->user()->can('stok.view_hpp');
 
         // Get products with their stock
         $products = MasterProduk::whereIn('id', $productIds)
             ->select('id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'avg_cost')
             ->get();
 
-        // Map products with stock info
-        $items = $products->map(function ($product) use ($warehouseId) {
-            $stock = InventoryStock::where('product_id', $product->id)
-                ->where('warehouse_id', $warehouseId)
-                ->first();
+        $stocks = InventoryStock::where('warehouse_id', $warehouseId)
+            ->whereIn('product_id', $productIds)
+            ->get()
+            ->keyBy('product_id');
 
-            return [
+        $items = $products->map(function ($product) use ($stocks, $canHpp) {
+            $stock = $stocks->get($product->id);
+            $row = [
                 'id' => $product->id,
                 'ulid' => $product->ulid,
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
                 'stok' => $stock ? (int) $stock->qty : 0,
-                'avg_cost' => (float) $product->avg_cost,
             ];
+            if ($canHpp) {
+                $row['avg_cost'] = (float) $product->avg_cost;
+            }
+
+            return $row;
         })->keyBy('id');
 
         return $this->success([
@@ -486,7 +520,7 @@ class StockOpnameController extends BaseApiController
      */
     public function checkDraft(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('opname.create')) {
+        if (!auth()->user()->canAny(['opname.create', 'opname.update'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 

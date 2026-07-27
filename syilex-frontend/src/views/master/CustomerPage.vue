@@ -7,6 +7,8 @@ import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 import CustomerFormDialog from '@/components/common/CustomerFormDialog.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useExportPdf } from '@/composables/useExportPdf';
@@ -20,7 +22,7 @@ const { todayString } = useFormatters();
 const canCreate = computed(() => authStore.can('customer.create'));
 const canUpdate = computed(() => authStore.can('customer.update'));
 const canDelete = computed(() => authStore.can('customer.delete'));
-const canExport = computed(() => authStore.can('laporan.export'));
+const canExport = computed(() => authStore.can('customer.view'));
 const { exporting, exportListPdf } = useExportPdf();
 const exportingExcel = ref(false);
 
@@ -71,6 +73,13 @@ const detailData = ref({});
 
 // Customer yang sedang diedit (null = tambah baru) — diteruskan ke CustomerFormDialog (DRY)
 const editTarget = ref(null);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedStatus.value) n++;
+    if (selectedJenis.value) n++;
+    return n;
+});
 
 onMounted(async () => {
     await Promise.all([loadCustomers(), loadTipeCustomers(), loadKategoriCustomers()]);
@@ -265,7 +274,7 @@ async function toggleStatus(data) {
 
 function confirmDelete(data) {
     confirm.require({
-        message: `Apakah Anda yakin ingin menghapus customer "${data.nama}"? Data yang dihapus tidak dapat dikembalikan.`,
+        message: `Apakah Anda yakin ingin menghapus customer "${data.nama}"? Data akan diarsipkan (kode dibebaskan untuk dipakai ulang).`,
         header: 'Konfirmasi Hapus',
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
@@ -411,11 +420,11 @@ async function viewDetail(data) {
                 </template>
 
                 <template #end>
-                    <div class="flex gap-2 flex-wrap">
-                        <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" class="w-36" filter filterPlaceholder="Cari..." @change="onFilter" />
-                        <Select v-model="selectedJenis" :options="jenisOptions" optionLabel="label" optionValue="value" placeholder="Filter Jenis" class="w-36" filter filterPlaceholder="Cari..." @change="onFilter" />
-                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
-                    </div>
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Filter Status" filter filterPlaceholder="Cari..." @change="onFilter" />
+                    <Select v-model="selectedJenis" :options="jenisOptions" optionLabel="label" optionValue="value" placeholder="Filter Jenis" filter filterPlaceholder="Cari..." @change="onFilter" />
+                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                </ListFiltersSheet>
                 </template>
             </Toolbar>
 
@@ -441,7 +450,7 @@ async function viewDetail(data) {
                         <template #extra>
                             <div class="flex gap-2">
                                 <Button v-if="canExport" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                                <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" outlined :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF" />
+                                <Button v-if="canExport" icon="pi pi-file-pdf" severity="secondary" :loading="exporting" @click="exportPdf" v-tooltip.top="'Export PDF'" aria-label="Export PDF"  outlined />
                             </div>
                         </template>
                     </DataTableHeader>
@@ -462,6 +471,11 @@ async function viewDetail(data) {
                         <Tag :value="getJenisLabel(slotProps.data.jenis)" :severity="getJenisSeverity(slotProps.data.jenis)" />
                     </template>
                 </Column>
+                <Column field="tempo_default" header="Tempo" sortable style="min-width: 80px">
+                    <template #body="slotProps">
+                        {{ slotProps.data.tempo_default ?? 0 }}
+                    </template>
+                </Column>
                 <Column header="Tipe" style="min-width: 130px">
                     <template #body="slotProps">
                         {{ slotProps.data.tipe_customer?.nama_tipe || '-' }}
@@ -479,30 +493,13 @@ async function viewDetail(data) {
                 </Column>
                 <Column :exportable="false" style="min-width: 220px" alignFrozen="right" frozen>
                     <template #body="slotProps">
-                        <Button icon="pi pi-eye" outlined rounded class="mr-2" severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" />
-                        <Button v-if="canUpdate" icon="pi pi-pencil" outlined rounded class="mr-2" @click="editCustomer(slotProps.data)" v-tooltip.top="'Edit'" />
-                        <Button
-                            v-if="canUpdate"
-                            icon="pi pi-power-off"
-                            outlined
-                            rounded
-                            class="mr-2"
-                            :severity="getToggleSeverity(slotProps.data.status)"
-                            :disabled="isWalkIn(slotProps.data)"
-                            @click="confirmToggleStatus(slotProps.data)"
-                            v-tooltip.top="isWalkIn(slotProps.data) ? 'Walk-in tidak dapat dinonaktifkan' : getToggleLabel(slotProps.data.status)"
-                        />
-                        <Button
-                            v-if="canDelete"
-                            icon="pi pi-trash"
-                            outlined
-                            rounded
-                            severity="danger"
-                            :disabled="isWalkIn(slotProps.data)"
-                            @click="confirmDelete(slotProps.data)"
-                            v-tooltip.top="isWalkIn(slotProps.data) ? 'Walk-in tidak dapat dihapus' : 'Hapus'"
-                        />
-                    </template>
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" rounded severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" text />
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editCustomer(slotProps.data)" v-tooltip.top="'Edit'" text />
+                        <Button v-if="canUpdate" icon="pi pi-power-off" rounded :severity="getToggleSeverity(slotProps.data.status)" :disabled="isWalkIn(slotProps.data)" @click="confirmToggleStatus(slotProps.data)" v-tooltip.top="isWalkIn(slotProps.data) ? 'Walk-in tidak dapat dinonaktifkan' : getToggleLabel(slotProps.data.status)" text />
+                        <Button v-if="canDelete" icon="pi pi-trash" rounded severity="danger" :disabled="isWalkIn(slotProps.data)" @click="confirmDelete(slotProps.data)" v-tooltip.top="isWalkIn(slotProps.data) ? 'Walk-in tidak dapat dihapus' : 'Hapus'" text />
+                    </RowActionButtons>
+                </template>
                 </Column>
             </DataTable>
         </div>
@@ -560,6 +557,7 @@ async function viewDetail(data) {
                 <h6 class="text-surface-600 font-medium mb-3">Status</h6>
                 <div class="grid grid-cols-2 gap-4">
                     <DetailItem label="Jenis" :value="getJenisLabel(detailData.jenis)" type="badge" :badge-severity="getJenisSeverity(detailData.jenis)" />
+                    <DetailItem label="Tempo Default" :value="`${detailData.tempo_default ?? 0} hari`" />
                     <DetailItem label="Status" :value="getStatusLabel(detailData.status)" type="badge" :badge-severity="getStatusSeverity(detailData.status)" />
                 </div>
             </template>

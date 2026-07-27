@@ -12,7 +12,7 @@
         &.layout-overlay {
             .layout-main-container {
                 margin-left: 0;
-                padding-left: 2rem;
+                padding-left: var(--page-pad-x);
             }
 
             .layout-sidebar {
@@ -52,7 +52,7 @@
 
                 .layout-main-container {
                     margin-left: 0;
-                    padding-left: 2rem;
+                    padding-left: var(--page-pad-x);
                 }
             }
         }
@@ -64,6 +64,12 @@
 }
 
 @media (max-width: 991px) {
+    :root {
+        --page-pad-x: 0.75rem;
+        --page-pad-top: 5rem;
+        --card-pad: 1rem;
+    }
+
     .blocked-scroll {
         overflow: hidden;
     }
@@ -71,7 +77,84 @@
     .layout-wrapper {
         .layout-main-container {
             margin-left: 0;
-            padding-left: 2rem;
+            padding-left: var(--page-pad-x);
+            padding-right: var(--page-pad-x);
+        }
+
+        /* ponytail: unfreeze Aksi on phones so data columns keep width; RowActions later */
+        .p-datatable-scrollable .p-datatable-frozen-column,
+        .p-datatable-scrollable th.p-datatable-frozen-column,
+        .p-datatable-scrollable td.p-datatable-frozen-column {
+            position: static !important;
+            left: auto !important;
+            right: auto !important;
+            box-shadow: none !important;
+        }
+
+        .p-datatable .p-datatable-tbody > tr > td:last-child,
+        .p-datatable .p-datatable-thead > tr > th:last-child {
+            min-width: 0 !important;
+            width: 1%;
+            white-space: nowrap;
+        }
+
+        .p-datatable .p-datatable-tbody > tr > td:last-child .flex {
+            flex-wrap: wrap;
+            gap: 0.25rem;
+        }
+
+        /*
+         * List toolbar mobile — full width, satu baris:
+         * | [==== Tambah (flex) ====] | [Filter (n)] |
+         */
+        .p-toolbar {
+            width: 100%;
+            flex-wrap: nowrap;
+            gap: 0.5rem;
+            align-items: stretch;
+            justify-content: flex-start;
+        }
+
+        .p-toolbar .p-toolbar-start,
+        .p-toolbar .p-toolbar-group-start {
+            flex: 1 1 0 !important;
+            min-width: 0;
+            width: auto !important;
+            display: flex;
+            align-items: center;
+        }
+
+        .p-toolbar .p-toolbar-end,
+        .p-toolbar .p-toolbar-group-end {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            margin-left: 0 !important;
+            align-self: center;
+        }
+
+        /* wrapper di #start (mis. checkbox desktop + tombol tambah) */
+        .p-toolbar .p-toolbar-start > .flex,
+        .p-toolbar .p-toolbar-group-start > .flex {
+            flex: 1 1 auto;
+            min-width: 0;
+            width: 100%;
+            flex-wrap: nowrap !important;
+        }
+
+        /* tombol aksi utama — isi sisa lebar */
+        .p-toolbar .p-toolbar-start > .p-button,
+        .p-toolbar .p-toolbar-start > .flex > .p-button,
+        .p-toolbar .p-toolbar-group-start > .p-button,
+        .p-toolbar .p-toolbar-group-start > .flex > .p-button {
+            flex: 1 1 auto;
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* halaman tanpa #start — filter tetap di kanan */
+        .p-toolbar:not(:has(.p-toolbar-start > *, .p-toolbar-group-start > *)) .p-toolbar-end,
+        .p-toolbar:not(:has(.p-toolbar-start > *, .p-toolbar-group-start > *)) .p-toolbar-group-end {
+            margin-left: auto !important;
         }
 
         .layout-sidebar {
@@ -107,4 +190,59 @@
             }
         }
     }
+
+    /*
+     * Dialog teleport ke <body>, bukan di dalam .layout-wrapper —
+     * max-width di sini agar tambah/edit (width tetap px) punya jarak kiri-kanan.
+     * SerialLabelPrintDialog sudah pakai :breakpoints; rule ini menyamakan sisanya.
+     */
+    .p-dialog {
+        max-width: 95vw !important;
+    }
 }
+
+/* List filters — ukuran kontrol seragam (desktop inline / mobile sheet) */
+.list-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.list-filters:not(.list-filters--sheet) > .p-select,
+.list-filters:not(.list-filters--sheet) > .p-multiselect,
+.list-filters:not(.list-filters--sheet) > .list-filter-control {
+    width: 10rem;
+    flex: 0 0 10rem;
+    max-width: 100%;
+}
+
+.list-filters:not(.list-filters--sheet) > .list-filter-control .p-datepicker {
+    width: 100%;
+}
+
+.list-filters--sheet {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.list-filters--sheet > .p-select,
+.list-filters--sheet > .p-multiselect,
+.list-filters--sheet > .list-filter-control,
+.list-filters--sheet > .p-button,
+.list-filters--sheet > .p-inputwrapper {
+    width: 100% !important;
+    flex: none !important;
+}
+
+.list-filters--sheet > .list-filter-control .p-datepicker {
+    width: 100%;
+}
+
+.list-filters-trigger {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+

@@ -6,14 +6,18 @@ import { useReportList } from '@/composables/useReportList';
 import { useReportDetailDialog } from '@/composables/useReportDetailDialog';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 
 const { formatQty, formatCurrency, formatDateTime, toDateString, todayString, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 const canExport = computed(() => authStore.can('laporan.export'));
+const serialEnabled = computed(() => settingsStore.serialEnabled);
 
 const canViewHarga = ref(false);
 const selectedSupplier = ref(null);
@@ -21,11 +25,19 @@ const selectedWarehouse = ref(null);
 const selectedBrand = ref(null);
 const selectedKategori = ref(null);
 const selectedSource = ref(null);
-const sourceOptions = [
-    { label: 'Semua Sumber', value: null },
-    { label: 'Purchase Order', value: 'po' },
-    { label: 'Serial', value: 'serial' }
+const reportMode = ref('bruto');
+const modeOptions = [
+    { label: 'Bruto', value: 'bruto' },
+    { label: 'Net', value: 'net' }
 ];
+const sourceOptions = computed(() => {
+    const opts = [
+        { label: 'Semua Sumber', value: null },
+        { label: 'Purchase Order', value: 'po' }
+    ];
+    if (serialEnabled.value) opts.push({ label: 'Serial', value: 'serial' });
+    return opts;
+});
 
 const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, lazyParams, dropdowns, exportingExcel, exportExcel, onPage, onSort, doSearch, clearSearch, onFilterChange, resetFilters, buildFilterParams } = useReportList({
     fetchList: (params) => purchaseReportApi.getPerBarang(params),
@@ -37,7 +49,8 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
         warehouse_id: selectedWarehouse.value,
         brand_id: selectedBrand.value,
         kategori_id: selectedKategori.value,
-        source: selectedSource.value
+        source: selectedSource.value,
+        mode: reportMode.value
     }),
     onResetFilters: () => {
         selectedSupplier.value = null;
@@ -45,6 +58,7 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
         selectedBrand.value = null;
         selectedKategori.value = null;
         selectedSource.value = null;
+        reportMode.value = 'bruto';
     },
     onListLoaded: (data) => {
         canViewHarga.value = data.can_view_harga ?? false;
@@ -163,6 +177,7 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
+                    <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
                     <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilterChange" />
                     <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" class="w-40" filter showClear @change="onFilterChange" />
                     <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" class="w-36" filter showClear @change="onFilterChange" />
@@ -179,28 +194,30 @@ async function exportPdf() {
             </template>
         </Toolbar>
 
+        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: baris, ringkasan, dan export sudah dikurangi retur</Message>
+
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Total Produk</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ summary.total_produk }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ summary.total_produk }}</div>
             </div>
-            <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+            <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                 <div class="text-surface-500 text-sm mb-1">Total Qty</div>
-                <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatQty(summary.total_qty) }}</div>
+                <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatQty(summary.total_qty) }}</div>
             </div>
             <template v-if="canViewHarga">
-                <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
+                <div class="summary-stat-card bg-surface-50 dark:bg-surface-800 rounded-lg p-4">
                     <div class="text-surface-500 text-sm mb-1">Total Bruto</div>
-                    <div class="text-2xl font-bold text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_bruto) }}</div>
+                    <div class="summary-money-value text-surface-900 dark:text-surface-0">{{ formatCurrency(summary.total_bruto) }}</div>
                 </div>
-                <div class="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
+                <div class="summary-stat-card bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                     <div class="text-red-600 dark:text-red-400 text-sm mb-1">Total Diskon</div>
-                    <div class="text-2xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
+                    <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(summary.total_diskon) }}</div>
                 </div>
-                <div class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+                <div class="summary-stat-card bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
                     <div class="text-blue-600 dark:text-blue-400 text-sm mb-1">Total Nett</div>
-                    <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_subtotal) }}</div>
+                    <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(summary.total_subtotal) }}</div>
                 </div>
             </template>
         </div>
@@ -296,7 +313,9 @@ async function exportPdf() {
 
             <Column :exportable="false" style="min-width: 80px" alignFrozen="right" frozen>
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" outlined rounded severity="info" @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
+                    <RowActionButtons>
+                        <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'" aria-label="Lihat Detail" />
+                    </RowActionButtons>
                 </template>
             </Column>
         </DataTable>
@@ -322,24 +341,24 @@ async function exportPdf() {
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
                     <div class="text-center">
                         <div class="text-surface-500 text-sm">Jumlah PO</div>
-                        <div class="text-xl font-bold">{{ detailSummary.jumlah_po }}</div>
+                        <div class="summary-money-value">{{ detailSummary.jumlah_po }}</div>
                     </div>
                     <div class="text-center">
                         <div class="text-surface-500 text-sm">Total Qty</div>
-                        <div class="text-xl font-bold">{{ formatQty(detailSummary.total_qty) }}</div>
+                        <div class="summary-money-value">{{ formatQty(detailSummary.total_qty) }}</div>
                     </div>
                     <template v-if="canViewHarga">
                         <div class="text-center">
                             <div class="text-surface-500 text-sm">Total Bruto</div>
-                            <div class="text-xl font-bold">{{ formatCurrency(detailSummary.total_bruto) }}</div>
+                            <div class="summary-money-value">{{ formatCurrency(detailSummary.total_bruto) }}</div>
                         </div>
                         <div class="text-center">
                             <div class="text-surface-500 text-sm">Total Diskon</div>
-                            <div class="text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(detailSummary.total_diskon) }}</div>
+                            <div class="summary-money-value text-red-600 dark:text-red-400">{{ formatCurrency(detailSummary.total_diskon) }}</div>
                         </div>
                         <div class="text-center">
                             <div class="text-surface-500 text-sm">Total Nett</div>
-                            <div class="text-xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(detailSummary.total_subtotal) }}</div>
+                            <div class="summary-money-value text-blue-600 dark:text-blue-400">{{ formatCurrency(detailSummary.total_subtotal) }}</div>
                         </div>
                     </template>
                 </div>

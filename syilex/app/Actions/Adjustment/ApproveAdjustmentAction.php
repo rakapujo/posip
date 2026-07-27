@@ -35,6 +35,14 @@ class ApproveAdjustmentAction
         }
 
         return DB::transaction(function () use ($adjustment) {
+            // Lock header + re-check draft di dalam TX (cegah double-approve race).
+            $adjustment = DocAdjustment::where('id', $adjustment->id)->lockForUpdate()->firstOrFail();
+            if (!$adjustment->isDraft()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Adjustment sudah diproses, tidak bisa disetujui ulang.'],
+                ]);
+            }
+
             // Load details with products
             $adjustment->load('details.product');
 
@@ -46,6 +54,15 @@ class ApproveAdjustmentAction
             if (count($productIds) !== count(array_unique($productIds))) {
                 throw ValidationException::withMessages([
                     'details' => ['Tidak boleh ada produk yang sama lebih dari satu baris.'],
+                ]);
+            }
+
+            // Kartu sudah ada sebelum mutasi → 422 (jangan mutate lalu skip kartu).
+            if (StockCard::where('transaction_id', $adjustment->id)
+                ->whereIn('transaction_type', ['ADJUSTMENT_IN', 'ADJUSTMENT_OUT'])
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'status' => ['Kartu stok untuk adjustment ini sudah ada. Dokumen mungkin sudah diproses.'],
                 ]);
             }
 
@@ -67,7 +84,7 @@ class ApproveAdjustmentAction
             $errors = [];
 
             foreach ($adjustment->details as $detail) {
-                $currentStock = $stocks[$detail->product_id]->qty ?? 0;
+                $currentStock = $stocks[$detail->product_id]?->qty ?? 0;
 
                 if ($detail->jenis === 'kredit') {
                     $newStock = $currentStock - $detail->qty;
@@ -131,7 +148,7 @@ class ApproveAdjustmentAction
 
                     // HPP calculation depends on transaction type
                     // - ADJUSTMENT_IN (debit): Recalculate HPP using weighted average
-                    // - ADJUSTMENT_OUT (kredit): HPP does NOT change (per CLAUDE.md)
+                    // - ADJUSTMENT_OUT (kredit): HPP does NOT change (per AI-AGENT.md)
                     $newHpp = $oldHpp;
 
                     if ($detail->jenis === 'debit') {
@@ -171,17 +188,7 @@ class ApproveAdjustmentAction
                     }
                     $combinedNotes = implode(' | ', $noteParts) ?: null;
 
-                    // Check if stock card already exists for this transaction (prevent duplicates)
-                    $existingStockCard = StockCard::where('transaction_id', $adjustment->id)
-                        ->where('product_id', $detail->product_id)
-                        ->where('transaction_type', $detail->jenis === 'debit' ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT')
-                        ->exists();
-
-                    if ($existingStockCard) {
-                        continue; // Skip if already recorded
-                    }
-
-                    // Record stock card
+                    // Always record stock card (idempotensi via status lock, bukan skip-after-mutate)
                     StockCard::record([
                         'product_id' => $detail->product_id,
                         'warehouse_id' => $adjustment->warehouse_id,

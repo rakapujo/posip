@@ -84,6 +84,7 @@ class LaporanAnalitikSmokeCoverageTest extends TestCase
             'status' => 'active',
             'created_by' => $this->viewer->id,
         ]);
+        $terminal->allowedPaymentMethods()->attach([$cash->id]);
         $shift = PosTerminalShift::create([
             'ulid' => (string) Str::ulid(),
             'terminal_id' => $terminal->id,

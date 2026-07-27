@@ -187,13 +187,11 @@ class PembayaranHutangCrudTest extends TestCase
         $this->assertEquals($this->user->id, $completed->completed_by);
     }
     #[Test]
-    public function complete_throws_when_payment_exceeds_remaining_hutang()
+    public function create_throws_when_payment_exceeds_remaining_hutang()
     {
-        // hutang nominal = 100000, try to pay 150000
-        $payment = $this->createAction->execute($this->basePaymentData(150000));
-
+        // Q5: over-allocation ditolak di Create (bukan tunggu Complete).
         $this->expectException(ValidationException::class);
-        $this->completeAction->execute($payment);
+        $this->createAction->execute($this->basePaymentData(150000));
     }
     #[Test]
     public function complete_throws_when_already_completed()
@@ -223,10 +221,9 @@ class PembayaranHutangCrudTest extends TestCase
         $this->assertEquals(20000, $this->hutang->fresh()->sisa_hutang);
         $this->assertEquals('partial', $this->hutang->fresh()->status);
 
-        // Third payment that would exceed: 30000 (but only 20000 left)
-        $payment3 = $this->createAction->execute($this->basePaymentData(30000));
+        // Third payment that would exceed: 30000 (but only 20000 left) — rejected at Create (Q5).
         $this->expectException(ValidationException::class);
-        $this->completeAction->execute($payment3);
+        $this->createAction->execute($this->basePaymentData(30000));
     }
 
     // ==================== EDGE CASE: LEDGER EKSAK, DEPOSIT, BOUNDARY ====================
@@ -355,6 +352,45 @@ class PembayaranHutangCrudTest extends TestCase
         $this->assertEquals('partial', $hutang->status);
 
         // Ledger konsisten (deposit detail ikut dihitung)
+        $this->assertSame(0, Artisan::call('data:verify', ['--fail-on-mismatch' => true]));
+    }
+
+    /**
+     * Lifecycle uang deposit LENGKAP: manual deposit dibuat → dipakai PENUH (sisa
+     * persis) dalam satu pembayaran hutang → sisa_deposit tepat 0, status
+     * 'used_all'. Melengkapi pembayaran_via_deposit_* di atas yang hanya menguji
+     * pemakaian SEBAGIAN (sisa masih > 0).
+     *
+     */
+    #[Test]
+    public function deposit_dipakai_penuh_dalam_pembayaran_menyisakan_tepat_nol()
+    {
+        $deposit = $this->createDeposit(50000); // manual/retur deposit, sisa 50000
+
+        $payment = $this->createAction->execute([
+            'tanggal' => '2026-04-15',
+            'supplier_id' => $this->supplier->id,
+            'metode_pembayaran' => 'cash',
+            'details' => [[
+                'hutang_id' => $this->hutang->id,
+                'nominal_dibayar' => 50000,
+                'sumber' => 'deposit',
+            ]],
+            'deposit_usages' => [[
+                'deposit_id' => $deposit->id,
+                'nominal_digunakan' => 50000, // = sisa persis
+            ]],
+        ]);
+        $this->completeAction->execute($payment);
+
+        $deposit->refresh();
+        $this->assertEquals(0, (float) $deposit->sisa_deposit, 'Sisa deposit harus tepat 0 setelah dipakai penuh.');
+        $this->assertEquals(50000, (float) $deposit->nominal_terpakai);
+        $this->assertEquals('used_all', $deposit->status);
+
+        // Hutang berkurang eksak sesuai nominal dibayar.
+        $this->assertEquals(50000, (float) $this->hutang->fresh()->sisa_hutang);
+
         $this->assertSame(0, Artisan::call('data:verify', ['--fail-on-mismatch' => true]));
     }
 

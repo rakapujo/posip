@@ -2,23 +2,30 @@
 
 namespace App\Exports;
 
+use App\Exports\Concerns\UsesExportSheetStyles;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromQuery;
+use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
-use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use App\Exports\Concerns\UsesExportSheetStyles;
 
-class SalesPembulatanExport implements FromQuery, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class SalesPembulatanExport implements FromQuery, ShouldAutoSize, WithHeadings, WithMapping, WithStyles
 {
     use UsesExportSheetStyles;
 
     protected string $dateFrom;
+
     protected string $dateTo;
+
     protected ?int $terminalId;
+
     protected ?string $tipe;
+
     protected ?string $search;
+
+    protected ?string $source;
+
     protected int $rowNumber = 0;
 
     public function __construct(
@@ -26,19 +33,21 @@ class SalesPembulatanExport implements FromQuery, WithHeadings, WithMapping, Wit
         string $dateTo,
         ?int $terminalId = null,
         ?string $tipe = null,
-        ?string $search = null
+        ?string $search = null,
+        ?string $source = null,
     ) {
         $this->dateFrom = $dateFrom;
-        $this->dateTo = $dateTo . ' 23:59:59';
+        $this->dateTo = $dateTo.' 23:59:59';
         $this->terminalId = $terminalId;
         $this->tipe = $tipe;
         $this->search = $search;
+        $this->source = in_array($source, ['pos', 'manual'], true) ? $source : null;
     }
 
     public function query()
     {
         $salesQuery = DB::table('doc_sales as ds')
-            ->join('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
+            ->leftJoin('master_pos_terminal as pt', 'pt.id', '=', 'ds.terminal_id')
             ->where('ds.status', 'completed')
             ->where('ds.tanggal', '>=', $this->dateFrom)
             ->where('ds.tanggal', '<=', $this->dateTo)
@@ -52,9 +61,13 @@ class SalesPembulatanExport implements FromQuery, WithHeadings, WithMapping, Wit
             );
 
         $returQuery = DB::table('doc_sales_returns as dsr')
-            ->join('doc_sales as ds2', 'ds2.id', '=', 'dsr.sales_id')
-            ->join('master_pos_terminal as pt2', 'pt2.id', '=', 'ds2.terminal_id')
-            ->where('ds2.status', 'completed')
+            ->leftJoin('doc_sales as ds2', 'ds2.id', '=', 'dsr.sales_id')
+            ->leftJoin('master_pos_terminal as pt2', 'pt2.id', '=', 'dsr.terminal_id')
+            ->whereIn('dsr.status', ['lock', 'approved'])
+            ->where(function ($q) {
+                $q->whereNull('dsr.sales_id')
+                    ->orWhere('ds2.status', 'completed');
+            })
             ->where('dsr.tanggal', '>=', $this->dateFrom)
             ->where('dsr.tanggal', '<=', $this->dateTo)
             ->select(
@@ -68,7 +81,11 @@ class SalesPembulatanExport implements FromQuery, WithHeadings, WithMapping, Wit
 
         if ($this->terminalId) {
             $salesQuery->where('ds.terminal_id', $this->terminalId);
-            $returQuery->where('ds2.terminal_id', $this->terminalId);
+            $returQuery->where('dsr.terminal_id', $this->terminalId);
+        }
+        if ($this->source) {
+            $salesQuery->where('ds.source', $this->source);
+            $returQuery->where('dsr.source', $this->source);
         }
         if ($this->search) {
             $salesQuery->where('ds.nomor_dokumen', 'like', "%{$this->search}%");
@@ -101,10 +118,9 @@ class SalesPembulatanExport implements FromQuery, WithHeadings, WithMapping, Wit
             $row->tanggal,
             $row->nomor_dokumen,
             $row->tipe,
-            $row->nama_terminal,
+            $row->nama_terminal ?? 'Backoffice',
             $row->grand_total,
             $row->pembulatan,
         ];
     }
-
 }

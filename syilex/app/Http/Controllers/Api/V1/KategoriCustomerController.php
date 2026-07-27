@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exports\MasterListExport;
 use App\Http\Controllers\Api\BaseApiController;
 use App\Http\Controllers\Concerns\HandlesSimpleMasterCrud;
+use App\Models\DocPromo;
 use App\Models\MasterKategoriCustomer;
 
 class KategoriCustomerController extends BaseApiController
@@ -53,6 +54,9 @@ class KategoriCustomerController extends BaseApiController
             'can_delete' => function (MasterKategoriCustomer $kategoriCustomer) {
                 if ($kategoriCustomer->customers()->exists()) {
                     return $this->error('Tidak dapat menghapus Kategori Customer karena masih digunakan oleh Customer', 422);
+                }
+                if (DocPromo::where('customer_category_id', $kategoriCustomer->id)->exists()) {
+                    return $this->error('Tidak dapat menghapus Kategori Customer karena masih dipakai promo', 422);
                 }
 
                 return null;

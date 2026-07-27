@@ -27,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'idempotency' => \App\Http\Middleware\IdempotencyKey::class,
             'feature.elektronik' => \App\Http\Middleware\EnsureElektronikEnabled::class,
+            'active.user' => \App\Http\Middleware\EnsureUserIsActive::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

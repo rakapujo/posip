@@ -10,6 +10,7 @@ const error = ref(false);
 const sales = ref(null);
 const store = ref(null);
 const receiptStatus = ref(null);
+const paymentWatermark = ref(null);
 const returPolicy = ref(null);
 
 const apiBase = import.meta.env.VITE_API_URL || '/api/v1';
@@ -44,6 +45,7 @@ onMounted(async () => {
         sales.value = res.data.data?.sales;
         store.value = res.data.data?.store;
         receiptStatus.value = res.data.data?.receipt_status;
+        paymentWatermark.value = res.data.data?.payment_watermark ?? null;
         returPolicy.value = res.data.data?.retur_policy ?? null;
     } catch {
         error.value = true;
@@ -52,15 +54,21 @@ onMounted(async () => {
     }
 });
 
-// Watermark config per status
+// Watermark config per status (retur/void) atau payment_watermark (LUNAS/TEMPO/BELUM LUNAS)
 const watermark = computed(() => {
-    const map = {
+    const statusMap = {
         voided: { text: 'VOID', color: '#ef4444' },
-        completed: { text: 'LUNAS', color: '#22c55e' },
         retur_partial: { text: 'RETUR PARTIAL', color: '#ef4444' },
         retur_full: { text: 'RETUR FULL', color: '#ef4444' }
     };
-    return map[receiptStatus.value] || null;
+    if (statusMap[receiptStatus.value]) return statusMap[receiptStatus.value];
+
+    const payMap = {
+        LUNAS: { text: 'LUNAS', color: '#22c55e' },
+        TEMPO: { text: 'TEMPO', color: '#f59e0b' },
+        'BELUM LUNAS': { text: 'BELUM LUNAS', color: '#ef4444' }
+    };
+    return payMap[paymentWatermark.value] || (receiptStatus.value === 'completed' ? payMap.LUNAS : null);
 });
 
 // Status banner config
@@ -149,7 +157,9 @@ const downloadPdf = () =>
                     </div>
                     <div class="text-right">
                         <div>{{ sales.customer?.nama || 'Walk-in' }}</div>
-                        <div v-if="sales.created_by?.name" class="text-xs text-slate-400">Kasir: {{ sales.created_by.name }}</div>
+                        <div v-if="sales.created_by?.name" class="text-xs text-slate-400">
+                            {{ sales.source === 'manual' ? 'Operator' : 'Kasir' }}: {{ sales.created_by.name }}
+                        </div>
                     </div>
                 </div>
 
@@ -162,6 +172,7 @@ const downloadPdf = () =>
                                 <template v-if="u.kode_internal">{{ u.kode_internal }} · </template>SN {{ u.serial_number }}<template v-if="u.grade"> ({{ u.grade }})</template
                                 ><template v-if="u.battery_health || u.battery_condition">
                                     · 🔋{{ u.battery_health }}%<template v-if="u.battery_condition"> {{ u.battery_condition }}</template></template
+                                ><template v-if="u.battery_cycle_count != null"> · Cyc {{ u.battery_cycle_count }}</template
                                 ><template v-if="u.account_status"> · {{ u.account_status }}</template
                                 ><template v-if="u.catatan"> · {{ u.catatan }}</template>
                             </div>
@@ -307,10 +318,6 @@ const downloadPdf = () =>
                         <div class="flex justify-between mb-1">
                             <span class="text-slate-600">Total Semua Retur</span>
                             <span class="font-medium text-orange-600">{{ formatCurrency(sales.returns.reduce((sum, r) => sum + Number(r.grand_total), 0)) }}</span>
-                        </div>
-                        <div class="flex justify-between text-xs pl-2 mb-2">
-                            <span class="text-slate-500">Refund Tunai</span>
-                            <span class="text-slate-700">{{ formatCurrency(sales.returns.reduce((sum, r) => sum + Number(r.grand_total), 0)) }}</span>
                         </div>
 
                         <div class="flex justify-between font-bold pt-2 border-t border-slate-300">

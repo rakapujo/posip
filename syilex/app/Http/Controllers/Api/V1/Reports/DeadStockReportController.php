@@ -33,6 +33,7 @@ class DeadStockReportController extends BaseApiController
             'grup_id' => 'nullable|integer',
             'warehouse_id' => 'nullable|integer',
             'status' => 'nullable|in:active,inactive',
+            'is_serial' => 'nullable|boolean',
             'min_stock' => 'nullable|numeric|min:0',
             'sort' => 'nullable|in:days_desc,value_desc,qty_desc',
             'limit' => 'nullable|integer|min:1|max:500',
@@ -45,6 +46,7 @@ class DeadStockReportController extends BaseApiController
             'grup_id' => $validated['grup_id'] ?? null,
             'warehouse_id' => $validated['warehouse_id'] ?? null,
             'status' => $validated['status'] ?? null,
+            'is_serial' => $request->has('is_serial') ? $request->boolean('is_serial') : null,
             'min_stock' => $validated['min_stock'] ?? 0.01,
             'sort' => $validated['sort'] ?? 'days_desc',
             'limit' => $validated['limit'] ?? 100,
@@ -56,6 +58,7 @@ class DeadStockReportController extends BaseApiController
             'total_products' => $result['total_products'],
             'total_value' => $result['total_value'],
             'can_view_hpp' => $result['can_view_hpp'],
+            'truncated' => $result['truncated'],
             'items' => $result['items']->values(),
         ]);
     }

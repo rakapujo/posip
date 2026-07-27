@@ -107,7 +107,7 @@ class SerialChangeController extends BaseApiController
 
         $units = SerialUnit::byProduct($product->id)->tersedia()
             ->orderBy('serial_number')
-            ->get(['ulid', 'kode_internal', 'serial_number', 'harga_jual', 'grade', 'battery_condition', 'battery_health', 'account_status', 'catatan']);
+            ->get(['ulid', 'kode_internal', 'serial_number', 'harga_jual', 'grade', 'battery_condition', 'battery_health', 'battery_cycle_count', 'account_status', 'catatan']);
 
         return $this->success(['units' => $units]);
     }
@@ -182,6 +182,7 @@ class SerialChangeController extends BaseApiController
             'units.*.grade' => 'required|string|in:A,B,C,D,E,F',
             'units.*.battery_condition' => 'required|string|max:30',
             'units.*.battery_health' => 'required|numeric|min:0|max:100',
+            'units.*.battery_cycle_count' => 'required|integer|min:0',
             'units.*.account_status' => 'required|string|in:locked,unlocked',
             'units.*.catatan' => 'nullable|string|max:255',
         ];

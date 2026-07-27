@@ -2,6 +2,7 @@
 
 namespace App\Exports;
 
+use App\Services\ReportHelperService;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -20,6 +21,7 @@ class PurchasePerSupplierExport implements FromQuery, WithHeadings, WithMapping,
     protected ?int $warehouseId;
     protected ?string $search;
     protected string $source;
+    protected string $mode;
     protected int $rowNumber = 0;
 
     public function __construct(
@@ -28,7 +30,8 @@ class PurchasePerSupplierExport implements FromQuery, WithHeadings, WithMapping,
         bool $canViewHarga,
         ?int $warehouseId = null,
         ?string $search = null,
-        ?string $source = null
+        ?string $source = null,
+        ?string $mode = null
     ) {
         $this->dateFrom = $dateFrom;
         $this->dateTo = $dateTo . ' 23:59:59';
@@ -36,17 +39,24 @@ class PurchasePerSupplierExport implements FromQuery, WithHeadings, WithMapping,
         $this->warehouseId = $warehouseId;
         $this->search = $search;
         $this->source = $source ?? 'all';
+        $this->mode = $mode === 'net' ? 'net' : 'bruto';
     }
 
     public function query()
     {
+        $applyNet = $this->canViewHarga && $this->mode === 'net' && $this->source !== 'serial';
+
         $selectColumns = [
             'ms.kode_supplier', 'ms.nama_supplier',
             DB::raw('COUNT(*) as jumlah_po'),
         ];
 
         if ($this->canViewHarga) {
-            $selectColumns = array_merge($selectColumns, [
+            $selectColumns = array_merge($selectColumns, $applyNet ? [
+                DB::raw('GREATEST(COALESCE(SUM(dpo.subtotal), 0) - COALESCE(MAX(pret.ret_money), 0), 0) as total_subtotal'),
+                DB::raw('GREATEST(COALESCE(SUM(dpo.total_diskon_header), 0) - COALESCE(MAX(pret.ret_disc), 0), 0) as total_diskon'),
+                DB::raw('GREATEST(COALESCE(SUM(dpo.grand_total), 0) - COALESCE(MAX(pret.ret_money), 0), 0) as total_grand_total'),
+            ] : [
                 DB::raw('COALESCE(SUM(dpo.subtotal), 0) as total_subtotal'),
                 DB::raw('COALESCE(SUM(dpo.total_diskon_header), 0) as total_diskon'),
                 DB::raw('COALESCE(SUM(dpo.grand_total), 0) as total_grand_total'),
@@ -55,8 +65,19 @@ class PurchasePerSupplierExport implements FromQuery, WithHeadings, WithMapping,
 
         $query = DB::query()
             ->fromSub(\App\Services\PurchaseReportSource::documents($this->dateFrom, $this->dateTo, $this->source), 'dpo')
-            ->join('master_supplier as ms', 'ms.id', '=', 'dpo.supplier_id')
-            ->select($selectColumns)
+            ->join('master_supplier as ms', 'ms.id', '=', 'dpo.supplier_id');
+
+        if ($applyNet) {
+            $query->leftJoinSub(
+                ReportHelperService::purchaseReturnMoneyBySupplierSubquery($this->dateFrom, $this->dateTo, [
+                    'warehouse_id' => $this->warehouseId,
+                ]),
+                'pret',
+                fn ($join) => $join->on('pret.supplier_id', '=', 'ms.id')
+            );
+        }
+
+        $query->select($selectColumns)
             ->groupBy('ms.id', 'ms.kode_supplier', 'ms.nama_supplier');
 
         if ($this->warehouseId) {

@@ -1,0 +1,49 @@
+---
+description: POSIP frontend — forms, routes, canAddLines, UX patterns
+globs: syilex-frontend/**
+alwaysApply: false
+---
+
+# POSIP frontend flows
+
+## Form validation
+
+- Pattern: fungsi `validate()` + object `errors` + `useNotification`
+- **Bukan** vee-validate / zod
+- Contoh: `PurchaseOrderFormPage.vue`, `SalesFormPage.vue`
+
+## Header gate (tambah baris)
+
+- Disable **Tambah** / `insertDetailAfter` / scan sampai header wajib terisi (`canAddLines`)
+- Mirror Retur Penjualan: party + warehouse (bukan tanggal default)
+- PBS: product + warehouse + supplier sebelum Tambah Baris SN
+- Soft `notify.selectFirst` tetap boleh sebagai defense
+
+## Route & menu
+
+- Route baru: `meta.permission` di `src/router/index.js`
+- Serial routes: `meta.requiresElektronik` bila perlu
+- Menu SSoT: `src/layout/AppMenu.vue` (PBS di grup Pembelian)
+
+## Form UX
+
+- `InputText`/`Textarea`: `shouldUppercase` (kecuali email/password/pin/status)
+- `kode_*`: `[A-Z0-9_]+`, max 20, **immutable** setelah create
+- Semua `Select`: prop `filter`
+- List master: `useMasterCrud` + `useConfirm` — jangan dialog state manual
+
+## POS
+
+- Ubah `PosKasirPage` hanya untuk bug / wave audit eksplisit (jangan refactor spekulatif)
+- Shortcut POS: F1 cari, F2 disc nota, F4 biaya, F9 hold, F12 bayar, Ctrl+/ help
+- Responsive Kasir (Wave R2): `<md` = toggle Katalog|Keranjang (Q2=C); aksi sekunder via Drawer **Lainnya** (Q3=B); `md+` dual-pane + tombol aksi inline; header mobile = overflow `Menu` (lock tetap terlihat)
+- PrimeVue: jangan `hidden md:*` langsung di `Tag`/`Button` — bungkus `<div class="hidden md:flex">` (display komponen menang)
+
+## Alur halaman dokumen (tipikal)
+
+1. Isi header wajib → `canAddLines` true  
+2. Tambah baris / drawer produk×unit  
+3. Serial: expand + `SerialUnitPicker`  
+4. Simpan draft → approve/lock sesuai status dokumen BE  
+
+Detail: `docs/ai/frontend.md`

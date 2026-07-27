@@ -48,7 +48,8 @@ const labelItems = computed(() =>
         const nomor = u.intake?.nomor_dokumen ?? ctx.nomor_dokumen ?? '';
         const tgl = u.intake?.tanggal ?? ctx.tanggal ?? null;
         const health = u.battery_health != null ? formatPercent(u.battery_health) : '';
-        const bat = [health, u.battery_condition].filter(Boolean).join(' ');
+        const cycle = u.battery_cycle_count != null ? `Cyc ${u.battery_cycle_count}` : '';
+        const bat = [health, cycle, u.battery_condition].filter(Boolean).join(' ');
         return {
             kode_produk: kode,
             nama_produk: nama,
@@ -56,6 +57,7 @@ const labelItems = computed(() =>
             serial_number: u.serial_number,
             spek: `Grade ${u.grade || '-'} · Bat ${bat || '-'}`,
             akun: `Akun ${u.account_status || '-'}`,
+            catatan: u.catatan || '',
             harga: u.harga_jual != null ? formatCurrency(u.harga_jual) : '',
             pbs: [nomor, tgl ? formatDate(tgl) : ''].filter(Boolean).join(' · ')
         };
@@ -226,9 +228,9 @@ function close() {
                 </fieldset>
 
                 <div>
-                    <label class="block text-xs text-surface-500 mb-1">Keterangan (opsional)</label>
-                    <InputText v-model="keterangan" class="w-full" placeholder="Contoh: Garansi 1 bln" />
-                </div>
+                    <label class="block text-xs text-surface-500 mb-1">Keterangan batch (opsional)</label>
+                    <InputText v-model="keterangan" class="w-full" placeholder="Contoh: Garansi 1 bln — berlaku semua label" />
+                    <p class="text-[11px] text-surface-400 mt-1">Catatan per unit dari data serial ikut tercetak otomatis. Field ini tambahan manual untuk seluruh cetakan.</p>                </div>
 
                 <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-3 text-sm">
                     <div>

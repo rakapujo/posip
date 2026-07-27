@@ -14,6 +14,8 @@ use App\Services\PurchaseOrderCalculationService;
 use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PurchaseOrderController extends BaseApiController
@@ -60,7 +62,7 @@ class PurchaseOrderController extends BaseApiController
             'details.*.product_id' => 'required|exists:master_produk,id',
             'details.*.unit_used' => 'required|string|max:30',
             'details.*.unit_konversi' => 'required|integer|min:1',
-            'details.*.qty_in_unit' => 'required|numeric|min:1',
+            'details.*.qty_in_unit' => 'required|integer|min:1',
             'details.*.harga_per_unit' => 'required|numeric|min:0',
 
             // Detail discounts (5 lines)
@@ -229,20 +231,26 @@ class PurchaseOrderController extends BaseApiController
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
-        $query = DocPurchaseOrder::select(['id', 'ulid', 'nomor_dokumen', 'tanggal_po', 'supplier_id'])
+        $query = DocPurchaseOrder::select(['id', 'ulid', 'nomor_dokumen', 'tanggal_po', 'supplier_id', 'warehouse_id'])
             ->approved()
             ->orderBy('tanggal_po', 'desc');
 
-        // Filter by supplier if provided
         if ($request->filled('supplier_id')) {
             $query->bySupplier($request->supplier_id);
         }
 
+        if ($request->filled('warehouse_id')) {
+            $query->byWarehouse($request->warehouse_id);
+        }
+
+        if ($request->filled('search')) {
+            $query->search($request->search);
+        }
+
         $items = $query->limit(100)->get();
 
-        // Make 'id' visible since it's in $hidden by default
         $items->each(function ($item) {
-            $item->makeVisible('id');
+            $item->makeVisible(['id', 'warehouse_id', 'supplier_id']);
         });
 
         return $this->success([
@@ -282,7 +290,8 @@ class PurchaseOrderController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), $e->getMessage());
         } catch (\Exception $e) {
-            return $this->error('Gagal membuat purchase order: ' . $e->getMessage(), 500);
+            Log::error('Gagal membuat purchase order', ['exception' => $e]);
+            return $this->error('Gagal membuat purchase order.', 500);
         }
     }
 
@@ -395,7 +404,8 @@ class PurchaseOrderController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), $e->getMessage());
         } catch (\Exception $e) {
-            return $this->error('Gagal memperbarui purchase order: ' . $e->getMessage(), 500);
+            Log::error('Gagal memperbarui purchase order', ['exception' => $e]);
+            return $this->error('Gagal memperbarui purchase order.', 500);
         }
     }
 
@@ -414,11 +424,19 @@ class PurchaseOrderController extends BaseApiController
             return $this->notFound('Purchase order tidak ditemukan.');
         }
 
-        if (!$po->isDraft()) {
-            return $this->error('Hanya PO dengan status draft yang dapat dihapus.', 422);
+        try {
+            DB::transaction(function () use ($po) {
+                $po = DocPurchaseOrder::whereKey($po->id)->lockForUpdate()->firstOrFail();
+                if (! $po->isDraft()) {
+                    throw ValidationException::withMessages([
+                        'status' => ['Hanya PO dengan status draft yang dapat dihapus.'],
+                    ]);
+                }
+                $po->delete();
+            });
+        } catch (ValidationException $e) {
+            return $this->validationError($e->errors(), $e->getMessage());
         }
-
-        $po->delete();
 
         return $this->success(null, 'Purchase order berhasil dihapus.');
     }
@@ -451,7 +469,8 @@ class PurchaseOrderController extends BaseApiController
         } catch (ValidationException $e) {
             return $this->validationError($e->errors(), 'Validasi gagal');
         } catch (\Exception $e) {
-            return $this->error('Gagal menyetujui purchase order: ' . $e->getMessage(), 500);
+            Log::error('Gagal menyetujui purchase order', ['exception' => $e]);
+            return $this->error('Gagal menyetujui purchase order.', 500);
         }
     }
 
@@ -460,7 +479,7 @@ class PurchaseOrderController extends BaseApiController
      */
     public function getProducts(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('po.create')) {
+        if (! auth()->user()->canAny(['po.create', 'po.edit'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -485,9 +504,11 @@ class PurchaseOrderController extends BaseApiController
         }
 
         $products = $query->limit(20)->get();
+        $canViewHpp = auth()->user()->can('stok.view_hpp') || auth()->user()->can('po.view_harga');
+        $canViewHarga = auth()->user()->can('po.view_harga');
 
         // Transform to include units array (filter duplicates)
-        $items = $products->map(function ($product) {
+        $items = $products->map(function ($product) use ($canViewHpp, $canViewHarga) {
             $units = [];
             $seenUnits = [];
 
@@ -499,7 +520,7 @@ class PurchaseOrderController extends BaseApiController
                     $units[] = [
                         'unit' => $unit,
                         'konversi' => $product->{"konversi_{$i}"},
-                        'harga_jual' => $product->{"harga_{$i}"},
+                        'harga_jual' => $canViewHarga ? $product->{"harga_{$i}"} : null,
                     ];
                 }
             }
@@ -510,7 +531,7 @@ class PurchaseOrderController extends BaseApiController
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'avg_cost' => $product->avg_cost,
+                'avg_cost' => $canViewHpp ? $product->avg_cost : null,
                 'units' => $units,
             ];
         });
@@ -525,7 +546,7 @@ class PurchaseOrderController extends BaseApiController
      */
     public function getLastPrice(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('po.create')) {
+        if (! auth()->user()->canAny(['po.create', 'po.edit'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -547,12 +568,14 @@ class PurchaseOrderController extends BaseApiController
             ]);
         }
 
+        $canViewHarga = auth()->user()->can('po.view_harga');
+
         return $this->success([
             'last_price' => [
                 'tanggal' => $lastPrice->tanggal,
                 'unit_used' => $lastPrice->unit_used,
-                'harga_per_unit' => $lastPrice->harga_per_unit,
-                'harga_per_base' => $lastPrice->harga_per_base,
+                'harga_per_unit' => $canViewHarga ? $lastPrice->harga_per_unit : null,
+                'harga_per_base' => $canViewHarga ? $lastPrice->harga_per_base : null,
                 'qty_in_unit' => $lastPrice->qty_in_unit,
             ],
         ]);
@@ -591,7 +614,7 @@ class PurchaseOrderController extends BaseApiController
      */
     public function calculate(Request $request): JsonResponse
     {
-        if (!auth()->user()->can('po.create')) {
+        if (! auth()->user()->canAny(['po.create', 'po.edit'])) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
 
@@ -604,7 +627,8 @@ class PurchaseOrderController extends BaseApiController
                 'calculation' => $calculated,
             ]);
         } catch (\Exception $e) {
-            return $this->error('Gagal menghitung: ' . $e->getMessage(), 500);
+            Log::error('Gagal menghitung purchase order', ['exception' => $e]);
+            return $this->error('Gagal menghitung.', 500);
         }
     }
 
@@ -613,6 +637,10 @@ class PurchaseOrderController extends BaseApiController
      */
     public function getTaxSettings(): JsonResponse
     {
+        if (! auth()->user()->canAny(['po.create', 'po.edit'])) {
+            return $this->forbidden('Anda tidak memiliki akses.');
+        }
+
         return $this->success([
             'tax' => SettingService::getPurchaseTaxSettings(),
         ]);

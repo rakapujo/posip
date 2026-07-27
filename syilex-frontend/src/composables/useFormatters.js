@@ -31,14 +31,17 @@ export function useFormatters() {
         if (value === null || value === undefined) return '-';
 
         const settings = currencySettings.value;
-        const decimalPlaces = options.decimalPlaces ?? settings.decimalPlaces;
+        const decimalPlaces = Number(options.decimalPlaces ?? settings.decimalPlaces ?? 0);
 
-        // Format number with separators
-        const parts = Number(value).toFixed(decimalPlaces).split('.');
-        const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, settings.thousandSeparator);
-        const decimalPart = parts[1];
+        // Format number with separators (toFixed always uses '.' as decimal)
+        const fixed = Number(value).toFixed(Math.max(0, decimalPlaces));
+        const [integerRaw, decimalPart = ''] = fixed.split('.');
+        const integerPart = integerRaw.replace(/\B(?=(\d{3})+(?!\d))/g, settings.thousandSeparator);
 
-        let formatted = decimalPart ? `${integerPart}${settings.decimalSeparator}${decimalPart}` : integerPart;
+        let formatted =
+            decimalPlaces > 0
+                ? `${integerPart}${settings.decimalSeparator}${decimalPart}`
+                : integerPart;
 
         // Add symbol
         if (settings.position === 'before') {

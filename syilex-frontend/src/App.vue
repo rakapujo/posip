@@ -20,7 +20,7 @@ function hideHtmlPreloader() {
     if (style) setTimeout(() => style.remove(), 300);
 }
 
-onMounted(async () => {
+onMounted(() => {
     // Apply user theme preferences from localStorage cache (fast path)
     const cachedPrefs = loadPreferencesFromCache();
     if (cachedPrefs) {
@@ -31,17 +31,14 @@ onMounted(async () => {
         }
     }
 
-    // Fetch public settings (await so preloader stays until ready)
-    // Timeout fallback: 5 seconds max wait — prevents infinite hang if API is down
-    try {
-        await Promise.race([settingsStore.fetchPublicSettings(), new Promise((resolve) => setTimeout(resolve, 5000))]);
-    } catch {
-        // Settings fetch failed — continue with cached/default values
-    }
-
-    // Mark app ready + fade out HTML preloader
+    // Unblock LCP: render immediately from cached/default public settings
     appReady.value = true;
     hideHtmlPreloader();
+
+    // Refresh public settings in background (store already hydrated from localStorage)
+    settingsStore.fetchPublicSettings().catch(() => {
+        // Keep cached/default values
+    });
 });
 </script>
 

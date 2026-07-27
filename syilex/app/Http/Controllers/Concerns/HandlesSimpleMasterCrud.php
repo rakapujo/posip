@@ -135,7 +135,7 @@ trait HandlesSimpleMasterCrud
         ]);
 
         if (! empty($config['has_customer_discount'])) {
-            if ($response = $this->validateCustomerDiscountFields($request, $validated)) {
+            if ($response = $this->validateCustomerDiscountFields($request, $validated, null)) {
                 return $response;
             }
         }
@@ -216,7 +216,7 @@ trait HandlesSimpleMasterCrud
         $validated = $request->validate($rules);
 
         if (! empty($config['has_customer_discount'])) {
-            if ($response = $this->validateCustomerDiscountFields($request, $validated)) {
+            if ($response = $this->validateCustomerDiscountFields($request, $validated, $model)) {
                 return $response;
             }
         }
@@ -364,16 +364,28 @@ trait HandlesSimpleMasterCrud
         }
     }
 
-    protected function validateCustomerDiscountFields(Request $request, array $validated): ?JsonResponse
+    protected function validateCustomerDiscountFields(Request $request, array $validated, ?Model $existing = null): ?JsonResponse
     {
-        if (($request->filled('diskon_tipe') && $request->diskon_tipe !== 'none') || $request->filled('diskon_nilai')) {
-            if (! auth()->user()->can('customer-discount.manage')) {
-                return $this->error('Tidak memiliki izin mengubah diskon customer', 403);
-            }
+        if (! $request->hasAny(['diskon_tipe', 'diskon_nilai'])) {
+            return null;
+        }
 
-            if (($validated['diskon_tipe'] ?? 'none') === 'percent' && ($validated['diskon_nilai'] ?? 0) > 100) {
-                return $this->error('Diskon persen maksimal 100%', 422);
-            }
+        $oldTipe = $existing?->diskon_tipe ?? 'none';
+        $oldNilai = (float) ($existing?->diskon_nilai ?? 0);
+        $newTipe = $validated['diskon_tipe'] ?? $oldTipe;
+        $newNilai = array_key_exists('diskon_nilai', $validated) ? (float) $validated['diskon_nilai'] : $oldNilai;
+
+        // FE often always sends none/0 — only gate when values actually change
+        if ($newTipe === $oldTipe && $newNilai === $oldNilai) {
+            return null;
+        }
+
+        if (! auth()->user()->can('customer-discount.manage')) {
+            return $this->error('Tidak memiliki izin mengubah diskon customer', 403);
+        }
+
+        if ($newTipe === 'percent' && $newNilai > 100) {
+            return $this->error('Diskon persen maksimal 100%', 422);
         }
 
         return null;

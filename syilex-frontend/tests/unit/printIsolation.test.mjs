@@ -12,18 +12,13 @@ const srcRoot = join(__dirname, '../../src');
 const FORBIDDEN_IMPORTS = [
     '@/composables/print/usePrintAdapter',
     '@/composables/print/usePrintTransport',
+    '@/composables/print/fittedThermalPdf',
     'composables/print/usePrintAdapter',
-    'composables/print/usePrintTransport'
+    'composables/print/usePrintTransport',
+    'composables/print/fittedThermalPdf'
 ];
 
-const PROTECTED_FILES = [
-    'composables/useBarcodePrint.js',
-    'composables/useSerialLabelPrint.js',
-    'composables/useExportPdf.js',
-    'views/master/PrintBarcodePage.vue',
-    'components/common/SerialLabelPrintDialog.vue',
-    'views/public/StrukOnlinePage.vue'
-];
+const PROTECTED_FILES = ['composables/useBarcodePrint.js', 'composables/useSerialLabelPrint.js', 'composables/useExportPdf.js', 'views/master/PrintBarcodePage.vue', 'components/common/SerialLabelPrintDialog.vue', 'views/public/StrukOnlinePage.vue'];
 
 const runner = new TestRunner('printIsolation');
 
