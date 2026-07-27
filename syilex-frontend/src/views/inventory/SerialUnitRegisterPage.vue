@@ -21,7 +21,8 @@ const canViewSales = computed(() => authStore.can('sales.view'));
 const { exporting, exportListPdf } = useExportPdf();
 const exportingExcel = ref(false);
 
-// Cetak label barcode
+// Cetak label barcode — checkbox eksplisit (bukan Column selectionMode):
+// di production build + CDN, selection column PrimeVue sering tidak ter-render.
 const selectedUnits = ref([]);
 const printDialogVisible = ref(false);
 const printUnits = ref([]);
@@ -32,6 +33,32 @@ const items = ref([]);
 const loading = ref(false);
 const totalRecords = ref(0);
 const summary = ref({ total: 0, tersedia: 0, terjual: 0 });
+
+function isUnitSelected(unit) {
+    return selectedUnits.value.some((u) => u.ulid === unit.ulid);
+}
+
+function toggleUnit(unit, checked) {
+    if (checked) {
+        if (!isUnitSelected(unit)) selectedUnits.value = [...selectedUnits.value, unit];
+        return;
+    }
+    selectedUnits.value = selectedUnits.value.filter((u) => u.ulid !== unit.ulid);
+}
+
+const allPageSelected = computed(() => items.value.length > 0 && items.value.every((u) => isUnitSelected(u)));
+const somePageSelected = computed(() => items.value.some((u) => isUnitSelected(u)));
+
+function toggleSelectAllPage(checked) {
+    if (checked) {
+        const map = new Map(selectedUnits.value.map((u) => [u.ulid, u]));
+        for (const u of items.value) map.set(u.ulid, u);
+        selectedUnits.value = [...map.values()];
+        return;
+    }
+    const pageIds = new Set(items.value.map((u) => u.ulid));
+    selectedUnits.value = selectedUnits.value.filter((u) => !pageIds.has(u.ulid));
+}
 
 // Filters
 const searchQuery = ref('');
@@ -153,8 +180,20 @@ function openIntake(intake) {
     router.push({ name: 'inventory-serial-intake', query: { detail: intake.ulid } });
 }
 
+function canOpenSale(sale) {
+    if (!sale?.ulid) return false;
+    if (sale.source === 'pos') return true;
+    if (sale.source === 'manual') return canViewSales.value;
+    return false;
+}
+
 function openSale(sale) {
-    if (!sale?.ulid || !canViewSales.value) return;
+    if (!canOpenSale(sale)) return;
+    // ponytail: POS → public struk; manual → BO list + ?detail= (SalesPage deep-link)
+    if (sale.source === 'pos') {
+        router.push({ name: 'struk-online', params: { ulid: sale.ulid } });
+        return;
+    }
     router.push({ name: 'penjualan-sales', query: { detail: sale.ulid } });
 }
 
@@ -352,12 +391,11 @@ onMounted(async () => {
             :sortOrder="lazyParams.sortOrder"
             @page="onPage"
             @sort="onSort"
-            v-model:selection="selectedUnits"
             removableSort
             dataKey="ulid"
             stripedRows
             showGridlines
-            scrollable
+            tableStyle="min-width: 75rem"
         >
             <template #header>
                 <DataTableHeader v-model="searchQuery" title="Register Unit Serial" placeholder="Cari kode internal / nomor seri..." @search="doSearch" @clear="clearSearch">
@@ -377,7 +415,20 @@ onMounted(async () => {
                 </div>
             </template>
 
-            <Column selectionMode="multiple" headerStyle="width: 3rem" />
+            <Column headerStyle="width: 3rem" bodyStyle="width: 3rem">
+                <template #header>
+                    <Checkbox
+                        :modelValue="allPageSelected"
+                        :indeterminate="somePageSelected && !allPageSelected"
+                        binary
+                        aria-label="Pilih semua di halaman"
+                        @update:modelValue="toggleSelectAllPage"
+                    />
+                </template>
+                <template #body="{ data }">
+                    <Checkbox :modelValue="isUnitSelected(data)" binary :aria-label="`Pilih ${data.kode_internal || data.serial_number}`" @update:modelValue="(v) => toggleUnit(data, v)" />
+                </template>
+            </Column>
 
             <Column field="kode_internal" header="Kode Internal" sortable style="min-width: 150px">
                 <template #body="{ data }"
@@ -471,11 +522,11 @@ onMounted(async () => {
             <Column header="Nota Jual" style="min-width: 150px">
                 <template #body="{ data }">
                     <a
-                        v-if="data.sale?.ulid && canViewSales"
+                        v-if="canOpenSale(data.sale)"
                         href="#"
                         class="font-mono text-primary hover:underline"
                         @click.prevent="openSale(data.sale)"
-                        v-tooltip.top="'Buka nota penjualan'"
+                        v-tooltip.top="data.sale.source === 'pos' ? 'Buka struk' : 'Buka penjualan'"
                     >
                         {{ data.sale.nomor_dokumen }}
                     </a>

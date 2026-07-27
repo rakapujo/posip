@@ -69,7 +69,7 @@ class SerialUnitController extends BaseApiController
             'product:id,ulid,kode_produk,nama_produk',
             'warehouse:id,ulid,kode_warehouse,nama_warehouse',
             'intake:id,ulid,nomor_dokumen,tanggal',
-            'sale:id,ulid,nomor_dokumen',
+            'sale:id,ulid,nomor_dokumen,source',
         ]);
 
         $sortField = $request->input('sort_field', 'created_at');

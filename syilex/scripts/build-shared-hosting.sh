@@ -31,12 +31,10 @@ mkdir -p "$INSTALLER_DIR"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/posip"
 
-echo "[1/7] Sync frontend → public/ (npm build if needed)..."
+echo "[1/7] Sync frontend → public/ (always rebuild)..."
 if [ -d "$FRONTEND_DIR" ]; then
-    if [ ! -f "$FRONTEND_DIR/dist/index.html" ]; then
-        echo "  Building frontend..."
-        (cd "$FRONTEND_DIR" && npm run build)
-    fi
+    echo "  Building frontend..."
+    (cd "$FRONTEND_DIR" && npm run build)
     rm -rf "$PROJECT_DIR/public/assets"
     cp -r "$FRONTEND_DIR/dist/"* "$PROJECT_DIR/public/"
     echo "  Frontend deployed to public/"

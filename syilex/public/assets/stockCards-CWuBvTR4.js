@@ -1,0 +1,1 @@
+import{e}from"./index-DiCCG0Fd.js";const s={getAll:(t={})=>e.get("/inventory/stock-cards",{params:t}),getSummary:(t={})=>e.get("/inventory/stock-cards/summary",{params:t}),getHppSummary:(t={})=>e.get("/inventory/stock-cards/hpp-summary",{params:t}),export:(t={})=>e.get("/inventory/stock-cards/export",{params:t,responseType:"blob"})};export{s};

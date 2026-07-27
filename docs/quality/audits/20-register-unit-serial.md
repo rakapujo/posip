@@ -1,6 +1,6 @@
 # Audit menu — 20 Inventory → Register Unit Serial
 
-> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24)  
+> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; nota-jual by `source` + checkbox eksplisit 2026-07-28)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/SerialUnitRegisterPage.vue` · `api/modules/serialUnits.js` · `components/common/SerialLabelPrintDialog.vue` · `SerialUnitPicker.vue` (konsumen `available`)  
 > - BE: `syilex/app/Http/Controllers/Api/V1/SerialUnitController.php` · `Models/SerialUnit.php` · `Models/SerialUnitMovement.php` · `Exports/SerialUnitExport.php`  
@@ -50,7 +50,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 | ID | Sev | Temuan | Bukti | Usulan |
 |----|-----|--------|-------|--------|
 | SU-B1 | P0 | **PDF + Cetak Label “semua filter” terpotong max 100 unit.** FE kirim `per_page: 999999`; `getPerPage` hard-cap **100**. Export Excel OK (FromQuery). User dengan >100 unit dapat PDF/label **tidak lengkap tanpa peringatan**. | `SerialUnitRegisterPage.vue` 163, 237; `BaseApiController` 85–89 | Dedicated bulk endpoint / stream; atau paginate-loop di FE sampai `last_page`; atau toast “hanya N dari total”. |
-| SU-B2 | P1 | **Tidak ada detail unit / jejak movement / link penjualan.** Register hanya list. `sale_id` di `$hidden`, `with()` tanpa `sale`. Unit `terjual` hanya `sold_at` — tidak bisa buka nota. Ledger `serial_unit_movements` (transfer/adj/retur/HPP/sales) **tidak di-expose** ke FE sama sekali. Domain §4.7 klaim “audit unit-level” tapi UI putus setelah asal PBS. | Controller 68–72; Model 86–95; Grep FE `SerialUnitMovement` = 0 | `GET /serial-units/{ulid}` + movements + deep-link sales/PBS; atau DetailDialog di list. |
+| SU-B2 | P1 | **Detail unit / movements masih belum; link Nota Jual sudah ada tapi routing lama salah.** Link sempat selalu ke `penjualan-sales` (ManualSales only) + `?detail=` diabaikan SalesPage. **Patched (2026-07-28):** API expose `sale.source`; FE branch POS→`struk-online`, manual→BO+deep-link; SalesPage baca `query.detail`. Masih open: `GET /serial-units/{ulid}` + movements. | Controller `sale:…,source`; FE `openSale` / `canOpenSale`; SalesPage onMounted | Movements + detail unit bila dibutuhkan audit penuh. |
 | SU-B3 | P1 | **PBS approve tidak menulis `SerialUnitMovement`.** Migration komentar menyebut `SERIAL_INTAKE`; `ApproveSerialIntakeAction` hanya `pending→tersedia`. Jejak masuk hanya relasi `intake_id` (bila masih ada). Opname hilang lewat path adj (ada movement); intake birth = blind spot ledger. | `ApproveSerialIntakeAction` ~94–95; migration movements 24; no `SerialUnitMovement::record` di `Actions/SerialIntake` | Record `SERIAL_INTAKE`/`IN` saat approve (atau dokumentasikan sengaja + andalkan `intake` saja). |
 | SU-B4 | P1 | **Summary cards menyesatkan saat filter status.** By design: summary **mengabaikan** `status` (test `status_filter_narrows_list_but_summary_stays_global`). FE menampilkan 3 kartu di atas tabel tanpa disclaimer → filter “Rusak” tetap kartu “Tersedia/Terjual” penuh. Summary juga **tidak** menghitung `pending/rusak/hilang/retur` (hanya total/tersedia/terjual) → unit rusak “hilang” dari KPI. | Controller 56–66; FE 303–317; Test 99–111 | Label “ringkasan (abaikan filter status)”; tambah bucket status lain; atau summary mirror semua filter termasuk status. |
 | SU-B5 | P2 | **Unit `pending` (draft PBS) muncul di Register** sebelum stok commit. Filter status punya Pending. Operator bisa mengira stok fisik sudah ada; invariant stok hanya hitung `tersedia`. | Model STATUS_PENDING; FE statusOptions 58; VerifyDataInvariants 289–291 | Default exclude pending; atau badge “Draft PBS”; filter default `tersedia`. |
@@ -137,17 +137,18 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 | Lihat Harga Jual | Selalu (diizinkan) | — |
 | Export Excel | Ya | view + strip cost |
 | Export PDF | Ya (client, cap 100) | same |
-| Cetak Label | Ya (selection atau all-filter, cap 100) | same |
+| Cetak Label | Ya (checkbox eksplisit per baris / select-all halaman, atau all-filter) | same |
 | Buka asal PBS | Ya (link) | butuh `serial-intake.view` di target |
+| Buka Nota Jual | Ya — `source=manual` → Penjualan BO `?detail=`; `source=pos` → `struk-online` | manual: `sales.view`; POS: public receipt |
 | Ubah status / edit unit | **Tidak** | — |
-| Detail movement / nota jual | **Tidak** | — |
+| Detail movement ledger | **Tidak** | — |
 
 ---
 
 ## Antrian patch (usulan prioritas)
 
 1. **P0** SU-B1/U1/C1 — PDF/print tidak silent-truncate (loop pages atau endpoint export khusus label/PDF).  
-2. **P1** SU-B2/X1 — detail unit + movements + link sales.  
+2. **P1** SU-B2 sisa — detail unit + movements (link nota jual by `source` sudah patched).  
 3. **P1** SU-S1 — sort cost gated.  
 4. **P1** SU-B3/B4 — movement intake + honesty summary UI.  
 5. **P2** sisa C/U/D + tes gap SU-C6.
@@ -158,7 +159,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 
 | File | Yang diuji |
 |------|------------|
-| `SerialUnitRegisterTest` | list+summary+intake, status/product/warehouse/intake/search/KI, pagination, sort modal, rusak filter, permission, cost hide/show index+available, export auth+download |
+| `SerialUnitRegisterTest` | list+summary+intake, **sale.source pos/manual**, status/product/warehouse/intake/search/KI, pagination, sort modal, rusak filter, permission, cost hide/show index+available, export auth+download |
 | `SerialUnitExportTest` | Excel fake filters, map kolom, hide cost headings |
 | `ElektronikModuleTest` | OFF blocks `/serial-units` |
 | `SerialSalesCheckoutTest` | lookup KI/SN/ambiguous + available pos.access |

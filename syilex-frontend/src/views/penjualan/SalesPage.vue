@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
 import { salesApi, warehousesApi, customersApi } from '@/api';
 import { useTransactionList } from '@/composables/useTransactionList';
 import { useFormatters } from '@/composables/useFormatters';
@@ -15,6 +16,7 @@ import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import RowActionButtons from '@/components/common/RowActionButtons.vue';
 
 const authStore = useAuthStore();
+const route = useRoute();
 const confirm = useConfirm();
 const notify = useNotification();
 const { formatCurrency, formatQty, formatDateTime, getPrimeDateFormatShort, toDateString } = useFormatters();
@@ -160,6 +162,10 @@ async function exportDocPdf(item) {
 onMounted(async () => {
     await Promise.all([loadCustomers(), loadWarehouses()]);
     await loadData();
+    // Auto-open detail (mis. dari Register Unit Serial Nota Jual)
+    if (route.query.detail) {
+        viewDetail({ ulid: route.query.detail });
+    }
 });
 
 function canVoidItem(item) {

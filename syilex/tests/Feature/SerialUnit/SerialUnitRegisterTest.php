@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\SerialUnit;
 
+use App\Models\MasterCustomer;
 use App\Models\MasterProduk;
 use App\Models\MasterSupplier;
 use App\Models\MasterWarehouse;
+use App\Models\DocSales;
 use App\Models\SerialUnit;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -95,6 +97,61 @@ class SerialUnitRegisterTest extends TestCase
         $this->assertNotNull($res->json('data.items.0.product.kode_produk'));
         $this->assertNotNull($res->json('data.items.0.intake.nomor_dokumen'));
     }
+
+    #[Test]
+    public function register_includes_sale_source_for_sold_units(): void
+    {
+        $this->approvedIntakeWithUnits([
+            ['serial_number' => 'SN-POS', 'harga_modal' => 10000000],
+            ['serial_number' => 'SN-BO', 'harga_modal' => 20000000],
+        ]);
+
+        $customer = MasterCustomer::create([
+            'kode_customer' => 'C-REG-1',
+            'nama' => 'Walk-in',
+            'telepon' => '0800',
+            'tempo_default' => 0,
+            'jenis' => 'walk_in',
+            'status' => 'active',
+        ]);
+
+        $posSale = DocSales::create([
+            'nomor_dokumen' => 'INV-POS-0001',
+            'source' => 'pos',
+            'tanggal' => now(),
+            'warehouse_id' => $this->wh->id,
+            'customer_id' => $customer->id,
+            'status' => 'completed',
+        ]);
+        $manualSale = DocSales::create([
+            'nomor_dokumen' => 'SOM-BO-0001',
+            'source' => 'manual',
+            'tanggal' => now(),
+            'warehouse_id' => $this->wh->id,
+            'customer_id' => $customer->id,
+            'status' => 'completed',
+        ]);
+
+        SerialUnit::where('serial_number', 'SN-POS')->update([
+            'status' => 'terjual',
+            'sale_id' => $posSale->id,
+            'sold_at' => now(),
+        ]);
+        SerialUnit::where('serial_number', 'SN-BO')->update([
+            'status' => 'terjual',
+            'sale_id' => $manualSale->id,
+            'sold_at' => now(),
+        ]);
+
+        $items = collect($this->getJson('/api/v1/serial-units?status=terjual')->assertOk()->json('data.items'));
+        $bySn = $items->keyBy('serial_number');
+
+        $this->assertSame('pos', $bySn['SN-POS']['sale']['source']);
+        $this->assertSame('INV-POS-0001', $bySn['SN-POS']['sale']['nomor_dokumen']);
+        $this->assertSame('manual', $bySn['SN-BO']['sale']['source']);
+        $this->assertSame('SOM-BO-0001', $bySn['SN-BO']['sale']['nomor_dokumen']);
+    }
+
     #[Test]
     public function status_filter_narrows_list_but_summary_stays_global()
     {

@@ -25,15 +25,13 @@ if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
 New-Item -ItemType Directory -Force -Path $PosipDir | Out-Null
 
 Write-Host '[1/7] Sync frontend to public/...'
-$distIndex = Join-Path $FrontendDir 'dist\index.html'
 if (Test-Path $FrontendDir) {
-    if (-not (Test-Path $distIndex)) {
-        Write-Host '  npm run build...'
-        Push-Location $FrontendDir
-        npm run build
-        if ($LASTEXITCODE -ne 0) { throw 'npm run build failed' }
-        Pop-Location
-    }
+    # Always rebuild so zip never ships a stale dist/ (e.g. missing new Vue sections).
+    Write-Host '  npm run build...'
+    Push-Location $FrontendDir
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw 'npm run build failed' }
+    Pop-Location
     $publicDir = Join-Path $ProjectDir 'public'
     $assetsDir = Join-Path $publicDir 'assets'
     if (Test-Path $assetsDir) { Remove-Item -Recurse -Force $assetsDir }
