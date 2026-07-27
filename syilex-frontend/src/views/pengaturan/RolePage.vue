@@ -138,7 +138,7 @@ async function loadRoles() {
 
 /** @returns {Promise<boolean>} */
 async function loadPermissions() {
-    if (permissionGroups.value.length > 0) return true;
+    // Always refetch — catalog can grow after permissions:ensure without remounting SPA
     loadingPermissions.value = true;
     try {
         const response = await rolesApi.getPermissions();

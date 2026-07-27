@@ -21,7 +21,10 @@ export function useReceiptPdf(options = {}) {
      * Get store info (from settings store or override)
      * storeOverride can be an object or a function returning an object (for lazy evaluation)
      */
-    const getStoreInfo = () => {
+    const getStoreInfo = (pdfOptions = {}) => {
+        if (pdfOptions.store) {
+            return pdfOptions.store;
+        }
         if (options.storeOverride) {
             return typeof options.storeOverride === 'function' ? options.storeOverride() : options.storeOverride;
         }
@@ -87,7 +90,7 @@ export function useReceiptPdf(options = {}) {
      */
     const buildReceiptPdf = (data, doc, pdfOptions = {}) => {
         const { receiptStatus = null, returPolicy = null } = pdfOptions;
-        const storeInfo = getStoreInfo();
+        const storeInfo = getStoreInfo(pdfOptions);
 
         const pageWidth = 80;
         const margin = 5;
@@ -351,7 +354,7 @@ export function useReceiptPdf(options = {}) {
 
         // ─── Footer ───
         y += 2;
-        const footerText = getStoreInfo().receiptFooter || 'Terima Kasih!';
+        const footerText = storeInfo.receiptFooter || 'Terima Kasih!';
         // Multi-line support: split on \n or \r\n
         for (const line of String(footerText).split(/\r?\n/)) {
             if (line.trim()) center(line.trim(), 8);

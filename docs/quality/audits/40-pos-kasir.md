@@ -217,3 +217,8 @@ Enforced di BE: allow-list (jika non-empty), `durasi_retur` (search previous), w
 - `syilex/app/Http/Middleware/IdempotencyKey.php`
 - `syilex/routes/api.php` ~641–676
 - FE: `syilex-frontend/src/api/modules/pos.js`, `composables/usePosCart.js`, `views/pos/PosKasirPage.vue`
+
+## Branding + katalog (2026-07-28)
+
+- Serial di grid katalog: harga master ≤ 0 → label **Pilih SN** (bukan dialog scan).
+- Header/footer dokumen POS dari `storeForPrint` (terminal override) — lihat [71-terminal-store-branding.md](71-terminal-store-branding.md). Login/Topbar tetap global.

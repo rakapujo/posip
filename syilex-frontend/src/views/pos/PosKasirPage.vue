@@ -16,6 +16,7 @@ import { useReceiptEscPos } from '@/composables/useReceiptEscPos';
 import { useConfirm } from 'primevue/useconfirm';
 import { useLayout } from '@/layout/composables/layout';
 import ShiftReportDialog from '@/components/pos/ShiftReportDialog.vue';
+import { normalizeStoreInfo, resolveStoreBranding } from '@/composables/resolveStoreBranding';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -23,7 +24,18 @@ const settingsStore = useSettingsStore();
 const { toggleDarkMode, isDarkTheme } = useLayout();
 const confirm = useConfirm();
 const notify = useNotification();
-const { formatDiscLine, downloadReceiptPdf, printReceiptPdf, buildReturPolicyText, buildReceiptPdfBlob } = useReceiptPdf();
+
+// Terminal session (early) — for storeForPrint / printOpts / PDF override
+const terminalData = ref(null);
+const resolvedSessionStore = ref(null);
+const storeForPrint = computed(() => {
+    if (resolvedSessionStore.value) return resolvedSessionStore.value;
+    return resolveStoreBranding(terminalData.value, settingsStore.store);
+});
+
+const { formatDiscLine, downloadReceiptPdf, printReceiptPdf, buildReturPolicyText, buildReceiptPdfBlob } = useReceiptPdf({
+    storeOverride: () => storeForPrint.value
+});
 const printAdapter = usePrintAdapter();
 const escpos = useReceiptEscPos();
 
@@ -52,8 +64,8 @@ const printOpts = computed(() => ({
               durasi_retur: terminalData.value.durasi_retur
           }
         : null,
-    // Receipt footer text (from Global Settings → Toko → Footer Struk)
-    footer: settingsStore.store.receiptFooter || null
+    footer: storeForPrint.value.receiptFooter || null,
+    store: storeForPrint.value
 }));
 
 // ==================== FULLSCREEN ====================
@@ -123,7 +135,6 @@ const canAddCustomer = computed(() => authStore.can('customer.create'));
 
 // ==================== TERMINAL STATE ====================
 const terminalLoading = ref(true);
-const terminalData = ref(null);
 const taxSettings = ref(null);
 const negativeStockAllowed = ref(false);
 
@@ -240,6 +251,7 @@ async function loadTerminal() {
         const res = await posApi.getActiveTerminal();
         const data = res.data.data;
         terminalData.value = data.terminal;
+        resolvedSessionStore.value = data.store ? normalizeStoreInfo(data.store, settingsStore.store) : null;
         taxSettings.value = data.tax_settings;
         negativeStockAllowed.value = data.negative_stock_allowed;
 
@@ -663,6 +675,13 @@ const getBasePrice = (product) => {
     return product.harga_1 || 0;
 };
 
+/** Serial catalog: master harga often 0 (real price on unit) — avoid misleading Rp 0 */
+const catalogPriceLabel = (product) => {
+    const price = Number(getBasePrice(product)) || 0;
+    if (product.is_serial && price <= 0) return 'Pilih SN';
+    return `${formatCurrency(price)}/${getBaseUnit(product)}`;
+};
+
 const getProductUnitNames = (product) => {
     const names = [];
     const seen = new Set();
@@ -1029,7 +1048,7 @@ const openWhatsApp = () => {
 const sendWhatsApp = () => {
     if (!waPhone.value || !receiptData.value) return;
     const url = getReceiptUrl(receiptData.value.ulid);
-    const storeName = settingsStore.store.name || 'POSIP';
+    const storeName = storeForPrint.value.name || 'POSIP';
     const msg = `Terima kasih telah berbelanja di ${storeName}.\nBerikut struk belanja Anda:\n${url}`;
     const phone = waPhone.value.replace(/\D/g, '');
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
@@ -2031,7 +2050,7 @@ const clearAll = () => {
                                 <div class="font-medium text-sm truncate" :title="product.nama_produk">{{ product.nama_produk }}</div>
                                 <div class="text-xs text-surface-500 mt-1">{{ product.kode_produk }}</div>
                                 <div class="flex items-center justify-between gap-1 mt-2">
-                                    <span class="text-sm font-semibold text-primary truncate">{{ formatCurrency(getBasePrice(product)) }}/{{ getBaseUnit(product) }}</span>
+                                    <span class="text-sm font-semibold text-primary truncate">{{ catalogPriceLabel(product) }}</span>
                                     <span class="text-[10px] shrink-0 font-medium" :class="product.stok > 0 ? 'text-green-600' : 'text-red-500'">{{ formatQty(product.stok) }}</span>
                                 </div>
                                 <div v-if="getProductUnitNames(product).length > 1" class="text-[10px] text-surface-500 mt-1 truncate">
@@ -3273,10 +3292,10 @@ const clearAll = () => {
                 <div class="font-mono text-sm print-area text-surface-900 dark:text-surface-100">
                     <!-- Store Header -->
                     <div class="text-center mb-2">
-                        <div class="font-bold text-base">{{ settingsStore.store.name }}</div>
-                        <div v-if="settingsStore.store.address" class="text-xs">{{ settingsStore.store.address }}</div>
-                        <div v-if="settingsStore.store.phone" class="text-xs">Telp: {{ settingsStore.store.phone }}</div>
-                        <div v-if="settingsStore.store.npwp" class="text-xs">NPWP: {{ settingsStore.store.npwp }}</div>
+                        <div class="font-bold text-base">{{ storeForPrint.name }}</div>
+                        <div v-if="storeForPrint.address" class="text-xs">{{ storeForPrint.address }}</div>
+                        <div v-if="storeForPrint.phone" class="text-xs">Telp: {{ storeForPrint.phone }}</div>
+                        <div v-if="storeForPrint.npwp" class="text-xs">NPWP: {{ storeForPrint.npwp }}</div>
                     </div>
                     <hr class="border-dashed my-1" />
 
@@ -3361,7 +3380,7 @@ const clearAll = () => {
 
                     <!-- Footer (multi-line support) -->
                     <div class="text-center mt-2">
-                        <div v-for="(line, i) in (settingsStore.store.receiptFooter || 'Terima Kasih!').split('\n')" :key="'f' + i">{{ line }}</div>
+                        <div v-for="(line, i) in (storeForPrint.receiptFooter || 'Terima Kasih!').split('\n')" :key="'f' + i">{{ line }}</div>
                     </div>
 
                     <!-- Notes -->
@@ -3504,7 +3523,7 @@ const clearAll = () => {
             <div>
                 <label class="block text-sm font-medium mb-1">Preview Pesan</label>
                 <div class="p-3 bg-surface-50 dark:bg-surface-800 rounded-lg text-sm text-surface-600 dark:text-surface-300">
-                    Terima kasih telah berbelanja di {{ settingsStore.store.name }}.<br />
+                    Terima kasih telah berbelanja di {{ storeForPrint.name }}.<br />
                     Berikut struk belanja Anda:<br />
                     <span class="text-primary break-all">{{ receiptData ? getReceiptUrl(receiptData.ulid) : '' }}</span>
                 </div>
@@ -3728,7 +3747,7 @@ const clearAll = () => {
     </Dialog>
 
     <!-- Shift Report Dialog — editable mode saat belum close (uang fisik wajib di sini) -->
-    <ShiftReportDialog v-model:visible="shiftReportDialog" :data="shiftReportData" :loading="loadingShiftReport" :closable="false" :editable="!shiftClosed" v-model:saldoFisik="reconcileSaldoFisik" v-model:closingNotes="reconcileNotes">
+    <ShiftReportDialog v-model:visible="shiftReportDialog" :data="shiftReportData" :loading="loadingShiftReport" :closable="false" :editable="!shiftClosed" :store="storeForPrint" v-model:saldoFisik="reconcileSaldoFisik" v-model:closingNotes="reconcileNotes">
         <template #footer>
             <!-- Before closing: Tutup Shift button — disabled sampai uang fisik diisi -->
             <template v-if="!shiftClosed">

@@ -157,8 +157,8 @@ export function useReceiptEscPos() {
     }
 
     // ─── Store header ───
-    function _storeHeader(buf, cw, compact) {
-        const s = settingsStore.store;
+    function _storeHeader(buf, cw, compact, store = null) {
+        const s = store || settingsStore.store;
         buf.cmd(CMD.CENTER);
         if (compact) {
             buf.cmd(CMD.BOLD_ON)
@@ -186,12 +186,12 @@ export function useReceiptEscPos() {
     //  data = DocSales from API (same object used by useReceiptPdf)
     // ════════════════════════════════════════════════════════════
     function buildReceipt(data, opts = {}) {
-        const { charWidth: cw = 42, feedLines = 4, compact = false, returPolicy = null, footer = null, openDrawer = false } = opts;
+        const { charWidth: cw = 42, feedLines = 4, compact = false, returPolicy = null, footer = null, openDrawer = false, store = null } = opts;
         const buf = new Buf();
 
         // Init + Store header
         buf.cmd(CMD.INIT_FEED);
-        _storeHeader(buf, cw, compact);
+        _storeHeader(buf, cw, compact, store);
 
         // Transaction info
         buf.cmd(CMD.LEFT);
@@ -345,11 +345,11 @@ export function useReceiptEscPos() {
     //  salesData = original DocSales (for sales number reference)
     // ════════════════════════════════════════════════════════════
     function buildReturReceipt(returData, salesData, opts = {}) {
-        const { charWidth: cw = 42, feedLines = 4, compact = false } = opts;
+        const { charWidth: cw = 42, feedLines = 4, compact = false, store = null } = opts;
         const buf = new Buf();
 
         buf.cmd(CMD.INIT_FEED);
-        _storeHeader(buf, cw, compact);
+        _storeHeader(buf, cw, compact, store);
 
         // Title
         buf.cmd(CMD.CENTER).cmd(CMD.BOLD_ON).text('STRUK RETUR\n').cmd(CMD.BOLD_OFF).cmd(CMD.LEFT);
@@ -398,11 +398,11 @@ export function useReceiptEscPos() {
     //  params = { tipe, nominal, keterangan, terminal, kasir, date }
     // ════════════════════════════════════════════════════════════
     function buildCashReceipt(params, opts = {}) {
-        const { charWidth: cw = 42, feedLines = 4, compact = false } = opts;
+        const { charWidth: cw = 42, feedLines = 4, compact = false, store = null } = opts;
         const buf = new Buf();
 
         buf.cmd(CMD.INIT_FEED);
-        _storeHeader(buf, cw, compact);
+        _storeHeader(buf, cw, compact, store);
 
         // Title
         const titles = { kas_masuk: 'KAS MASUK', kas_keluar: 'KAS KELUAR', setor_awal: 'SETOR AWAL' };
@@ -438,7 +438,7 @@ export function useReceiptEscPos() {
     //  reportData = raw shift report API response
     // ════════════════════════════════════════════════════════════
     function buildShiftReport(reportData, opts = {}) {
-        const { charWidth: cw = 42, feedLines = 4, compact = false } = opts;
+        const { charWidth: cw = 42, feedLines = 4, compact = false, store = null } = opts;
         const buf = new Buf();
 
         const shift = reportData.shift || {};
@@ -450,7 +450,7 @@ export function useReceiptEscPos() {
         const ring = reportData.ringkasan || {};
 
         buf.cmd(CMD.INIT_FEED);
-        _storeHeader(buf, cw, compact);
+        _storeHeader(buf, cw, compact, store);
 
         // Title + ULID
         buf.cmd(CMD.CENTER).cmd(CMD.BOLD_ON).text('LAPORAN SHIFT\n').cmd(CMD.BOLD_OFF);

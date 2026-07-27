@@ -11,6 +11,7 @@ use App\Models\MasterPosTerminal;
 use App\Models\MasterWarehouse;
 use App\Models\User;
 use App\Services\ReportHelperService;
+use App\Services\SettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
@@ -29,7 +30,7 @@ class SalesReportController extends BaseApiController
         }
 
         $query = DocSales::with([
-            'terminal:id,ulid,kode_terminal,nama_terminal',
+            'terminal:id,ulid,kode_terminal,nama_terminal,store_name,store_address,store_phone,store_email,store_npwp,receipt_footer',
             'createdBy:id,name',
             'customer:id,ulid,nama',
             'payments.metodePembayaran:id,ulid,nama_pembayaran',
@@ -169,13 +170,13 @@ class SalesReportController extends BaseApiController
             'details.product:id,ulid,kode_produk,nama_produk',
             'payments.metodePembayaran:id,ulid,kode_pembayaran,nama_pembayaran',
             'customer:id,ulid,kode_customer,nama,telepon',
-            'terminal:id,ulid,kode_terminal,nama_terminal',
+            'terminal:id,ulid,kode_terminal,nama_terminal,store_name,store_address,store_phone,store_email,store_npwp,receipt_footer',
             'createdBy:id,name',
             'voidedBy:id,name',
             'returns' => fn ($query) => $query->whereIn('status', ['lock', 'approved'])->with([
                 'details.product:id,ulid,kode_produk,nama_produk',
                 'createdBy:id,name',
-                'terminal:id,ulid,kode_terminal,nama_terminal',
+                'terminal:id,ulid,kode_terminal,nama_terminal,store_name,store_address,store_phone,store_email,store_npwp,receipt_footer',
                 'shift:id,ulid,started_at',
             ]),
         ])->where('ulid', $ulid)->first();
@@ -202,6 +203,7 @@ class SalesReportController extends BaseApiController
 
         return $this->success([
             'sales' => $sales,
+            'store' => SettingService::getStoreInfoForTerminal($sales->terminal),
         ]);
     }
 

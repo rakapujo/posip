@@ -15,12 +15,15 @@ import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import CollapsibleSection from '@/components/common/CollapsibleSection.vue';
 import ShiftReportDialog from '@/components/pos/ShiftReportDialog.vue';
+import { resolveStoreBranding } from '@/composables/resolveStoreBranding';
+import { useSettingsStore } from '@/stores/settings';
 
 const router = useRouter();
 const { shouldUppercase, formatDateTime } = useFormatters();
 const notify = useNotification();
 const confirm = useConfirm();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 const printAdapter = usePrintAdapter();
 
 // ESC/POS generation
@@ -51,10 +54,13 @@ const printShiftReport = async () => {
 
 function getPrintOpts() {
     const t = item.value?.ulid ? item.value : detailData.value;
+    const store = resolveStoreBranding(t, settingsStore.store);
     return {
         charWidth: t?.char_per_line || 42,
         feedLines: t?.print_feed_before_cut ?? 4,
-        compact: t?.paper_mode === 'compact'
+        compact: t?.paper_mode === 'compact',
+        footer: store.receiptFooter || null,
+        store
     };
 }
 
@@ -261,6 +267,12 @@ const emptyForm = {
     warehouse_id: null,
     default_customer_id: null,
     default_metode_pembayaran_id: null,
+    store_name: '',
+    store_address: '',
+    store_phone: '',
+    store_email: '',
+    store_npwp: '',
+    receipt_footer: '',
     mail_driver: 'none',
     mail_from_address: '',
     mail_from_name: '',
@@ -393,6 +405,12 @@ async function saveItem() {
             default_customer_id: item.value.default_customer_id,
             default_metode_pembayaran_id: item.value.default_metode_pembayaran_id,
             default_printer: null,
+            store_name: item.value.store_name?.trim() || null,
+            store_address: item.value.store_address?.trim() || null,
+            store_phone: item.value.store_phone?.trim() || null,
+            store_email: item.value.store_email?.trim() || null,
+            store_npwp: item.value.store_npwp?.trim() || null,
+            receipt_footer: item.value.receipt_footer?.trim() || null,
             mail_driver: item.value.mail_driver || 'none',
             mail_from_address: item.value.mail_from_address?.trim() || null,
             mail_from_name: item.value.mail_from_name?.trim() || null,
@@ -995,6 +1013,40 @@ onMounted(async () => {
                     <InputNumber v-select-on-focus v-model="item.durasi_retur" :min="0" placeholder="Kosongkan untuk unlimited" showButtons fluid />
                     <small class="text-surface-500">0 = shift ini saja, 1+ = jumlah hari, kosong = unlimited</small>
                 </div>
+                        </div>
+                    </CollapsibleSection>
+                </div>
+
+                <div class="col-span-2">
+                    <CollapsibleSection title="Identitas Toko (Override)" subtitle="Kosong = pakai Global Settings → Toko">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="col-span-2 text-sm text-muted-color">
+                                Hanya untuk dokumen POS outlet ini (struk thermal/PDF, email, struk online, laporan shift). Login, Topbar, dan laporan BO tetap memakai Global Settings.
+                            </div>
+                            <div>
+                                <label class="block font-medium mb-2">Nama Toko</label>
+                                <InputText v-model.trim="item.store_name" placeholder="Kosongkan untuk pakai global" fluid maxlength="150" />
+                            </div>
+                            <div>
+                                <label class="block font-medium mb-2">Telepon</label>
+                                <InputText v-model.trim="item.store_phone" placeholder="Kosongkan untuk pakai global" fluid maxlength="50" />
+                            </div>
+                            <div class="col-span-2">
+                                <label class="block font-medium mb-2">Alamat</label>
+                                <Textarea v-model="item.store_address" rows="2" placeholder="Kosongkan untuk pakai global" fluid autoResize />
+                            </div>
+                            <div>
+                                <label class="block font-medium mb-2">Email Toko</label>
+                                <InputText v-model.trim="item.store_email" type="email" placeholder="Kosongkan untuk pakai global" fluid maxlength="150" />
+                            </div>
+                            <div>
+                                <label class="block font-medium mb-2">NPWP</label>
+                                <InputText v-model.trim="item.store_npwp" placeholder="Kosongkan untuk pakai global" fluid maxlength="30" />
+                            </div>
+                            <div class="col-span-2">
+                                <label class="block font-medium mb-2">Footer Struk</label>
+                                <Textarea v-model="item.receipt_footer" rows="2" placeholder="Kosongkan untuk pakai global" fluid autoResize />
+                            </div>
                         </div>
                     </CollapsibleSection>
                 </div>

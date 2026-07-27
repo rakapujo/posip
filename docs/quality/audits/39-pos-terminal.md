@@ -39,3 +39,7 @@ CRUD/ops Terminal: destroy guard (sales/cash/returns), `isInUse` = active_user *
 | CollapsibleSection | Pengaturan Lanjutan + Email Struk |
 | mail-test | `POST /pos-terminals/{ulid}/mail-test` + UI uji kirim |
 | TerminalMailer | DRY shared SMTP\|Resend sender |
+
+## Branding outlet (2026-07-28)
+
+Override nullable `store_*` + `receipt_footer` — lihat [71-terminal-store-branding.md](71-terminal-store-branding.md). UI: CollapsibleSection «Identitas Toko (Override)».

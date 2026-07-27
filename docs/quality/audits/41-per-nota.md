@@ -17,6 +17,10 @@ Date/export span; FE filters DRY
 
 See [00-laporan-plan-review.md](00-laporan-plan-review.md). Leaf residuals closed; skip/out: ACC-4 proporsi accuracy (B1.4), Aging AR/AP (B3.7).
 
+## Reprint struk branding (2026-07-28)
+
+Cetak ulang thermal/PDF struk memakai `store` resolved dari `sales.terminal` (fallback global). Export PDF **laporan** list tetap global. Lihat [71-terminal-store-branding.md](71-terminal-store-branding.md).
+
 ## Formula family (glossary)
 
 - Omzet nota = grand_total

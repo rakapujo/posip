@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useSettingsStore } from '@/stores/settings';
+import { normalizeStoreInfo, resolveStoreBranding } from '@/composables/resolveStoreBranding';
 
 const props = defineProps({
     visible: { type: Boolean, default: false },
@@ -13,10 +14,21 @@ const props = defineProps({
     // commit ke DB. Parent binds saldoFisik + closingNotes via v-model.
     editable: { type: Boolean, default: false },
     saldoFisik: { type: [Number, String], default: null },
-    closingNotes: { type: String, default: '' }
+    closingNotes: { type: String, default: '' },
+    /** Optional resolved store branding (POS docs). Falls back to shift.terminal coalesce. */
+    store: { type: Object, default: null }
 });
 
 const emit = defineEmits(['update:visible', 'update:saldoFisik', 'update:closingNotes', 'print', 'download', 'close']);
+
+const { formatDateTime, formatCurrency } = useFormatters();
+const settingsStore = useSettingsStore();
+
+const storeInfo = computed(() => {
+    if (props.store) return props.store;
+    if (props.data?.store) return normalizeStoreInfo(props.data.store, settingsStore.store);
+    return resolveStoreBranding(props.data?.shift?.terminal, settingsStore.store);
+});
 
 const saldoFisikModel = computed({
     get: () => props.saldoFisik,
@@ -47,9 +59,6 @@ const selisihLive = computed(() => {
 const totalBiayaPembayaran = computed(() => {
     return (props.data?.payment_breakdown || []).reduce((sum, pb) => sum + Number(pb.biaya_tambahan || 0), 0);
 });
-
-const { formatDateTime, formatCurrency } = useFormatters();
-const settingsStore = useSettingsStore();
 
 const dialogVisible = computed({
     get: () => props.visible,
@@ -94,9 +103,9 @@ const p = computed(() => props.data?.penjualan || {});
         <div v-else-if="data && data.shift" class="text-sm">
             <!-- Store Header -->
             <div class="text-center pb-4 mb-4 border-b border-dashed border-surface-300 dark:border-surface-600">
-                <div class="font-bold text-base">{{ settingsStore.store.name }}</div>
-                <div v-if="settingsStore.store.address" class="text-xs text-surface-500 mt-0.5">{{ settingsStore.store.address }}</div>
-                <div v-if="settingsStore.store.phone" class="text-xs text-surface-500">Telp: {{ settingsStore.store.phone }}</div>
+                <div class="font-bold text-base">{{ storeInfo.name }}</div>
+                <div v-if="storeInfo.address" class="text-xs text-surface-500 mt-0.5">{{ storeInfo.address }}</div>
+                <div v-if="storeInfo.phone" class="text-xs text-surface-500">Telp: {{ storeInfo.phone }}</div>
                 <div class="font-bold mt-3">LAPORAN SHIFT</div>
                 <div class="text-xs text-surface-400 font-mono mt-0.5">{{ data.shift?.ulid }}</div>
             </div>

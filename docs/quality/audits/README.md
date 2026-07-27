@@ -81,5 +81,8 @@ Deep audit berurutan mengikuti `AppMenu.vue` (Home → Master Data).
 | 66 | Pengaturan → Reset Database | [66-reset-database.md](66-reset-database.md) | patched (P0+P1) |
 | 67 | Pengaturan → Import Master | [67-import-master.md](67-import-master.md) | patched (P0+P1) |
 | 68 | Penjadwalan / TZ / Cetak Thermal | [68-penjadwalan-timezone-thermal.md](68-penjadwalan-timezone-thermal.md) | patched |
+| 69 | Permission matrix & checklist | [69-permission-matrix-checklist.md](69-permission-matrix-checklist.md) | patched |
+| 70 | App Shell (layout / menu / chrome) | [70-app-shell.md](70-app-shell.md) | draft (P0 via #69) |
+| 71 | Terminal store branding (POS docs) | [71-terminal-store-branding.md](71-terminal-store-branding.md) | patched |
 
 Rule Cursor: `.cursor/rules/posip-menu-audit.mdc`

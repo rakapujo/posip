@@ -80,6 +80,8 @@ class PosController extends BaseApiController
 
         return $this->success([
             'terminal' => $terminal,
+            // Resolved store for POS docs (includes NPWP; public settings strip it)
+            'store' => SettingService::getStoreInfoForTerminal($terminal),
             'tax_settings' => $taxSettings,
             'negative_stock_allowed' => SettingService::isNegativeStockAllowed(),
         ]);
@@ -525,7 +527,7 @@ class PosController extends BaseApiController
             'details.product:id,ulid,kode_produk,nama_produk',
             'payments.metodePembayaran:id,ulid,kode_pembayaran,nama_pembayaran',
             'customer:id,ulid,kode_customer,nama,telepon,email',
-            'terminal:id,ulid,kode_terminal,nama_terminal',
+            'terminal:id,ulid,kode_terminal,nama_terminal,store_name,store_address,store_phone,store_email,store_npwp,receipt_footer',
             'createdBy:id,name',
             'voidedBy:id,name',
             'shift:id,user_id,terminal_id',
@@ -575,7 +577,7 @@ class PosController extends BaseApiController
         $sales = DocSales::with([
             'shift:id,user_id',
             'customer:id,nama',
-            'terminal:id,mail_driver,mail_from_address,mail_from_name,smtp_host,smtp_port,smtp_encryption,smtp_username,smtp_password,resend_api_key',
+            'terminal:id,mail_driver,mail_from_address,mail_from_name,smtp_host,smtp_port,smtp_encryption,smtp_username,smtp_password,resend_api_key,store_name,store_address,store_phone,store_email,store_npwp,receipt_footer',
         ])->where('ulid', $ulid)->first();
 
         if (! $sales || $sales->source !== 'pos') {
@@ -594,7 +596,7 @@ class PosController extends BaseApiController
             return $this->error('Email struk belum dikonfigurasi pada terminal ini.', 422);
         }
 
-        $store = SettingService::getStoreInfo();
+        $store = SettingService::getStoreInfoForTerminal($terminal);
         $receiptUrl = rtrim(config('app.url'), '/') . "/struk-online/{$sales->ulid}";
         $extraMessage = trim((string) ($validated['message'] ?? ''));
         $viewData = [
@@ -688,9 +690,8 @@ class PosController extends BaseApiController
             $paymentWatermark = null;
         }
 
-        $storeInfo = SettingService::getStoreInfo();
-
         $terminal = MasterPosTerminal::find($sales->terminal_id);
+        $storeInfo = SettingService::getStoreInfoForTerminal($terminal);
         $returPolicy = [
             'izinkan_retur' => $terminal ? (bool) $terminal->izinkan_retur : false,
             'durasi_retur' => $terminal ? $terminal->durasi_retur : null,
@@ -746,7 +747,7 @@ class PosController extends BaseApiController
     public function shiftReport(string $shiftUlid): JsonResponse
     {
         $shift = PosTerminalShift::with([
-            'terminal:id,ulid,kode_terminal,nama_terminal',
+            'terminal:id,ulid,kode_terminal,nama_terminal,store_name,store_address,store_phone,store_email,store_npwp,receipt_footer',
             'user:id,ulid,name',
             'forcedByUser:id,ulid,name',
         ])->where('ulid', $shiftUlid)->first();
@@ -891,6 +892,7 @@ class PosController extends BaseApiController
         return $this->success([
             'serial_units_sold' => $serialUnitsSold,
             'shift' => $shift,
+            'store' => SettingService::getStoreInfoForTerminal($shift->terminal),
             'penjualan' => [
                 'jumlah_transaksi' => $completedSales->count(),
                 'penjualan_kotor' => $penjualanKotor,

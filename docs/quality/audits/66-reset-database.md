@@ -56,4 +56,6 @@
 
 ## OUT / P2 residual
 
+- Wipe `settings` **tidak** menghapus override branding di `master_pos_terminal` — lihat [71-terminal-store-branding.md](71-terminal-store-branding.md).
+
 Verify backup timestamp; full FE chips semua target BE; advisory lock reset; counts N+1.

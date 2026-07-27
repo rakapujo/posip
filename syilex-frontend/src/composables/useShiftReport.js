@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useNotification } from '@/composables/useNotification';
 import { posApi } from '@/api';
 import { createFittedThermalPdf } from '@/composables/print/fittedThermalPdf';
+import { normalizeStoreInfo, resolveStoreBranding } from '@/composables/resolveStoreBranding';
 
 /**
  * Composable for Shift Report functionality
@@ -18,6 +19,11 @@ export function useShiftReport() {
     const shiftReportDialog = ref(false);
     const shiftReportData = ref(null);
     const loadingShiftReport = ref(false);
+
+    const getStoreForReport = (data) => {
+        if (data?.store) return normalizeStoreInfo(data.store, settingsStore.store);
+        return resolveStoreBranding(data?.shift?.terminal, settingsStore.store);
+    };
 
     /**
      * Get status text for shift close type
@@ -121,11 +127,12 @@ export function useShiftReport() {
         };
 
         // Store Header
+        const store = getStoreForReport(data);
         doc.setFont('helvetica', 'bold');
-        center(settingsStore.store.name || 'POSIP', 10);
+        center(store.name || 'POSIP', 10);
         doc.setFont('helvetica', 'normal');
-        if (settingsStore.store.address) center(settingsStore.store.address, 7);
-        if (settingsStore.store.phone) center(`Telp: ${settingsStore.store.phone}`, 7);
+        if (store.address) center(store.address, 7);
+        if (store.phone) center(`Telp: ${store.phone}`, 7);
         dashed();
 
         // Report Title + ULID

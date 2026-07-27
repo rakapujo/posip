@@ -28,4 +28,8 @@ Per menu AppMenu (urutan Home → …): trace FE view + API + Action/Model + per
 - `41`–`62` — Laporan (Penjualan→Inventory); Wave A + Wave B executed (see `00-laporan-plan-review.md`)
 - `63`–`66` — Pengaturan (User, Role, Settings, Reset); P0+P1 patched
 - `67` — Pengaturan → Import Master; P0+P1 patched
+- `68` — Penjadwalan / TZ / thermal
+- `69` — Permission matrix & `permissions:ensure`
+- `70` — App Shell (draft; P0 RolePage via #69)
+- `71` — Terminal store branding (POS docs)
 - Index: `docs/quality/audits/README.md`

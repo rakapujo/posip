@@ -9,16 +9,10 @@ use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionSeeder extends Seeder
 {
-    public function run(): void
+    /** @return list<string> */
+    public static function catalog(): array
     {
-        app(PermissionRegistrar::class)->forgetCachedPermissions();
-
-        $superAdminRole = Role::firstOrCreate(['name' => 'super-admin']);
-        $adminRole = Role::firstOrCreate(['name' => 'admin']);
-        $kasirRole = Role::firstOrCreate(['name' => 'kasir']);
-        $gudangRole = Role::firstOrCreate(['name' => 'gudang']);
-
-        $permissions = [
+        return [
             'user.view', 'user.create', 'user.update', 'user.delete',
             'role.view', 'role.create', 'role.update', 'role.delete',
             'settings.view', 'settings.update', 'settings.reset',
@@ -61,12 +55,32 @@ class RolePermissionSeeder extends Seeder
             'laporan.view', 'laporan.export',
             'laporan.penjualan', 'laporan.pembelian', 'laporan.keuangan', 'laporan.performa', 'laporan.promo', 'laporan.inventory',
         ];
+    }
 
-        foreach ($permissions as $permission) {
-            Permission::firstOrCreate(['name' => $permission]);
+    public function ensurePermissions(): int
+    {
+        $created = 0;
+        foreach (self::catalog() as $permission) {
+            $perm = Permission::firstOrCreate(['name' => $permission]);
+            if ($perm->wasRecentlyCreated) {
+                $created++;
+            }
         }
 
-        $superAdminRole->syncPermissions(Permission::all());
+        return $created;
+    }
+
+    public function syncSuperAdmin(): void
+    {
+        $role = Role::firstOrCreate(['name' => 'super-admin']);
+        $role->syncPermissions(Permission::all());
+    }
+
+    public function syncDefaultRoles(): void
+    {
+        $adminRole = Role::firstOrCreate(['name' => 'admin']);
+        $kasirRole = Role::firstOrCreate(['name' => 'kasir']);
+        $gudangRole = Role::firstOrCreate(['name' => 'gudang']);
 
         $adminRole->syncPermissions([
             'user.view', 'user.create', 'user.update', 'user.delete',
@@ -130,13 +144,20 @@ class RolePermissionSeeder extends Seeder
             'po.view', 'po.create', 'po.edit', 'po.delete',
             'serial-intake.view', 'serial-intake.create', 'serial-intake.update', 'serial-intake.delete',
             'serial-change.view', 'serial-change.create', 'serial-change.update', 'serial-change.delete',
-            'serial-hpp.view', // CRUD HPP butuh stok.view_hpp — gudang hanya lihat list
+            'serial-hpp.view',
             'hutang.view',
             'retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.delete',
             'deposit-supplier.view',
             'laporan.view', 'laporan.pembelian', 'laporan.inventory',
         ]);
+    }
 
+    public function run(): void
+    {
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        $this->ensurePermissions();
+        $this->syncSuperAdmin();
+        $this->syncDefaultRoles();
         app(PermissionRegistrar::class)->forgetCachedPermissions();
     }
 }

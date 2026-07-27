@@ -761,6 +761,34 @@ class SettingService
     }
 
     /**
+     * Store identity for POS docs: coalesce terminal nullable overrides over global settings.
+     *
+     * @param  \App\Models\MasterPosTerminal|null  $terminal
+     */
+    public static function getStoreInfoForTerminal($terminal = null): array
+    {
+        $base = self::getStoreInfo();
+        if (! $terminal) {
+            return $base;
+        }
+
+        $pick = static function (?string $override, string $fallback): string {
+            $v = trim((string) ($override ?? ''));
+
+            return $v !== '' ? $v : $fallback;
+        };
+
+        $base['name'] = $pick($terminal->store_name ?? null, $base['name']);
+        $base['address'] = $pick($terminal->store_address ?? null, $base['address']);
+        $base['phone'] = $pick($terminal->store_phone ?? null, $base['phone']);
+        $base['email'] = $pick($terminal->store_email ?? null, $base['email']);
+        $base['npwp'] = $pick($terminal->store_npwp ?? null, $base['npwp']);
+        $base['receipt_footer'] = $pick($terminal->receipt_footer ?? null, $base['receipt_footer']);
+
+        return $base;
+    }
+
+    /**
      * Get store logo full URL.
      */
     public static function getLogoUrl(): ?string

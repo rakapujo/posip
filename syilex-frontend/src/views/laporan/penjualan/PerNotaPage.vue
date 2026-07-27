@@ -11,6 +11,7 @@ import { usePrintAdapter } from '@/composables/print/usePrintAdapter';
 import { useReceiptEscPos } from '@/composables/useReceiptEscPos';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
+import { normalizeStoreInfo, resolveStoreBranding } from '@/composables/resolveStoreBranding';
 import DetailDialog from '@/components/common/DetailDialog.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
@@ -27,6 +28,11 @@ const printAdapter = usePrintAdapter();
 const escpos = useReceiptEscPos();
 const { exporting, exportListPdf } = useExportPdf();
 const canExport = computed(() => authStore.can('laporan.export'));
+
+function storeForSales(sales, apiStore = null) {
+    if (apiStore) return normalizeStoreInfo(apiStore, settingsStore.store);
+    return resolveStoreBranding(sales?.terminal, settingsStore.store);
+}
 
 const selectedTerminal = ref(null);
 const selectedUser = ref(null);
@@ -75,6 +81,7 @@ const users = computed(() => dropdowns.value.users ?? []);
 const metodeBayar = computed(() => dropdowns.value.metode_bayar ?? []);
 const warehouses = computed(() => dropdowns.value.warehouses ?? []);
 
+const detailResolvedStore = ref(null);
 const {
     detailDialog,
     loadingDetail,
@@ -83,10 +90,13 @@ const {
 } = useReportDetailDialog({
     paginated: false,
     fetchDetail: (row) => salesReportApi.get(row.ulid),
-    parseResponse: (data) => ({
-        meta: data.sales,
-        items: data.sales?.details ?? []
-    }),
+    parseResponse: (data) => {
+        detailResolvedStore.value = data.store || null;
+        return {
+            meta: data.sales,
+            items: data.sales?.details ?? []
+        };
+    },
     errorLabel: 'penjualan'
 });
 
@@ -205,7 +215,10 @@ const fetchFullSales = async (ulid) => {
     try {
         const response = await salesReportApi.get(ulid);
         if (response.data.success) {
-            return response.data.data.sales;
+            return {
+                sales: response.data.data.sales,
+                store: response.data.data.store || null
+            };
         }
     } catch {
         notify.error('Gagal memuat data penjualan');
@@ -214,27 +227,36 @@ const fetchFullSales = async (ulid) => {
 };
 
 // ─── Direct Thermal Print Helper ───
-async function tryDirectPrintReceipt(salesData) {
+async function tryDirectPrintReceipt(salesData, store) {
     await printAdapter.reconnect();
-    const bytes = escpos.buildReceipt(salesData, { charWidth: 42, feedLines: 4, compact: false });
+    const bytes = escpos.buildReceipt(salesData, {
+        charWidth: 42,
+        feedLines: 4,
+        compact: false,
+        store,
+        footer: store?.receiptFooter || null
+    });
     const result = await printAdapter.printRaw(bytes);
     return result.success;
 }
 
 // ─── Actions ───
 const handlePrint = async (data) => {
-    const fullData = await fetchFullSales(data.ulid);
-    if (!fullData) return;
+    const full = await fetchFullSales(data.ulid);
+    if (!full?.sales) return;
+    const store = storeForSales(full.sales, full.store);
     if (printAdapter.isReadyToThermal()) {
-        const ok = await tryDirectPrintReceipt(fullData);
+        const ok = await tryDirectPrintReceipt(full.sales, store);
         if (ok) return;
     }
-    printReceiptPdf(fullData);
+    printReceiptPdf(full.sales, { store, receiptStatus: full.sales.receipt_status });
 };
 
 const handleDownloadPdf = async (data) => {
-    const fullData = await fetchFullSales(data.ulid);
-    if (fullData) downloadReceiptPdf(fullData);
+    const full = await fetchFullSales(data.ulid);
+    if (full?.sales) {
+        downloadReceiptPdf(full.sales, { store: storeForSales(full.sales, full.store), receiptStatus: full.sales.receipt_status });
+    }
 };
 
 const handleCopyUrl = async (data) => {
@@ -251,15 +273,20 @@ const handleCopyUrl = async (data) => {
 // For detail dialog actions, we need the full data loaded
 const handleDetailPrint = async () => {
     if (!detailData.value?.ulid) return;
+    const store = storeForSales(detailData.value, detailResolvedStore.value);
     if (printAdapter.isReadyToThermal()) {
-        const ok = await tryDirectPrintReceipt(detailData.value);
+        const ok = await tryDirectPrintReceipt(detailData.value, store);
         if (ok) return;
     }
-    printReceiptPdf(detailData.value);
+    printReceiptPdf(detailData.value, { store, receiptStatus: detailData.value.receipt_status });
 };
 
 const handleDetailPdf = () => {
-    if (detailData.value?.ulid) downloadReceiptPdf(detailData.value);
+    if (!detailData.value?.ulid) return;
+    downloadReceiptPdf(detailData.value, {
+        store: storeForSales(detailData.value, detailResolvedStore.value),
+        receiptStatus: detailData.value.receipt_status
+    });
 };
 
 const handleDetailCopyUrl = () => {
