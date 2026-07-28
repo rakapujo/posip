@@ -146,6 +146,19 @@ export function useReceiptPdf(options = {}) {
                 y += lh;
             }
         };
+        const leftRightOrWrap = (left, right, fontSize = 7) => {
+            doc.setFontSize(fontSize);
+            const rightStr = String(right);
+            const rw = doc.getTextWidth(rightStr);
+            const avail = Math.max(8, maxWidth - rw - 2);
+            const fitted = doc.splitTextToSize(String(left), avail);
+            if (fitted.length === 1 && doc.getTextWidth(fitted[0]) <= avail) {
+                leftRight(left, right, fontSize);
+                return;
+            }
+            leftWrap(left, fontSize, lineHeight);
+            leftRight('', right, fontSize);
+        };
 
         // Build a serial unit display string: "KI-xxx · SN xxx · Grade · Bat 90% Good · Active"
         const formatSerialUnit = (u) => {
@@ -278,7 +291,13 @@ export function useReceiptPdf(options = {}) {
                 doc.text(`  ${formatDateTime(ret.tanggal)}`, margin, y);
                 y += smallLineHeight;
                 for (const d of ret.details) {
-                    leftRight(`  ${d.product?.nama_produk} x${formatQty(d.qty)}`, `@ ${formatCurrency(d.harga_satuan)}`, 7);
+                    leftRightOrWrap(`  ${d.product?.nama_produk} x${formatQty(d.qty)}`, `@ ${formatCurrency(d.harga_satuan)}`, 7);
+                    if (d.serial_units?.length) {
+                        for (const u of d.serial_units) {
+                            leftWrap(`  ${formatSerialUnit(u)}`, 6);
+                            if (u.catatan) leftWrap(`    Cat: ${u.catatan}`, 6);
+                        }
+                    }
                 }
                 if (Number(ret.pembulatan)) {
                     leftRight('  Pembulatan', formatCurrency(ret.pembulatan), 7);

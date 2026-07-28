@@ -54,21 +54,22 @@ foreach ($item in $items) {
     }
 }
 
+# Root rewrite for cPanel when DocumentRoot = app root (NOT when DocumentRoot = .../public).
+# Ship inactive name — Hestia/VPS with DocumentRoot=public must NOT activate this file.
+# Compress-Archive may omit Unix dir +x; INSTALL pre-flight chmod covers it.
 $htaccessLines = @(
-    '<IfModule mod_rewrite.c>',
-    '    RewriteEngine On',
-    '    RewriteBase /',
+    'RewriteEngine On',
+    'RewriteBase /',
     '',
-    '    DirectorySlash Off',
+    'DirectorySlash Off',
     '',
-    '    RewriteCond %{REQUEST_URI} ^/public/ [OR]',
-    '    RewriteCond %{REQUEST_URI} ^/public$',
-    '    RewriteRule ^ - [L]',
+    'RewriteCond %{REQUEST_URI} ^/public/ [OR]',
+    'RewriteCond %{REQUEST_URI} ^/public$',
+    'RewriteRule ^ - [L]',
     '',
-    '    RewriteRule ^(.*)$ public/$1 [L]',
-    '</IfModule>'
+    'RewriteRule ^(.*)$ public/$1 [L]'
 )
-[System.IO.File]::WriteAllLines((Join-Path $PosipDir '.htaccess'), $htaccessLines)
+[System.IO.File]::WriteAllLines((Join-Path $PosipDir 'htaccess.root-shared-hosting'), $htaccessLines)
 
 $installed = Join-Path $PosipDir 'storage\installed'
 if (Test-Path $installed) { Remove-Item -Force $installed }
@@ -127,9 +128,11 @@ $lines.Add('1. Extract zip ini') | Out-Null
 $lines.Add('2. Baca INSTALL.md (tutorial lengkap)') | Out-Null
 $lines.Add('3. Upload folder posip/ ke hosting (isi ke public_html/ ATAU document root subdomain = posip/public)') | Out-Null
 $lines.Add('4. Buat database MySQL di cPanel') | Out-Null
-$lines.Add('5. Set permission storage/ dan bootstrap/cache/ ke 775') | Out-Null
-$lines.Add('6. Buka http://domain-anda.com/install') | Out-Null
-$lines.Add('7. Ikuti wizard 8 langkah lalu selesai') | Out-Null
+$lines.Add('5. Permission storage/ & bootstrap/cache/ = 775; SSH: find . -type d -exec chmod u+rx {} \;') | Out-Null
+$lines.Add('6. Opsi A (DocumentRoot=root app): rename htaccess.root-shared-hosting -> .htaccess') | Out-Null
+$lines.Add('   Opsi B/Hestia (DocumentRoot=.../public): JANGAN rename file itu') | Out-Null
+$lines.Add('7. Buka http://domain-anda.com/install') | Out-Null
+$lines.Add('8. Ikuti wizard 8 langkah lalu selesai') | Out-Null
 $lines.Add('') | Out-Null
 $lines.Add('Persyaratan: PHP 8.2+, MySQL/MariaDB, ekstensi pdo_mysql mbstring openssl tokenizer xml ctype json bcmath fileinfo gd') | Out-Null
 [System.IO.File]::WriteAllLines((Join-Path $BuildDir 'INSTALL.txt'), $lines)

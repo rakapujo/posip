@@ -1,24 +1,32 @@
 <script setup>
-import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
+/* anchor: Login.vue form-inner panel + empty-state floor; diverge: generic error mark */
+import { computed } from 'vue';
+import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
+
+const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
+
+const homeTo = computed(() => (authStore.isAuthenticated ? '/app' : '/'));
+const homeLabel = computed(() => (authStore.isAuthenticated ? 'Kembali ke aplikasi' : 'Ke halaman login'));
 </script>
 
 <template>
-    <FloatingConfigurator />
-    <div class="bg-surface-50 dark:bg-surface-950 flex items-center justify-center min-h-screen min-w-[100vw] overflow-hidden">
-        <div class="flex flex-col items-center justify-center">
-            <div style="border-radius: 56px; padding: 0.3rem; background: linear-gradient(180deg, rgba(233, 30, 99, 0.4) 10%, rgba(33, 150, 243, 0) 30%)">
-                <div class="w-full bg-surface-0 dark:bg-surface-900 py-20 px-8 sm:px-20 flex flex-col items-center" style="border-radius: 53px">
-                    <div class="gap-4 flex flex-col items-center">
-                        <div class="flex justify-center items-center border-2 border-pink-500 rounded-full" style="height: 3.2rem; width: 3.2rem">
-                            <i class="pi pi-fw pi-exclamation-circle text-2xl! text-pink-500"></i>
-                        </div>
-                        <h1 class="text-surface-900 dark:text-surface-0 font-bold text-5xl mb-2">Error Occured</h1>
-                        <span class="text-muted-color mb-8">Requested resource is not available.</span>
-                        <div class="col-span-12 mt-8 text-center">
-                            <Button as="router-link" label="Go to Dashboard" to="/" severity="danger" />
-                        </div>
-                    </div>
-                </div>
+    <div class="min-h-screen flex items-center justify-center bg-surface-100 px-5 py-8 md:px-8 md:py-12">
+        <div class="w-full max-w-sm md:max-w-md bg-surface-0 border border-surface-200 rounded-2xl shadow-sm px-6 py-8 md:px-8 md:py-10 text-center">
+            <img
+                :src="settingsStore.storeLogo || '/logo.svg'"
+                :alt="settingsStore.storeName"
+                class="h-12 max-w-[140px] md:max-w-[160px] object-contain mx-auto"
+            />
+            <div class="inline-flex items-center justify-center w-12 h-12 rounded-full border border-surface-300 text-pink-500 mt-6">
+                <i class="pi pi-exclamation-circle text-2xl" />
+            </div>
+            <p class="text-surface-900 font-semibold text-lg mt-3 mb-0">Terjadi kesalahan</p>
+            <p class="text-surface-500 text-sm leading-relaxed mt-2 mb-0">Permintaan tidak dapat diproses. Coba lagi nanti.</p>
+            <Button as="router-link" :to="homeTo" :label="homeLabel" severity="danger" class="w-full !min-h-11 mt-7" />
+            <div v-if="authStore.isAuthenticated" class="mt-3">
+                <router-link to="/" class="text-sm text-primary hover:underline">Ke halaman login</router-link>
             </div>
         </div>
     </div>

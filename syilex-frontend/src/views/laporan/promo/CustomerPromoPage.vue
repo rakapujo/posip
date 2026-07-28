@@ -1,6 +1,7 @@
 <script setup>
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import { ref, computed, onMounted } from 'vue';
-import { reportsApi } from '@/api';
+import { reportsApi, tipeCustomersApi, kategoriCustomersApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useNotification } from '@/composables/useNotification';
 import { useReportDetailDialog } from '@/composables/useReportDetailDialog';
@@ -21,6 +22,20 @@ const byCustomer = ref({ loading: false, items: [], pagination: { total: 0 } });
 const searchQuery = ref('');
 const onlyTerjaring = ref(false);
 const lazyParams = ref({ first: 0, rows: 25 });
+const tipeCustomers = ref([]);
+const kategoriCustomers = ref([]);
+const selectedTipeCustomer = ref(null);
+const selectedKategoriCustomer = ref(null);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (statusFilter.value && statusFilter.value !== 'active_now') n++;
+    if (searchQuery.value) n++;
+    if (selectedTipeCustomer.value) n++;
+    if (selectedKategoriCustomer.value) n++;
+    if (onlyTerjaring.value) n++;
+    return n;
+});
 
 const {
     detailDialog,
@@ -207,7 +222,27 @@ async function exportByKategoriExcel() {
         <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
             <h2 class="text-xl font-bold m-0">Customer Dapat Promo</h2>
             <div class="flex gap-2 flex-wrap items-center">
-                <Select v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" class="w-44" @change="onFilterChange" />
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <div class="list-filter-control">
+                        <Select v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" fluid @change="onFilterChange" />
+                    </div>
+                    <template v-if="activeTab === 'by_customer'">
+                        <IconField class="w-full">
+                            <InputIcon class="pi pi-search" />
+                            <InputText v-model="searchQuery" placeholder="Cari customer..." class="w-full" @input="onFilterChange" />
+                        </IconField>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedTipeCustomer" :options="tipeCustomers" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe Customer" filter showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedKategoriCustomer" :options="kategoriCustomers" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori Customer" filter showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="flex items-center gap-2 px-3 bg-surface-100 dark:bg-surface-800 rounded">
+                            <Checkbox v-model="onlyTerjaring" :binary="true" inputId="onlyTerjaring" @change="onFilterChange" />
+                            <label for="onlyTerjaring" class="text-sm cursor-pointer">Hanya yang terjaring</label>
+                        </div>
+                    </template>
+                </ListFiltersSheet>
                 <Button v-if="canExport" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportSummaryExcel" v-tooltip.top="'Export Excel (Summary)'" aria-label="Export Excel Summary" />
                 <Button
                     v-if="canExport && activeTab === 'by_tipe'"
@@ -353,19 +388,6 @@ async function exportByKategoriExcel() {
 
         <!-- Tab: Per Customer -->
         <div v-else>
-            <div class="flex gap-2 mb-3 flex-wrap items-center">
-                <IconField class="flex-1 min-w-[200px]">
-                    <InputIcon class="pi pi-search" />
-                    <InputText v-model="searchQuery" placeholder="Cari customer..." @input="onFilterChange" class="w-full" />
-                </IconField>
-                <Select v-model="selectedTipeCustomer" :options="tipeCustomers" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe Customer" class="w-44" filter showClear @change="onFilterChange" />
-                <Select v-model="selectedKategoriCustomer" :options="kategoriCustomers" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori Customer" class="w-44" filter showClear @change="onFilterChange" />
-                <div class="flex items-center gap-2 px-3 bg-surface-100 dark:bg-surface-800 rounded">
-                    <Checkbox v-model="onlyTerjaring" :binary="true" inputId="onlyTerjaring" @change="onFilterChange" />
-                    <label for="onlyTerjaring" class="text-sm cursor-pointer">Hanya yang terjaring</label>
-                </div>
-            </div>
-
             <DataTable
                 :value="byCustomer.items"
                 :loading="byCustomer.loading"
@@ -434,7 +456,7 @@ async function exportByKategoriExcel() {
                 </div>
 
                 <h4 class="font-semibold mb-2">Disc Nota Auto</h4>
-                <div class="grid grid-cols-2 gap-3 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                     <div class="bg-surface-50 dark:bg-surface-800 rounded p-3">
                         <div class="text-xs text-surface-500 mb-1">Via Tipe</div>
                         <Tag v-if="detailData.disc_nota?.via_tipe?.has_disc" :value="detailData.disc_nota.via_tipe.display" severity="success" />

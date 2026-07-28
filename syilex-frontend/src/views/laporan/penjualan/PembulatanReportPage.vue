@@ -6,6 +6,7 @@ import { useReportList } from '@/composables/useReportList';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 
 const authStore = useAuthStore();
 const { formatCurrency, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
@@ -37,6 +38,15 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
 });
 
 const terminals = computed(() => dropdowns.value.terminals ?? []);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedTerminal.value) n++;
+    if (selectedTipe.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 function getTipeSeverity(tipe) {
     return tipe === 'Penjualan' ? 'success' : 'danger';
@@ -80,15 +90,21 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
-                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedTipe" :options="tipeOptions" optionLabel="label" optionValue="value" placeholder="Tipe" class="w-36" @change="onFilterChange" />
-                    <div class="w-40">
-                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <div class="w-40">
-                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                        <div class="list-filter-control">
+                            <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedTipe" :options="tipeOptions" optionLabel="label" optionValue="value" placeholder="Tipe" fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    </ListFiltersSheet>
                 </div>
             </template>
         </Toolbar>

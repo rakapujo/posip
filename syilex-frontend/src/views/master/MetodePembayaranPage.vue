@@ -599,7 +599,7 @@ async function viewDetail(data) {
 
         <!-- Form Dialog -->
         <Dialog v-model:visible="metodePembayaranDialog" :style="{ width: '650px' }" :header="isEdit ? 'Edit Metode Pembayaran' : 'Tambah Metode Pembayaran'" :modal="true" :closable="!saving">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Kode Pembayaran -->
                 <div>
                     <label class="block font-medium mb-2">
@@ -743,7 +743,7 @@ async function viewDetail(data) {
         >
             <template #content>
                 <!-- Informasi Dasar -->
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <DetailItem label="Kode Pembayaran" :value="detailData.kode_pembayaran" />
                     <DetailItem label="Nama Pembayaran" :value="detailData.nama_pembayaran" />
                     <DetailItem label="Metode" :value="getMetodeLabel(detailData.metode)" type="badge" :badge-severity="getMetodeSeverity(detailData.metode)" />
@@ -755,14 +755,14 @@ async function viewDetail(data) {
                     <Divider />
 
                     <h6 class="text-surface-600 font-medium mb-3">Detail Non-Tunai</h6>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <DetailItem label="Jenis" :value="getJenisLabel(detailData.jenis)" />
                         <DetailItem label="Nama Akun" :value="detailData.nama_akun" />
                         <DetailItem label="Nomor Akun" :value="detailData.nomor_akun" />
                     </div>
 
                     <!-- Logo & QR Code -->
-                    <div class="grid grid-cols-2 gap-4 mt-4" v-if="detailData.logo || detailData.qr_code">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4" v-if="detailData.logo || detailData.qr_code">
                         <DetailItem v-if="detailData.logo" label="Logo" :value="detailData.logo" type="image" image-alt="Logo Pembayaran" />
                         <DetailItem v-if="detailData.qr_code" label="QR Code" :value="detailData.qr_code" type="image" image-alt="QR Code Pembayaran" />
                     </div>
@@ -771,7 +771,7 @@ async function viewDetail(data) {
 
                     <!-- Biaya Tambahan -->
                     <h6 class="text-surface-600 font-medium mb-3">Biaya Tambahan</h6>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <DetailItem label="Tipe Biaya" :value="getBiayaTipeLabel(detailData.biaya_tambahan_tipe)" />
                         <DetailItem v-if="detailData.biaya_tambahan_tipe !== 'none'" label="Nilai Biaya" :value="getBiayaDisplay(detailData)" />
                     </div>

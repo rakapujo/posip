@@ -1,4 +1,5 @@
 <script setup>
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { reportsApi, brandsApi, kategorisApi, grupsApi } from '@/api';
@@ -55,6 +56,19 @@ const sortOptions = [
     { label: 'Kode A-Z', value: 'kode_asc' },
     { label: 'Nama A-Z', value: 'nama_asc' }
 ];
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (statusFilter.value && statusFilter.value !== 'active_now') n++;
+    if (searchQuery.value) n++;
+    if (selectedBrand.value) n++;
+    if (selectedKategori.value) n++;
+    if (selectedGrup.value) n++;
+    if (selectedProductStatus.value) n++;
+    if (selectedSort.value) n++;
+    if (onlyWithPromo.value) n++;
+    return n;
+});
 
 async function loadDropdowns() {
     try {
@@ -170,8 +184,37 @@ async function exportByProductExcel() {
     <div class="card">
         <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
             <h2 class="text-xl font-bold m-0">Produk Dapat Promo</h2>
-            <div class="flex gap-2 flex-wrap">
-                <Select v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" class="w-44" @change="onFilterChange" />
+            <div class="flex gap-2 flex-wrap items-center">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <div class="list-filter-control">
+                        <Select v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" fluid @change="onFilterChange" />
+                    </div>
+                    <template v-if="activeTab === 'by_product'">
+                        <IconField class="w-full">
+                            <InputIcon class="pi pi-search" />
+                            <InputText v-model="searchQuery" placeholder="Cari produk..." class="w-full" @input="onFilterChange" />
+                        </IconField>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" filter showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" filter showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedGrup" :options="grups" optionLabel="nama_grup" optionValue="id" placeholder="Grup" filter showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedProductStatus" :options="productStatusOptions" optionLabel="label" optionValue="value" placeholder="Status Produk" showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" placeholder="Urutkan" showClear fluid @change="onFilterChange" />
+                        </div>
+                        <div class="flex items-center gap-2 px-3 bg-surface-100 dark:bg-surface-800 rounded">
+                            <Checkbox v-model="onlyWithPromo" :binary="true" inputId="onlyPromo" @change="onFilterChange" />
+                            <label for="onlyPromo" class="text-sm cursor-pointer">Hanya yang ada promo</label>
+                        </div>
+                    </template>
+                </ListFiltersSheet>
                 <Button
                     v-if="canExport && activeTab === 'by_product'"
                     icon="pi pi-file-excel"
@@ -198,22 +241,6 @@ async function exportByProductExcel() {
 
         <!-- Tab: Per Produk -->
         <div v-if="activeTab === 'by_product'">
-            <div class="flex gap-2 mb-3 flex-wrap items-center">
-                <IconField class="flex-1 min-w-[200px]">
-                    <InputIcon class="pi pi-search" />
-                    <InputText v-model="searchQuery" placeholder="Cari produk..." @input="onFilterChange" class="w-full" />
-                </IconField>
-                <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" class="w-36" filter showClear @change="onFilterChange" />
-                <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" class="w-36" filter showClear @change="onFilterChange" />
-                <Select v-model="selectedGrup" :options="grups" optionLabel="nama_grup" optionValue="id" placeholder="Grup" class="w-36" filter showClear @change="onFilterChange" />
-                <Select v-model="selectedProductStatus" :options="productStatusOptions" optionLabel="label" optionValue="value" placeholder="Status Produk" class="w-40" showClear @change="onFilterChange" />
-                <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" placeholder="Urutkan" class="w-48" showClear @change="onFilterChange" />
-                <div class="flex items-center gap-2 px-3 bg-surface-100 dark:bg-surface-800 rounded">
-                    <Checkbox v-model="onlyWithPromo" :binary="true" inputId="onlyPromo" @change="onFilterChange" />
-                    <label for="onlyPromo" class="text-sm cursor-pointer">Hanya yang ada promo</label>
-                </div>
-            </div>
-
             <DataTable
                 v-model:expandedRows="byProduct.expandedRows"
                 :value="byProduct.items"

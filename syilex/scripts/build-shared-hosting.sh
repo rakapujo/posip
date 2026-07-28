@@ -52,20 +52,20 @@ for item in app bootstrap config database public resources routes storage vendor
     fi
 done
 
-# Root .htaccess — route document root → public/ (shared hosting tanpa SSH)
-cat > "$BUILD_DIR/posip/.htaccess" << 'HTACCESS'
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    RewriteBase /
+# Root rewrite for cPanel when DocumentRoot = app root (NOT when DocumentRoot = .../public).
+# Ship inactive name — Hestia/VPS with DocumentRoot=public must NOT activate this file.
+# Compress-Archive may omit Unix dir +x; INSTALL pre-flight chmod covers it.
+cat > "$BUILD_DIR/posip/htaccess.root-shared-hosting" << 'HTACCESS'
+RewriteEngine On
+RewriteBase /
 
-    DirectorySlash Off
+DirectorySlash Off
 
-    RewriteCond %{REQUEST_URI} ^/public/ [OR]
-    RewriteCond %{REQUEST_URI} ^/public$
-    RewriteRule ^ - [L]
+RewriteCond %{REQUEST_URI} ^/public/ [OR]
+RewriteCond %{REQUEST_URI} ^/public$
+RewriteRule ^ - [L]
 
-    RewriteRule ^(.*)$ public/$1 [L]
-</IfModule>
+RewriteRule ^(.*)$ public/$1 [L]
 HTACCESS
 
 rm -rf "$BUILD_DIR/posip/.git"
@@ -119,9 +119,13 @@ INSTALASI POSIP — RINGKAS
 2. Baca INSTALL.md (tutorial lengkap)
 3. Upload folder posip/ ke hosting (isi → public_html/ ATAU document root subdomain = posip/public)
 4. Buat database MySQL di cPanel
-5. Set permission storage/ & bootstrap/cache/ → 775
-6. Buka http://domain-anda.com/install
-7. Ikuti wizard (8 step) → selesai
+5. Permission: storage/ & bootstrap/cache/ → 775
+   SSH/Linux: find . -type d -exec chmod u+rx {} \;
+   (zip Windows sering hilangkan bit +x di vendor/)
+6. Opsi A (DocumentRoot = root app): rename htaccess.root-shared-hosting → .htaccess
+   Opsi B / Hestia (DocumentRoot = .../public): JANGAN rename file itu
+7. Buka http://domain-anda.com/install
+8. Ikuti wizard (8 step) → selesai
 
 Persyaratan: PHP 8.2+, MySQL/MariaDB, ekstensi pdo_mysql mbstring openssl tokenizer xml ctype json bcmath fileinfo gd
 GUIDE

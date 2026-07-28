@@ -199,6 +199,24 @@
     .p-dialog {
         max-width: 95vw !important;
     }
+
+    /*
+     * ponytail: footer tombol modal wrap di HP.
+     * Child .flex = wrapper #footer (bukan hanya direct .p-button).
+     */
+    .p-dialog-footer,
+    .p-dialog-footer > .flex {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        align-items: center;
+    }
+
+    .p-dialog-footer .p-button {
+        flex: 0 1 auto;
+        max-width: 100%;
+    }
 }
 
 /* List filters — ukuran kontrol seragam (desktop inline / mobile sheet) */

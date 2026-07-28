@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/auth';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
 import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 
 const authStore = useAuthStore();
 const { formatCurrency, formatQty, formatDateTime, todayString, getPrimeDateFormatShort } = useFormatters();
@@ -38,6 +39,14 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
 });
 
 const terminals = computed(() => dropdowns.value.terminals ?? []);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedTerminal.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 const {
     detailDialog,
@@ -122,14 +131,18 @@ async function exportPdf() {
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
                     <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
-                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="onFilterChange" />
-                    <div class="w-40">
-                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <div class="w-40">
-                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                        <div class="list-filter-control">
+                            <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    </ListFiltersSheet>
                 </div>
             </template>
         </Toolbar>
@@ -247,7 +260,7 @@ async function exportPdf() {
 
             <template v-else-if="detailSale.nomor_dokumen">
                 <!-- Sale Info -->
-                <div class="grid grid-cols-3 gap-4 mb-4">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                     <div>
                         <span class="text-surface-500 text-sm">No. Invoice</span>
                         <div class="font-mono font-medium">{{ detailSale.nomor_dokumen }}</div>
@@ -265,7 +278,7 @@ async function exportPdf() {
                 <Divider />
 
                 <!-- Summary -->
-                <div class="grid grid-cols-3 gap-4 mb-4">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                     <div class="text-center">
                         <div class="text-surface-500 text-sm">Total Bruto</div>
                         <div class="summary-money-value">{{ formatCurrency(detailSummary.total_bruto) }}</div>

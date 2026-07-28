@@ -774,7 +774,7 @@ function getProductLabel(product) {
             </div>
 
             <!-- Form Actions -->
-            <div class="flex justify-end gap-2 mt-6">
+            <div class="flex flex-wrap justify-end gap-2 mt-6">
                 <Button label="Batal" severity="secondary" outlined @click="cancel" />
                 <Button label="Simpan" icon="pi pi-save" type="submit" :loading="saving" :disabled="form.inputs.length === 0 || form.outputs.length === 0" />
             </div>

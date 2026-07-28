@@ -130,7 +130,7 @@ async function save() {
 
 <template>
     <Dialog :visible="visible" @update:visible="emit('update:visible', $event)" :style="{ width: '750px' }" :breakpoints="{ '960px': '95vw' }" :header="isEdit ? 'Edit Customer' : 'Tambah Customer'" :modal="true" :closable="!saving">
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- Kode Customer -->
             <div>
                 <label class="block font-medium mb-2">

@@ -557,7 +557,7 @@ function viewStockCard(product, stock) {
 
             <template v-else-if="detailData.product">
                 <!-- Product Info -->
-                <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <DetailItem label="Kode Produk" :value="detailData.product.kode_produk" />
                     <DetailItem label="Barcode" :value="detailData.product.barcode" />
                     <DetailItem label="Nama Produk" :value="detailData.product.nama_produk" />

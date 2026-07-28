@@ -6,6 +6,7 @@ import { useReportList } from '@/composables/useReportList';
 import { useReportDetailDialog } from '@/composables/useReportDetailDialog';
 import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
@@ -90,6 +91,17 @@ const summaryItems = computed(() => {
 
 /** Mobile primary: “Setelah dikurangi retur” (index 4). */
 const summaryPrimaryIndex = 4;
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedTerminal.value) n++;
+    if (selectedBrand.value) n++;
+    if (selectedKategori.value) n++;
+    if (selectedWarehouse.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 const terminals = computed(() => dropdowns.value.terminals ?? []);
 const brands = computed(() => dropdowns.value.brands ?? []);
@@ -214,17 +226,27 @@ function getMarginSeverity(margin) {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
-                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" class="w-36" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" class="w-36" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" class="w-40" filter showClear @change="onFilterChange" />
-                    <div class="w-40">
-                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <div class="w-40">
-                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                        <div class="list-filter-control">
+                            <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    </ListFiltersSheet>
                 </div>
             </template>
         </Toolbar>
@@ -364,7 +386,7 @@ function getMarginSeverity(margin) {
 
             <template v-else-if="detailData.ulid">
                 <!-- Product Info -->
-                <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <DetailItem label="Kode Produk" :value="detailData.kode_produk" />
                     <DetailItem label="Nama Produk" :value="detailData.nama_produk" />
                     <DetailItem label="Brand" :value="detailData.brand || '-'" />

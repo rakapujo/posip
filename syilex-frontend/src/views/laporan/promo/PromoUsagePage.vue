@@ -1,4 +1,5 @@
 <script setup>
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 import { ref, computed, onMounted } from 'vue';
 import { reportsApi, salesProductReportApi, tipeCustomersApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
@@ -25,6 +26,19 @@ const selectedChannel = ref(null);
 const selectedSource = ref(null);
 const terminals = ref([]);
 const tipeCustomers = ref([]);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    if (selectedSort.value && selectedSort.value !== 'diskon_desc') n++;
+    if (selectedTerminal.value) n++;
+    if (selectedCustomerType.value) n++;
+    if (selectedChannel.value) n++;
+    if (selectedSource.value) n++;
+    if (includeUnused.value) n++;
+    return n;
+});
 
 const channelOptions = [
     { label: 'POS', value: 'pos' },
@@ -155,24 +169,34 @@ async function exportExcel() {
                 <span class="text-xl font-semibold">Promo Usage & ROI</span>
             </template>
             <template #end>
-                <div class="flex flex-wrap gap-2 items-center">
-                    <div class="w-40">
+                <ListFiltersSheet :active-count="activeFilterCount">
+                    <div class="list-filter-control">
                         <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="loadAll" />
                     </div>
-                    <div class="w-40">
+                    <div class="list-filter-control">
                         <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="loadAll" />
                     </div>
-                    <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" class="w-48" @change="loadAll" />
-                    <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" class="w-40" filter showClear @change="loadAll" />
-                    <Select v-model="selectedCustomerType" :options="tipeCustomers" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe Customer" class="w-40" filter showClear @change="loadAll" />
-                    <Select v-model="selectedChannel" :options="channelOptions" optionLabel="label" optionValue="value" placeholder="Channel" class="w-36" showClear @change="loadAll" />
-                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" class="w-36" showClear @change="loadAll" />
+                    <div class="list-filter-control">
+                        <Select v-model="selectedSort" :options="sortOptions" optionLabel="label" optionValue="value" fluid @change="loadAll" />
+                    </div>
+                    <div class="list-filter-control">
+                        <Select v-model="selectedTerminal" :options="terminals" optionLabel="nama_terminal" optionValue="id" placeholder="Terminal" filter showClear fluid @change="loadAll" />
+                    </div>
+                    <div class="list-filter-control">
+                        <Select v-model="selectedCustomerType" :options="tipeCustomers" optionLabel="nama_tipe" optionValue="id" placeholder="Tipe Customer" filter showClear fluid @change="loadAll" />
+                    </div>
+                    <div class="list-filter-control">
+                        <Select v-model="selectedChannel" :options="channelOptions" optionLabel="label" optionValue="value" placeholder="Channel" showClear fluid @change="loadAll" />
+                    </div>
+                    <div class="list-filter-control">
+                        <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" showClear fluid @change="loadAll" />
+                    </div>
                     <div class="flex items-center gap-2 px-3 py-2 bg-surface-100 dark:bg-surface-800 rounded">
                         <Checkbox v-model="includeUnused" :binary="true" inputId="includeUnused" @change="loadAll" />
                         <label for="includeUnused" class="text-sm cursor-pointer">Include unused</label>
                     </div>
                     <Button v-if="canExport" icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />
-                </div>
+                </ListFiltersSheet>
             </template>
         </Toolbar>
 

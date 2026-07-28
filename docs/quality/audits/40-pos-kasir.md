@@ -9,6 +9,10 @@
 
 Idempotency **wajib** di checkout; `qty_base`/`konversi`/`harga_satuan` di-rebuild dari master (+ serial `harga_jual`); warehouse terikat terminal; allow-list kosong = 422; `izinkan_retur` enforced; Q5 retur SN saat elektronik OFF; ownership show/search/products; sticky GT+Hold+Lainnya+BAYAR mobile; email struk via terminal mailer.
 
+**Cross 2026-07-28:** wrap teks/serial laporan shift + saudara (ringkas retur di struk, `Ket:` kas) — lihat [38-pos-shift.md](38-pos-shift.md).
+
+**Cross 2026-07-28 (retur SN):** char-break `_wrap` ESC; SN di ringkas retur struk jual (ESC+PDF) + StrukOnline; `buildReturReceipt` siap SN (wire cetak PosKasir deferred); `POST pos/returns` attach `serial_units`.
+
 ## Patched P0/P1 (utama)
 
 | ID | Fix |

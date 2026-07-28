@@ -11,6 +11,7 @@ import DataTableHeader from '@/components/common/DataTableHeader.vue';
 import RowActionButtons from '@/components/common/RowActionButtons.vue';
 import DetailItem from '@/components/common/DetailItem.vue';
 import DetailTable from '@/components/common/DetailTable.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 
 const { formatCurrency, formatDateTime, toDateString, todayString, getPrimeDateFormatShort } = useFormatters();
 const { exporting, exportListPdf } = useExportPdf();
@@ -59,6 +60,15 @@ const { items, loading, totalRecords, summary, searchQuery, startDate, endDate, 
 });
 
 const warehouses = computed(() => dropdowns.value.warehouses ?? []);
+
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedWarehouse.value) n++;
+    if (selectedSource.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
 
 const {
     detailDialog,
@@ -161,15 +171,21 @@ async function exportPdf() {
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
                     <SelectButton v-model="reportMode" :options="modeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" @change="onFilterChange" />
-                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" class="w-36" @change="onFilterChange" />
-                    <div class="w-40">
-                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <div class="w-40">
-                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                        <div class="list-filter-control">
+                            <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    </ListFiltersSheet>
                 </div>
             </template>
         </Toolbar>
@@ -290,7 +306,7 @@ async function exportPdf() {
 
             <template v-else-if="detailData.ulid">
                 <!-- Supplier Info -->
-                <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <DetailItem label="Kode Supplier" :value="detailData.kode_supplier" />
                     <DetailItem label="Nama Supplier" :value="detailData.nama_supplier" />
                 </div>

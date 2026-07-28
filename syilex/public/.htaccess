@@ -19,9 +19,9 @@
 
     # Send API, Sanctum, and Installer requests to Laravel
     # Note: /install matches both direct access and after root .htaccess rewrite (/public/install)
+    # Do NOT force /storage/ here — public/storage symlink must be served as static files.
     RewriteCond %{REQUEST_URI} ^/api/ [OR]
     RewriteCond %{REQUEST_URI} ^/sanctum/ [OR]
-    RewriteCond %{REQUEST_URI} ^/storage/ [OR]
     RewriteCond %{REQUEST_URI} /install [OR]
     RewriteCond %{REQUEST_URI} ^/public/install
     RewriteRule ^ index.php [L]

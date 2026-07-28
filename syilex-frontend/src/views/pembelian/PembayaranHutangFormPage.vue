@@ -776,7 +776,7 @@ function fillMaxDeposit(hutangId) {
             </div>
 
             <!-- Form Actions -->
-            <div class="flex justify-end gap-2">
+            <div class="flex flex-wrap justify-end gap-2">
                 <Button label="Batal" severity="secondary" outlined @click="cancel" />
                 <Button label="Simpan" icon="pi pi-save" type="submit" :loading="saving" :disabled="selectedHutangsCount === 0" />
             </div>

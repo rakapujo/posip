@@ -458,7 +458,7 @@ onMounted(() => {
         </div>
 
         <!-- Role Dialog with Permission Matrix -->
-        <Dialog v-model:visible="roleDialog" :style="{ width: '900px' }" :header="isEdit ? 'Edit Role' : 'Tambah Role'" :modal="true" :closable="!saving">
+        <Dialog v-model:visible="roleDialog" :style="{ width: '900px', maxHeight: '90vh' }" :contentStyle="{ overflowY: 'auto' }" :header="isEdit ? 'Edit Role' : 'Tambah Role'" :modal="true" :closable="!saving">
             <div class="flex flex-col gap-4">
                 <!-- Nama Role -->
                 <div>

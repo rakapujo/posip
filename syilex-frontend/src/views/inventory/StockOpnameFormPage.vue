@@ -960,7 +960,7 @@ const summary = computed(() => {
             </div>
 
             <!-- Form Actions -->
-            <div class="flex justify-end gap-2 mt-6">
+            <div class="flex flex-wrap justify-end gap-2 mt-6">
                 <Button label="Batal" severity="secondary" outlined @click="cancel" />
                 <Button
                     label="Simpan"

@@ -21,9 +21,17 @@ alwaysApply: false
 | `CustomerFormDialog` | Tambah/edit customer cepat |
 | `MoneySummaryPanel` | Ringkasan nominal (hutang/piutang/dll) |
 | `AgingBucketPanel` | Aging bucket AR/AP |
-| `ListFiltersSheet` | Sheet filter list |
+| `ListFiltersSheet` | Sheet filter list (Toolbar `#end` / header filter — **jangan** strip `w-40` inline di mobile) |
 | `CollapsibleSection` | Section form yang bisa collapse |
 | `RowActionButtons` | Aksi baris (edit/hapus/…) |
+
+## Mobile / Dialog
+
+- Filter list/laporan: `ListFiltersSheet` + `.list-filter-control` + `fluid`; SelectButton mode di **luar** sheet
+- Dialog shell: `_responsive.scss` ≤991px `.p-dialog { max-width: 95vw }` — jangan mass-add `:breakpoints`
+- Isi dialog multi-kolom: `grid-cols-1 md:grid-cols-2` (bukan `grid-cols-2` keras)
+- Dialog tinggi (Role matrix): `maxHeight: 90vh` + `contentStyle` overflow
+- Footer tombol: `.p-dialog-footer` (+ child `.flex`) wrap; `DetailDialog` stack/`flex-wrap`; form aksi `flex-wrap justify-end`
 
 ## Composables (wajib)
 

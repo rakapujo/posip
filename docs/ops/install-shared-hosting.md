@@ -47,19 +47,19 @@ File ini sudah berisi:
 
 ## Langkah 3: Setup File
 
-### Opsi A — Domain Utama
+### Opsi A — Domain Utama (DocumentRoot = isi aplikasi)
 
 1. Buka folder `posip/`
 2. **Select All** → **Move** ke `public_html/`
-3. Pastikan file `.htaccess` ikut terpindah (file hidden — aktifkan "Show Hidden Files" di Settings)
+3. Rename `htaccess.root-shared-hosting` → `.htaccess` (aktifkan "Show Hidden Files" di Settings setelah rename)
 
 URL: `http://domain-anda.com/install`
 
-### Opsi B — Subdomain
+### Opsi B — Subdomain / Hestia (DocumentRoot = `…/public`)
 
-1. Di cPanel, buka **Subdomains**
-2. Buat subdomain (misal: `pos.domain.com`)
-3. Arahkan **Document Root** ke `/home/username/posip/public`
+1. Di cPanel/Hestia, buat subdomain (misal: `pos.domain.com`)
+2. Arahkan **Document Root** ke `/home/username/posip/public` (atau `…/public_html/public`)
+3. **Jangan** rename / pasang `htaccess.root-shared-hosting` sebagai `.htaccess` di parent — file itu untuk Opsi A saja; di Hestia bisa memicu Apache 500 (`IfModule not allowed`)
 
 URL: `http://pos.domain.com/install`
 
@@ -73,11 +73,21 @@ URL: `http://pos.domain.com/install`
 4. **Add User to Database** → pilih user & database → centang **ALL PRIVILEGES** → **Make Changes**
 5. **Catat**: nama database, username, dan password
 
-## Langkah 5: Set Permissions
+## Langkah 5: Set Permissions (pre-flight — sebelum buka `/install`)
 
 Di File Manager:
 1. Klik kanan folder `storage/` → **Change Permissions** → set ke `775`
 2. Klik kanan folder `bootstrap/cache/` → **Change Permissions** → set ke `775`
+
+Via SSH (disarankan setelah extract zip dari Windows — zip sering hilangkan bit execute folder `vendor/`):
+
+```bash
+cd /path/ke/posip   # atau public_html
+find . -type d -exec chmod u+rx {} \;
+chmod -R ug+rwx storage bootstrap/cache
+```
+
+Tanpa langkah ini, PHP bisa gagal load `vendor/autoload.php` (Permission denied) sebelum wizard jalan.
 
 ## Langkah 6: Jalankan Wizard
 
@@ -104,12 +114,14 @@ Di File Manager:
 
 | Masalah | Solusi |
 |---------|--------|
-| Error 500 / Blank page | Cek permissions `storage/` dan `bootstrap/cache/` harus 775 |
-| Wizard tidak muncul | Pastikan `.htaccess` ter-upload (file hidden di cPanel) |
+| Error 500 / blank — log Apache `IfModule not allowed` | Hapus `.htaccess` di **parent** DocumentRoot; Opsi B/Hestia: jangan aktifkan `htaccess.root-shared-hosting` |
+| Error 500 — log PHP `Permission denied` di `vendor/...` | Pre-flight: `find . -type d -exec chmod u+rx {} \;` |
+| Wizard tidak muncul (Opsi A) | Rename `htaccess.root-shared-hosting` → `.htaccess`; pastikan `mod_rewrite` aktif |
 | "PHP version too low" | Di cPanel → **Select PHP Version** → pilih PHP 8.2+ |
 | Database connection failed | Pastikan username sudah di-add ke database dengan ALL PRIVILEGES |
-| Page not found (404) | Pastikan `mod_rewrite` aktif di hosting |
-| Login SPA gagal setelah install | Pastikan domain di browser sama dengan `APP_URL`; wizard otomatis set `SANCTUM_STATEFUL_DOMAINS` |
+| Page not found (404) | Pastikan `mod_rewrite` aktif; Opsi A butuh root rewrite `.htaccess` |
+| Login Server Error / `Access denied` MySQL setelah wizard “sukses” | Cek `.env` `DB_*` cocok wizard; `php artisan config:clear` (installer baru menulis `.env` sebelum optimize) |
+| Login SPA gagal (bukan 500) | Domain browser = `APP_URL`; cek `SANCTUM_STATEFUL_DOMAINS` |
 
 ## Setelah Instalasi
 

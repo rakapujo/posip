@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Actions\Sales\ProcessSalesReturnAction;
 use App\Http\Controllers\Api\BaseApiController;
+use App\Http\Controllers\Concerns\AttachesSerialUnits;
 use App\Models\DocSales;
 use App\Models\DocSalesReturn;
 use App\Models\MasterPosTerminal;
@@ -14,6 +15,7 @@ use Illuminate\Http\Request;
 
 class SalesReturnController extends BaseApiController
 {
+    use AttachesSerialUnits;
     /**
      * Search sales for return (current session or previous sessions).
      */
@@ -267,6 +269,7 @@ class SalesReturnController extends BaseApiController
         }
 
         $salesReturn = $action->execute($validated);
+        $this->attachSerialUnitsToDetails($salesReturn->details);
 
         return $this->success([
             'sales_return' => $salesReturn,

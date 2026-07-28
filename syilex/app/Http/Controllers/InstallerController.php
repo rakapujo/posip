@@ -406,8 +406,12 @@ class InstallerController extends Controller
         $appKey = 'base64:' . base64_encode(random_bytes(32));
 
         try {
-            // 1. Bootstrap runtime config from session (defer .env write to avoid
-            //    artisan serve restart killing this request mid-flight)
+            // 0. Fix dirs from Windows zip (missing +x) before migrate/seed
+            $this->ensureStorageWritable();
+            $this->ensureVendorDirsExecutable();
+
+            // 1. Bootstrap runtime config from session
+            // ponytail: write .env sync before optimize — PHP-FPM often skips deferred post-response writes; artisan serve restart risk accepted
             $this->bootstrapInstallConfig($db, $appKey);
             $results[] = ['step' => 'Menyiapkan konfigurasi', 'status' => 'ok'];
 
@@ -454,8 +458,7 @@ class InstallerController extends Controller
                 $results[] = ['step' => 'Membuat POS Terminal', 'status' => 'ok'];
             }
 
-            // 9. Create lock file (include admin email for done page,
-            // since session is invalidated after APP_KEY change)
+            // 9. Lock file (admin email for done page — session lost after APP_KEY change)
             File::put(storage_path('installed'), json_encode([
                 'installed_at' => now()->toIso8601String(),
                 'admin_email' => $admin['email'],
@@ -463,7 +466,22 @@ class InstallerController extends Controller
             ]));
             $results[] = ['step' => 'Menyelesaikan instalasi', 'status' => 'ok'];
 
-            // 10. Optimize (skip hard failure — optional on shared hosting)
+            // 10. Write .env BEFORE optimize (so config:cache is not baked from zip defaults)
+            $this->createEnvFile($db, $regional, $appKey);
+            $envOk = is_file(base_path('.env'))
+                && str_contains((string) file_get_contents(base_path('.env')), 'DB_DATABASE=' . $db['database']);
+            $results[] = [
+                'step' => 'Menulis file .env',
+                'status' => $envOk ? 'ok' : 'error',
+            ];
+            if (!$envOk) {
+                throw new \RuntimeException('Gagal menulis .env dengan kredensial database instalasi.');
+            }
+
+            // 11. Re-bootstrap then optimize (same-process Dotenv does not reload from disk)
+            $this->bootstrapInstallConfig($db, $appKey);
+            config(['app.url' => rtrim(preg_replace('#/public/?$#', '', url('/')), '/')]);
+
             try {
                 Artisan::call('optimize:clear');
                 Artisan::call('optimize');
@@ -471,17 +489,6 @@ class InstallerController extends Controller
             } catch (\Exception $e) {
                 $results[] = ['step' => 'Optimasi cache (manual: php artisan optimize)', 'status' => 'error'];
             }
-
-            // Write .env AFTER response is sent (prevents php artisan serve restart mid-request)
-            app()->terminating(function () use ($db, $regional, $appKey) {
-                try {
-                    $this->createEnvFile($db, $regional, $appKey);
-                } catch (\Throwable $e) {
-                    report($e);
-                }
-            });
-
-            $results[] = ['step' => 'Menulis file .env', 'status' => 'ok'];
 
             return response()->json(['results' => $results, 'success' => true]);
 
@@ -536,6 +543,7 @@ class InstallerController extends Controller
             ['label' => 'Extension: gd', 'passed' => extension_loaded('gd'), 'value' => extension_loaded('gd') ? 'Installed' : 'Missing', 'fix' => 'Aktifkan extension gd di php.ini.'],
             ['label' => 'Folder storage/ writable', 'passed' => is_writable(storage_path()), 'value' => is_writable(storage_path()) ? 'Writable' : 'Not Writable', 'fix' => 'Jalankan: chmod -R 775 storage'],
             ['label' => 'Folder bootstrap/cache/ writable', 'passed' => is_writable(base_path('bootstrap/cache')), 'value' => is_writable(base_path('bootstrap/cache')) ? 'Writable' : 'Not Writable', 'fix' => 'Jalankan: chmod -R 775 bootstrap/cache'],
+            ['label' => 'vendor/autoload.php readable', 'passed' => is_readable(base_path('vendor/autoload.php')), 'value' => is_readable(base_path('vendor/autoload.php')) ? 'Readable' : 'Not readable', 'fix' => 'SSH: find . -type d -exec chmod u+rx {} \;  (zip Windows sering hilangkan bit +x)'],
             ['label' => 'Memory limit >= 128M', 'passed' => $this->phpMemoryBytes() >= 128 * 1024 * 1024, 'value' => ini_get('memory_limit'), 'fix' => 'Set memory_limit = 256M di php.ini'],
             ['label' => 'Upload max filesize >= 10M', 'passed' => $this->phpUploadBytes() >= 10 * 1024 * 1024, 'value' => ini_get('upload_max_filesize'), 'fix' => 'Set upload_max_filesize = 10M di php.ini'],
             ['label' => 'Folder storage/framework/sessions writable', 'passed' => $this->ensureStorageWritable(), 'value' => is_writable(storage_path('framework/sessions')) ? 'Writable' : 'Not Writable', 'fix' => 'Jalankan: chmod -R 775 storage'],
@@ -567,6 +575,25 @@ class InstallerController extends Controller
         }
 
         return is_writable(storage_path('framework/sessions'));
+    }
+
+    /** ponytail: Windows zip may omit dir +x; O(n) dirs once at install — upgrade if install timeout */
+    private function ensureVendorDirsExecutable(): void
+    {
+        $root = base_path('vendor');
+        if (!is_dir($root)) {
+            return;
+        }
+
+        $it = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ($it as $file) {
+            if ($file->isDir()) {
+                @chmod($file->getPathname(), 0755);
+            }
+        }
     }
 
     private function phpMemoryBytes(): int

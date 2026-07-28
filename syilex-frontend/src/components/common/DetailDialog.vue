@@ -88,11 +88,11 @@ function closeDialog() {
         </div>
 
         <template #footer>
-            <div class="flex justify-between w-full">
-                <div class="flex gap-2">
+            <div class="flex flex-col-reverse sm:flex-row sm:justify-between gap-2 w-full">
+                <div class="flex flex-wrap gap-2">
                     <slot name="footer-extra"></slot>
                 </div>
-                <Button label="Tutup" icon="pi pi-times" text @click="closeDialog" />
+                <Button label="Tutup" icon="pi pi-times" text class="self-end sm:self-auto" @click="closeDialog" />
             </div>
         </template>
     </Dialog>

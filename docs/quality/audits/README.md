@@ -84,5 +84,6 @@ Deep audit berurutan mengikuti `AppMenu.vue` (Home → Master Data).
 | 69 | Permission matrix & checklist | [69-permission-matrix-checklist.md](69-permission-matrix-checklist.md) | patched |
 | 70 | App Shell (layout / menu / chrome) | [70-app-shell.md](70-app-shell.md) | draft (P0 via #69) |
 | 71 | Terminal store branding (POS docs) | [71-terminal-store-branding.md](71-terminal-store-branding.md) | patched |
+| 72 | Mobile filters + Dialog responsif | [72-mobile-filters-modals.md](72-mobile-filters-modals.md) | patched |
 
 Rule Cursor: `.cursor/rules/posip-menu-audit.mdc`

@@ -110,6 +110,29 @@ export function useShiftReport() {
             doc.text(String(right), pageWidth - margin - rightWidth, y);
             y += lineHeight;
         };
+        const maxWidth = pageWidth - margin * 2;
+        const leftWrap = (text, fontSize = 6, lh = lineHeight) => {
+            doc.setFontSize(fontSize);
+            for (const wl of doc.splitTextToSize(String(text), maxWidth)) {
+                ensureSpace(lh);
+                doc.text(wl, margin, y);
+                y += lh;
+            }
+        };
+        // Two-col if left fits beside right; else wrap left then right-align amount.
+        const leftRightOrWrap = (left, right, fontSize = 7) => {
+            doc.setFontSize(fontSize);
+            const rightStr = String(right);
+            const rw = doc.getTextWidth(rightStr);
+            const avail = Math.max(8, maxWidth - rw - 2);
+            const fitted = doc.splitTextToSize(String(left), avail);
+            if (fitted.length === 1 && doc.getTextWidth(fitted[0]) <= avail) {
+                leftRight(left, right, fontSize);
+                return;
+            }
+            leftWrap(left, fontSize);
+            leftRight('', right, fontSize);
+        };
         const dashed = () => {
             ensureSpace(4);
             y += 1;
@@ -217,12 +240,9 @@ export function useShiftReport() {
         if (serialUnits.length) {
             section(`UNIT SERIAL TERJUAL (${serialUnits.length} unit)`);
             for (const u of serialUnits) {
-                // Baris 1: produk + harga
-                leftRight(u.product || '-', formatCurrency(u.harga), 7);
-                // Baris 2: kode internal (identitas unik) atau SN + nomor nota (kecil)
+                leftRightOrWrap(u.product || '-', formatCurrency(u.harga), 7);
                 doc.setFontSize(6);
-                leftRight(`  ${u.kode_internal || 'SN ' + (u.serial_number || '-')}`, u.nomor_dokumen || '-', 6);
-                // Baris 3: SN (bila ada kode_internal) / grade / baterai / status akun (gabung, skip yang kosong)
+                leftRightOrWrap(`  ${u.kode_internal || 'SN ' + (u.serial_number || '-')}`, u.nomor_dokumen || '-', 6);
                 const meta = [];
                 if (u.kode_internal && u.serial_number) meta.push(`SN ${u.serial_number}`);
                 if (u.grade) meta.push(`Grade ${u.grade}`);
@@ -230,11 +250,7 @@ export function useShiftReport() {
                 if (u.battery_cycle_count !== null && u.battery_cycle_count !== undefined) meta.push(`Cyc ${u.battery_cycle_count}`);
                 if (u.account_status) meta.push(`Akun ${u.account_status}`);
                 if (u.catatan) meta.push(`Cat ${u.catatan}`);
-                if (meta.length) {
-                    ensureSpace(lineHeight);
-                    doc.text(`  ${meta.join(' | ')}`, margin, y);
-                    y += lineHeight;
-                }
+                if (meta.length) leftWrap(`  ${meta.join(' | ')}`, 6);
                 doc.setFontSize(7);
             }
             dashed();
@@ -285,7 +301,7 @@ export function useShiftReport() {
         leftRight(`Kas Masuk${kmDetail.length ? ` (${kmDetail.length}x)` : ''}`, '+' + formatCurrency(data.kas?.kas_masuk), 7);
         if (kmDetail.length) {
             doc.setFontSize(6);
-            for (const item of kmDetail) leftRight(`  ${item.keterangan || '-'}`, '+' + formatCurrency(item.nominal), 6);
+            for (const item of kmDetail) leftRightOrWrap(`  ${item.keterangan || '-'}`, '+' + formatCurrency(item.nominal), 6);
             doc.setFontSize(7);
         }
 
@@ -294,7 +310,7 @@ export function useShiftReport() {
         leftRight(`Kas Keluar${kkDetail.length ? ` (${kkDetail.length}x)` : ''}`, '-' + formatCurrency(data.kas?.kas_keluar), 7);
         if (kkDetail.length) {
             doc.setFontSize(6);
-            for (const item of kkDetail) leftRight(`  ${item.keterangan || '-'}`, '-' + formatCurrency(item.nominal), 6);
+            for (const item of kkDetail) leftRightOrWrap(`  ${item.keterangan || '-'}`, '-' + formatCurrency(item.nominal), 6);
             doc.setFontSize(7);
         }
 

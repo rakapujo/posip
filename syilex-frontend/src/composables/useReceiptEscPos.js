@@ -70,11 +70,20 @@ function _twoCol(left, right, w) {
     return l + ' ' + right;
 }
 
-// Word-wrap a string to width `w`, preserving the leading indent on wrapped lines.
+// Word-wrap to width `w`, keeping leading indent on wrapped lines.
+// Oversized tokens (SN/IMEI without spaces) are hard-split to fit.
 function _wrap(str, w) {
-    if (str.length <= w) return [str];
-    const indent = (str.match(/^\s*/) || [''])[0];
-    const words = str.trim().split(/\s+/);
+    if (w <= 0) return [String(str)];
+    const s = String(str);
+    if (s.length <= w) return [s];
+    const indent = (s.match(/^\s*/) || [''])[0];
+    const maxContent = Math.max(1, w - indent.length);
+    const words = s.trim().split(/\s+/).flatMap((word) => {
+        if (word.length <= maxContent) return [word];
+        const chunks = [];
+        for (let i = 0; i < word.length; i += maxContent) chunks.push(word.slice(i, i + maxContent));
+        return chunks;
+    });
     const out = [];
     let cur = indent;
     for (const word of words) {
@@ -87,7 +96,15 @@ function _wrap(str, w) {
         }
     }
     if (cur.trim() !== '') out.push(cur);
-    return out.length ? out : [str];
+    return out.length ? out : [s];
+}
+
+/** Two-col if left+right fit; else wrap left full-width then right-align right. */
+function _twoColOrWrap(left, right, w) {
+    const l = String(left ?? '');
+    const r = String(right ?? '');
+    if (l.length + 1 + r.length <= w) return [_twoCol(l, r, w)];
+    return [..._wrap(l, w), _twoCol('', r, w)];
 }
 
 function _feedAndCut(buf, feedLines, openDrawer = false) {
@@ -135,6 +152,15 @@ export function useReceiptEscPos() {
         }
         if (u.account_status) parts.push(u.account_status);
         return { main: parts.join(' . '), catatan: u.catatan || '' };
+    }
+
+    function emitSerialLines(buf, units, cw) {
+        if (!units?.length) return;
+        for (const u of units) {
+            const { main, catatan } = fmtSerialUnit(u);
+            for (const wl of _wrap('  ' + main, cw)) buf.text(wl + '\n');
+            if (catatan) for (const wl of _wrap('    Cat: ' + catatan, cw)) buf.text(wl + '\n');
+        }
     }
 
     // ─── Discount line label (5-level) ───
@@ -212,13 +238,7 @@ export function useReceiptEscPos() {
                 buf.text(_twoCol(`    ${discLabel}`, '-' + fmtC(d.diskon_total), cw) + '\n');
             }
             // Serial units — one (wrapped) line per unit, indented
-            if (d.serial_units?.length) {
-                for (const u of d.serial_units) {
-                    const { main, catatan } = fmtSerialUnit(u);
-                    for (const wl of _wrap('  ' + main, cw)) buf.text(wl + '\n');
-                    if (catatan) for (const wl of _wrap('    Cat: ' + catatan, cw)) buf.text(wl + '\n');
-                }
-            }
+            emitSerialLines(buf, d.serial_units, cw);
         }
         buf.text(_line('-', cw));
 
@@ -282,7 +302,10 @@ export function useReceiptEscPos() {
                 buf.text(_twoCol(ret.nomor_dokumen || '', 'Tunai', cw) + '\n');
                 buf.text('  ' + formatDateTime(ret.tanggal) + '\n');
                 for (const d of ret.details || []) {
-                    buf.text(_twoCol(`  ${d.product?.nama_produk || ''} x${formatQty(d.qty)}`, `@ ${fmtC(d.harga_satuan)}`, cw) + '\n');
+                    for (const wl of _twoColOrWrap(`  ${d.product?.nama_produk || ''} x${formatQty(d.qty)}`, `@ ${fmtC(d.harga_satuan)}`, cw)) {
+                        buf.text(wl + '\n');
+                    }
+                    emitSerialLines(buf, d.serial_units, cw);
                 }
                 if (Number(ret.pembulatan)) buf.text(_twoCol('  Pembulatan', fmtC(ret.pembulatan), cw) + '\n');
                 buf.cmd(CMD.BOLD_ON)
@@ -370,6 +393,7 @@ export function useReceiptEscPos() {
             const sub = Number(qty) * Number(price);
             buf.text(name + '\n');
             buf.text(_twoCol(`  ${formatQty(qty)} x ${fmtC(price)}`, fmtC(sub), cw) + '\n');
+            emitSerialLines(buf, d.serial_units, cw);
         }
         buf.text(_line('-', cw));
 
@@ -426,7 +450,9 @@ export function useReceiptEscPos() {
         buf.cmd(CMD.BOLD_OFF);
 
         // Keterangan
-        if (params.keterangan) buf.text('Ket: ' + params.keterangan + '\n');
+        if (params.keterangan) {
+            for (const wl of _wrap('Ket: ' + params.keterangan, cw)) buf.text(wl + '\n');
+        }
 
         buf.text(_line('=', cw));
         _feedAndCut(buf, feedLines);
@@ -463,10 +489,10 @@ export function useReceiptEscPos() {
         buf.text(_twoCol('Kasir', ': ' + (shift.user?.name || '-'), cw) + '\n');
         buf.text(_twoCol('Mulai', ': ' + (shift.started_at ? formatDateTime(shift.started_at) : '-'), cw) + '\n');
         buf.text(_twoCol('Selesai', ': ' + (shift.ended_at ? formatDateTime(shift.ended_at) : '-'), cw) + '\n');
-        // Status
+        // Status (wrap — jangan _twoCol slice pada nama admin panjang)
         let shiftStatus = 'Masih Aktif';
         if (shift.ended_at) shiftStatus = shift.ended_by_force ? `Ditutup Paksa oleh ${shift.forced_by_user?.name || 'Admin'}` : 'Ditutup Normal';
-        buf.text(_twoCol('Status', ': ' + shiftStatus, cw) + '\n');
+        for (const wl of _wrap('Status: ' + shiftStatus, cw)) buf.text(wl + '\n');
         buf.text(_line('-', cw));
 
         // Penjualan — Biaya Pembayaran before OMZET (same order as PDF)
@@ -493,11 +519,9 @@ export function useReceiptEscPos() {
             buf.text(_twoCol('UNIT SERIAL TERJUAL', `${serialUnits.length} unit`, cw) + '\n');
             buf.cmd(CMD.BOLD_OFF);
             for (const u of serialUnits) {
-                // Baris 1: produk + harga
-                buf.text(_twoCol(u.product || '-', fmtC(u.harga), cw) + '\n');
-                // Baris 2: kode internal (identitas unik) atau SN + nomor nota
-                buf.text(`  ${u.kode_internal || 'SN ' + (u.serial_number || '-')} | ${u.nomor_dokumen || '-'}\n`);
-                // Baris 3: SN (bila ada kode_internal) / grade / baterai / status akun (skip yang kosong)
+                for (const wl of _twoColOrWrap(u.product || '-', fmtC(u.harga), cw)) buf.text(wl + '\n');
+                const idLine = `  ${u.kode_internal || 'SN ' + (u.serial_number || '-')} | ${u.nomor_dokumen || '-'}`;
+                for (const wl of _wrap(idLine, cw)) buf.text(wl + '\n');
                 const meta = [];
                 if (u.kode_internal && u.serial_number) meta.push(`SN ${u.serial_number}`);
                 if (u.grade) meta.push(`Grade ${u.grade}`);
@@ -505,7 +529,9 @@ export function useReceiptEscPos() {
                 if (u.battery_cycle_count !== null && u.battery_cycle_count !== undefined) meta.push(`Cyc ${u.battery_cycle_count}`);
                 if (u.account_status) meta.push(`Akun ${u.account_status}`);
                 if (u.catatan) meta.push(`Cat ${u.catatan}`);
-                if (meta.length) buf.text(`  ${meta.join(' | ')}\n`);
+                if (meta.length) {
+                    for (const wl of _wrap(`  ${meta.join(' | ')}`, cw)) buf.text(wl + '\n');
+                }
             }
             buf.text(_line('-', cw));
         }
@@ -550,13 +576,13 @@ export function useReceiptEscPos() {
         const kmDetail = kas.kas_masuk_detail || [];
         buf.text(_twoCol(`Kas Masuk${kmDetail.length ? ` (${kmDetail.length}x)` : ''}`, km ? '+' + fmtC(km) : fmtC(0), cw) + '\n');
         for (const item of kmDetail) {
-            buf.text(_twoCol(`  ${item.keterangan || '-'}`, '+' + fmtC(item.nominal), cw) + '\n');
+            for (const wl of _twoColOrWrap(`  ${item.keterangan || '-'}`, '+' + fmtC(item.nominal), cw)) buf.text(wl + '\n');
         }
         const kk = Number(kas.kas_keluar || 0);
         const kkDetail = kas.kas_keluar_detail || [];
         buf.text(_twoCol(`Kas Keluar${kkDetail.length ? ` (${kkDetail.length}x)` : ''}`, kk ? '-' + fmtC(kk) : fmtC(0), cw) + '\n');
         for (const item of kkDetail) {
-            buf.text(_twoCol(`  ${item.keterangan || '-'}`, '-' + fmtC(item.nominal), cw) + '\n');
+            for (const wl of _twoColOrWrap(`  ${item.keterangan || '-'}`, '-' + fmtC(item.nominal), cw)) buf.text(wl + '\n');
         }
         const refund = Number(kas.refund_tunai || 0);
         buf.text(_twoCol('Refund Retur (Cash)', refund ? '-' + fmtC(refund) : fmtC(0), cw) + '\n');

@@ -116,7 +116,7 @@ function onClear() {
                 <InputIcon v-if="modelValue" class="pi pi-times cursor-pointer hover:!text-surface-600" @click="onClear" />
             </IconField>
 
-            <div v-if="$slots.extra" class="flex gap-2 shrink-0">
+            <div v-if="$slots.extra" class="flex flex-wrap gap-2 shrink-0">
                 <slot name="extra"></slot>
             </div>
         </div>

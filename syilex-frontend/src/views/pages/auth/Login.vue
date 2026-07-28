@@ -103,12 +103,6 @@ const handleLogin = async () => {
 
         <!-- Right Panel - Login Form -->
         <div class="form-panel">
-            <!-- Mobile header -->
-            <div class="mobile-brand">
-                <img :src="settingsStore.storeLogo || '/logo.svg'" :alt="settingsStore.storeName" class="mobile-logo" />
-                <span class="mobile-name">{{ settingsStore.storeName }}</span>
-            </div>
-
             <div class="form-wrapper">
                 <div class="form-inner">
                     <!-- Header -->
@@ -435,34 +429,6 @@ const handleLogin = async () => {
         border-radius: 0;
         box-shadow: -10px 0 40px rgba(0, 0, 0, 0.15);
     }
-}
-
-/* Mobile brand header */
-.mobile-brand {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    padding: 1.5rem;
-    background: linear-gradient(135deg, var(--p-primary-500), var(--p-primary-600));
-    color: var(--p-primary-contrast-color);
-}
-
-@media (min-width: 1100px) {
-    .mobile-brand {
-        display: none;
-    }
-}
-
-.mobile-logo {
-    height: 32px;
-    width: auto;
-    object-fit: contain;
-}
-
-.mobile-name {
-    font-size: 1.125rem;
-    font-weight: 600;
 }
 
 /* Form wrapper */

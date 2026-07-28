@@ -937,7 +937,7 @@ const summary = computed(() => {
                 </DataTable>
             </div>
 
-            <div class="flex justify-end gap-2 mt-6">
+            <div class="flex flex-wrap justify-end gap-2 mt-6">
                 <Button label="Batal" severity="secondary" outlined @click="goBack" :disabled="saving || approving" />
                 <Button v-if="isEdit && canApprovePerm" label="Approve" icon="pi pi-check" severity="success" :loading="approving" @click="confirmApprove" />
                 <Button label="Simpan" icon="pi pi-save" :loading="saving" @click="save" />

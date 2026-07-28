@@ -135,17 +135,17 @@ const downloadPdf = () =>
                 {{ watermark.text }}
             </div>
 
-            <!-- Header -->
-            <div class="bg-slate-700 px-6 py-5 text-center relative z-10" style="color: #fff">
-                <img v-if="store?.logo_url" :src="store.logo_url" alt="Logo" class="h-10 mx-auto mb-2" />
-                <h1 class="text-xl font-bold" style="color: #fff">{{ store?.name || 'POSIP' }}</h1>
-                <p v-if="store?.address" class="text-sm mt-0.5" style="color: #cbd5e1">{{ store.address }}</p>
-                <div v-if="store?.phone || store?.email" class="text-xs mt-0.5" style="color: #94a3b8">
+            <!-- Header: netral agar logo berwarna (termasuk gelap) tetap terbaca -->
+            <div class="bg-slate-50 border-b border-slate-200 px-6 py-5 text-center relative z-10">
+                <img v-if="store?.logo_url" :src="store.logo_url" alt="Logo" class="h-10 max-h-12 max-w-[200px] object-contain mx-auto mb-2" />
+                <p class="text-xl font-bold text-slate-800 m-0">{{ store?.name || 'POSIP' }}</p>
+                <p v-if="store?.address" class="text-sm mt-0.5 text-slate-500">{{ store.address }}</p>
+                <div v-if="store?.phone || store?.email" class="text-xs mt-0.5 text-slate-400">
                     <span v-if="store?.phone">{{ store.phone }}</span>
                     <span v-if="store?.phone && store?.email"> | </span>
                     <span v-if="store?.email">{{ store.email }}</span>
                 </div>
-                <div v-if="store?.npwp" class="text-xs mt-0.5" style="color: #94a3b8">NPWP: {{ store.npwp }}</div>
+                <div v-if="store?.npwp" class="text-xs mt-0.5 text-slate-400">NPWP: {{ store.npwp }}</div>
             </div>
 
             <div class="px-6 py-4 relative z-10">
@@ -279,9 +279,17 @@ const downloadPdf = () =>
                         </div>
                         <div class="text-xs text-slate-500 mb-2">{{ formatDateTime(ret.tanggal) }} oleh {{ ret.created_by?.name || '-' }}</div>
                         <div class="space-y-1">
-                            <div v-for="d in ret.details" :key="d.id" class="flex justify-between text-xs">
-                                <span class="text-slate-600">{{ d.product?.nama_produk }} x {{ formatQty(d.qty) }}</span>
-                                <span class="text-orange-600 font-medium">@ {{ formatCurrency(d.harga_satuan) }}</span>
+                            <div v-for="d in ret.details" :key="d.id">
+                                <div class="flex justify-between text-xs">
+                                    <span class="text-slate-600">{{ d.product?.nama_produk }} x {{ formatQty(d.qty) }}</span>
+                                    <span class="text-orange-600 font-medium">@ {{ formatCurrency(d.harga_satuan) }}</span>
+                                </div>
+                                <div v-if="d.serial_units?.length" class="pl-2 text-[10px] text-slate-500 font-mono space-y-0.5">
+                                    <div v-for="(u, ui) in d.serial_units" :key="ui">
+                                        <template v-if="u.kode_internal">{{ u.kode_internal }} · </template>SN {{ u.serial_number
+                                        }}<template v-if="u.grade"> ({{ u.grade }})</template>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div v-if="Number(ret.pembulatan)" class="flex justify-between text-xs mt-1">

@@ -7,6 +7,7 @@ import { useExportPdf } from '@/composables/useExportPdf';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
 import DataTableHeader from '@/components/common/DataTableHeader.vue';
+import ListFiltersSheet from '@/components/common/ListFiltersSheet.vue';
 
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -62,6 +63,18 @@ const warehouses = computed(() => dropdowns.value.warehouses ?? []);
 const brands = computed(() => dropdowns.value.brands ?? []);
 const kategoris = computed(() => dropdowns.value.kategoris ?? []);
 
+const activeFilterCount = computed(() => {
+    let n = 0;
+    if (selectedSupplier.value) n++;
+    if (selectedWarehouse.value) n++;
+    if (selectedBrand.value) n++;
+    if (selectedKategori.value) n++;
+    if (selectedSource.value) n++;
+    if (startDate.value) n++;
+    if (endDate.value) n++;
+    return n;
+});
+
 async function exportPdf() {
     const params = { ...buildFilterParams(), page: 1, per_page: 999999, sort_field: 'kode_produk', sort_order: 'asc' };
     let allData;
@@ -113,18 +126,30 @@ async function exportPdf() {
             </template>
             <template #end>
                 <div class="flex flex-wrap gap-2 items-center">
-                    <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" class="w-40" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" class="w-36" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" class="w-36" filter showClear @change="onFilterChange" />
-                    <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" class="w-36" @change="onFilterChange" />
-                    <div class="w-40">
-                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <div class="w-40">
-                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
-                    </div>
-                    <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    <ListFiltersSheet :active-count="activeFilterCount">
+                        <div class="list-filter-control">
+                            <Select v-model="selectedSupplier" :options="suppliers" optionLabel="nama_supplier" optionValue="id" placeholder="Supplier" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedWarehouse" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Gudang" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedBrand" :options="brands" optionLabel="nama_brand" optionValue="id" placeholder="Brand" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedKategori" :options="kategoris" optionLabel="nama_kategori" optionValue="id" placeholder="Kategori" fluid filter showClear @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <Select v-model="selectedSource" :options="sourceOptions" optionLabel="label" optionValue="value" placeholder="Sumber" fluid @change="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <div class="list-filter-control">
+                            <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilterChange" />
+                        </div>
+                        <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
+                    </ListFiltersSheet>
                 </div>
             </template>
         </Toolbar>

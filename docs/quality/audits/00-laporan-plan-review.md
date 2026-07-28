@@ -83,3 +83,19 @@ Summary KPI cards must fit full currency up to ~**Rp 10.000.000.000.000** withou
 ## Bugfix — Inventory Stok summary Total Nilai (2026-07-27)
 
 `InventoryStockController::summary` hydrated Eloquent model → accessor `total_value` (`qty * avg_cost` per row) **overrode** SQL `SUM(qty * avg_cost)`. Card “Total Nilai” showed `Rp 0`. Fixed with `toBase()` before aggregate `first()`.
+
+## Mobile filter sheet + modal inner (2026-07-28)
+
+**Root cause filter melebar:** `_responsive.scss` toolbar `nowrap` + `#end { flex: 0 0 auto }` + inline `w-40` tanpa `ListFiltersSheet`.
+
+**Fix:** migrasi laporan ? `ListFiltersSheet` + `list-filter-control` + `fluid` (pola ArusKas/Kasir). SelectButton mode di luar sheet.
+
+| Grup | File |
+|------|------|
+| Penjualan | PerBarang, Pembulatan, DiscLine, DiscNota, Biaya |
+| Pembelian | PerBarang, PerSupplier, Diskon, HargaTerakhir (+ polish PerDokumen) |
+| Promo | PromoUsage, CustomerPromo, ProductPromo |
+
+**P0 CustomerPromo:** import `tipeCustomersApi` / `kategoriCustomersApi` + declare refs.
+
+**Modal:** shell OK via `.p-dialog { max-width: 95vw }`. Inner grids `md:` / DiscLine `sm:`; RolePage `maxHeight: 90vh`. Detail: [`72-mobile-filters-modals.md`](72-mobile-filters-modals.md).

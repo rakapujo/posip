@@ -286,7 +286,7 @@ async function saveSupplier() {
 
         <!-- Supplier Dialog -->
         <Dialog v-model:visible="supplierDialog" :style="{ width: '700px' }" :header="isEdit ? 'Edit Supplier' : 'Tambah Supplier'" :modal="true" :closable="!saving">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block font-medium mb-2">
                         Kode Supplier <span class="text-red-500">*</span>
@@ -402,7 +402,7 @@ async function saveSupplier() {
             <template #content>
                 <div class="flex flex-col gap-4">
                     <!-- Informasi Dasar -->
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <DetailItem label="Kode Supplier" :value="detailData.kode_supplier" />
                         <DetailItem label="Nama Supplier" :value="detailData.nama_supplier" />
                         <DetailItem label="Nama PIC" :value="detailData.nama_pic" />
@@ -418,7 +418,7 @@ async function saveSupplier() {
                         <i class="pi pi-building"></i>
                         Informasi Bank
                     </h4>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <DetailItem label="Nama Bank" :value="detailData.bank_nama" />
                         <DetailItem label="No. Rekening" :value="detailData.bank_rekening" />
                         <DetailItem label="Atas Nama" :value="detailData.bank_atas_nama" />
@@ -430,7 +430,7 @@ async function saveSupplier() {
                         <i class="pi pi-cog"></i>
                         Pengaturan
                     </h4>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <DetailItem label="Tempo Default" :value="detailData.tempo_default ? `${detailData.tempo_default} hari` : '-'" />
                         <DetailItem label="Status" :value="getStatusLabel(detailData.status)" type="badge" :badge-severity="getStatusSeverity(detailData.status)" />
                     </div>

@@ -719,7 +719,7 @@ function goBack() {
                 </div>
             </div>
 
-            <div class="flex justify-end gap-2 mt-6">
+            <div class="flex flex-wrap justify-end gap-2 mt-6">
                 <Button label="Batal" severity="secondary" outlined @click="goBack" :disabled="saving" />
                 <Button label="Simpan Draft" icon="pi pi-save" :loading="saving" @click="save" />
             </div>

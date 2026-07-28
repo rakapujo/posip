@@ -225,13 +225,15 @@ const p = computed(() => props.data?.penjualan || {});
                 <div class="space-y-2">
                     <div v-for="(u, i) in data.serial_units_sold" :key="'su' + i" class="pb-2 border-b border-surface-200 dark:border-surface-700 last:border-0 last:pb-0">
                         <div class="flex justify-between gap-2">
-                            <span class="font-medium">{{ u.product || '-' }}</span>
-                            <span class="font-medium whitespace-nowrap">{{ formatCurrency(u.harga) }}</span>
+                            <span class="font-medium min-w-0 break-words">{{ u.product || '-' }}</span>
+                            <span class="font-medium whitespace-nowrap shrink-0">{{ formatCurrency(u.harga) }}</span>
                         </div>
-                        <div class="text-xs text-surface-500 mt-0.5">
-                            <span v-if="u.kode_internal" class="font-mono">{{ u.kode_internal }} · </span>
+                        <div class="text-xs text-surface-500 mt-0.5 flex flex-wrap gap-x-1 gap-y-0.5 break-all">
+                            <span v-if="u.kode_internal" class="font-mono">{{ u.kode_internal }}</span>
+                            <span v-if="u.kode_internal">·</span>
                             <span class="font-mono">SN: {{ u.serial_number || '-' }}</span>
-                            <span> · {{ u.nomor_dokumen || '-' }}</span>
+                            <span>·</span>
+                            <span>{{ u.nomor_dokumen || '-' }}</span>
                         </div>
                         <div class="text-xs text-surface-500 mt-0.5 flex flex-wrap gap-x-3">
                             <span v-if="u.grade">Grade: {{ u.grade }}</span>
@@ -323,9 +325,9 @@ const p = computed(() => props.data?.penjualan || {});
                         <span>{{ Number(data.kas?.kas_masuk) > 0 ? '+' : '' }}{{ formatCurrency(data.kas?.kas_masuk) }}</span>
                     </div>
                     <template v-if="data.kas?.kas_masuk_detail?.length">
-                        <div v-for="(item, i) in data.kas.kas_masuk_detail" :key="'km' + i" class="flex justify-between text-xs pl-4 text-surface-500">
-                            <span>{{ item.keterangan || '-' }}</span>
-                            <span>+{{ formatCurrency(item.nominal) }}</span>
+                        <div v-for="(item, i) in data.kas.kas_masuk_detail" :key="'km' + i" class="flex justify-between gap-2 text-xs pl-4 text-surface-500">
+                            <span class="min-w-0 break-words">{{ item.keterangan || '-' }}</span>
+                            <span class="shrink-0">+{{ formatCurrency(item.nominal) }}</span>
                         </div>
                     </template>
 
@@ -335,9 +337,9 @@ const p = computed(() => props.data?.penjualan || {});
                         <span>{{ Number(data.kas?.kas_keluar) > 0 ? '-' : '' }}{{ formatCurrency(data.kas?.kas_keluar) }}</span>
                     </div>
                     <template v-if="data.kas?.kas_keluar_detail?.length">
-                        <div v-for="(item, i) in data.kas.kas_keluar_detail" :key="'kk' + i" class="flex justify-between text-xs pl-4 text-surface-500">
-                            <span>{{ item.keterangan || '-' }}</span>
-                            <span>-{{ formatCurrency(item.nominal) }}</span>
+                        <div v-for="(item, i) in data.kas.kas_keluar_detail" :key="'kk' + i" class="flex justify-between gap-2 text-xs pl-4 text-surface-500">
+                            <span class="min-w-0 break-words">{{ item.keterangan || '-' }}</span>
+                            <span class="shrink-0">-{{ formatCurrency(item.nominal) }}</span>
                         </div>
                     </template>
 
