@@ -155,7 +155,7 @@ Pembelian serial = pembelian nyata (stok + hutang) → WAJIB tercermin di lapora
 ### Laporan yang TIDAK perlu serial (terverifikasi)
 - **Penjualan, Performa (Kasir/Metode/Top Customer), Promo & Diskon, Gross Profit** — basis `doc_sales*`; serial belum dijual (POS diparkir) → tak ada baris serial.
 - **Arus Kas Harian** — basis kas penjualan + manual; pembelian (PO maupun serial) memang tak masuk cashflow (by design).
-- ⚠️ **Margin per Barang** — pakai `master_produk.harga_4` (= **0** untuk produk serial, scaffold) + `avg_cost`. Produk serial muncul dengan **harga jual 0 → margin menyesatkan**. Harga jual riil ada per-unit di `serial_units.harga_jual`. **Dibiarkan** sampai modul jual serial live (Fase 5) — abaikan baris serial di laporan ini.
+- ⚠️ **Margin per Barang** — parent serial memakai **AVG** `serial_units.harga_jual` / `cost_per_unit` (status `tersedia`); child expand per unit. Non-serial tetap `master_produk.harga_N` vs `avg_cost`. Excel/PDF flat 1 baris/unit. (`MarginPerBarangReportBuilder`, audit [#53](../quality/audits/53-margin-per-barang.md)).
 - ⚠️ **Dead Stock** — produk serial belum bisa dijual → `last_sold` NULL → selalu ter-flag "dead stock" bila `include_never_sold=true`. Mitigasi: pakai toggle `include_never_sold=false`.
 
 ## 4.9 Integrasi Pengaturan
@@ -264,7 +264,7 @@ Seluruh modul serial dapat **dimatikan** untuk toko **retail-only**. Setting `mo
 | `serial-hpp.create/update/delete` | ✓ | ✓ | ✓ (draft) | — |
 | `serial-hpp.approve` | ✓ | ✓ | **✗** | — |
 
-**Lihat harga Pembelian Serial** digate **`serial-intake.view_harga`** (sensitif, hanya admin/super-admin — pola sama `po.view_harga`). Tampilan read-only (detail dokumen, kolom Grand Total di list, PDF) **menyembunyikan** Modal/Jual/total untuk yang tak berizin. **Form create/edit tetap menampilkan harga** (memang harus diisi) → karena itu `show` tetap mengirim harga bila user punya `view_harga` **ATAU** `serial-intake.update` (editor butuh memuat form edit); list digate murni `view_harga`. Backend strip (`makeHidden`) + frontend gate (`canViewHarga`).
+**Lihat harga Pembelian Serial** digate **`serial-intake.view_harga`** (sensitif, hanya admin/super-admin — pola sama `po.view_harga`). Tampilan read-only (detail dokumen, kolom Grand Total di list, PDF) **menyembunyikan Modal/total** untuk yang tak berizin; **`harga_jual` selalu tampil**. **Form create/edit tetap menampilkan harga** (memang harus diisi) → karena itu `show` tetap mengirim harga bila user punya `view_harga` **ATAU** `serial-intake.update` (editor butuh memuat form edit); list digate murni `view_harga`. Backend strip (`makeHidden`) + frontend gate (`canViewHarga`).
 
 Register Unit Serial (`GET /serial-units`, read-only) memakai permission baca **`serial-intake.view`** (tak ada permission khusus). Operasi inventory serial (Transfer/Adjustment/Opname/Retur) pakai permission modul masing-masing yang sudah ada (`transfer.*`, `adjustment.*`, `opname.*`, `retur-beli.*`) — tak ada permission baru. Diseed di [UserSeeder.php](../../syilex/database/seeders/UserSeeder.php).
 
@@ -277,7 +277,7 @@ Harga/cost unit serial muncul di banyak permukaan; izinnya dibedakan per **konte
 | `stok.view_hpp` | **cost/modal unit** di mana pun: Register, picker `available`, export Register, scan `lookup`, kartu stok, valuasi |
 | `po.view_harga` | harga/total di **Purchase Order + Laporan Pembelian** (PO + serial digabung) |
 
-Konsekuensi by-design: laporan pembelian (gate `po.view_harga`) menampilkan total/cost pembelian serial walau user tak punya `serial-intake.view_harga` — `po.view_harga` adalah payung "lihat harga beli". `harga_jual` (harga jual unit) **bukan** rahasia → selalu tampil.
+Konsekuensi by-design: laporan pembelian (gate `po.view_harga`) menampilkan total/cost pembelian serial walau user tak punya `serial-intake.view_harga` — `po.view_harga` adalah payung "lihat harga beli". `harga_jual` (harga jual unit) **bukan** rahasia → selalu tampil. Permission **`sales.view_harga` dihapus** (penjualan/harga jual tidak digate).
 
 ---
 

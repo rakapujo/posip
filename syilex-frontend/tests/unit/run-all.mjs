@@ -15,7 +15,8 @@ const suites = [
     'printPolicy.test.mjs',
     'pdfPageSizeGuard.test.mjs',
     'deadCodeGuard.test.mjs',
-    'masterUiGuard.test.mjs'
+    'masterUiGuard.test.mjs',
+    'mobileDialogGuard.test.mjs'
 ];
 
 let failed = 0;

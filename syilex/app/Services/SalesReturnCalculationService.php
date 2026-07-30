@@ -6,6 +6,7 @@ use App\Models\DocSales;
 use App\Models\DocSalesReturnDetail;
 use App\Models\MasterProduk;
 use App\Models\SerialUnit;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -15,6 +16,9 @@ use Illuminate\Validation\ValidationException;
  */
 class SalesReturnCalculationService
 {
+    /** Status yang mengunci qty returnable (termasuk draft = soft reserve). */
+    private const RETURNED_STATUSES = ['draft', 'lock', 'approved'];
+
     public static function validateReturnable(DocSales $sales, array $items, ?int $excludeReturnId = null): void
     {
         $sales->loadMissing('details.product');
@@ -27,7 +31,7 @@ class SalesReturnCalculationService
 
         $returned = DocSalesReturnDetail::whereIn('sales_detail_id', $detailIds)
             ->when($excludeReturnId, fn ($query) => $query->where('return_id', '!=', $excludeReturnId))
-            ->whereHas('salesReturn', fn ($query) => $query->whereIn('status', ['lock', 'approved']))
+            ->whereHas('salesReturn', fn ($query) => $query->whereIn('status', self::RETURNED_STATUSES))
             ->selectRaw('sales_detail_id, SUM(qty_base) total')
             ->groupBy('sales_detail_id')
             ->pluck('total', 'sales_detail_id');
@@ -147,34 +151,93 @@ class SalesReturnCalculationService
         return self::finalizeTotals($calculated);
     }
 
-    public static function validateFree(array $items): void
-    {
+    /**
+     * Free-mode validation.
+     * Serial: selalu terjual+customer+WH+manual.
+     * Non-serial: cap sold/returned hanya jika sales_free_require_sold ON.
+     *
+     * @param  bool  $qtyAlreadyBase  true saat lock (qty_base sudah tersimpan); false saat create/update (qty in unit).
+     */
+    public static function validateFree(
+        array $items,
+        int $customerId,
+        int $warehouseId,
+        ?int $excludeReturnId = null,
+        bool $qtyAlreadyBase = false
+    ): void {
         $errors = [];
+        $productIds = collect($items)->pluck('product_id')->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        $products = MasterProduk::whereIn('id', $productIds)->get()->keyBy('id');
+        $requireSold = SettingService::isSalesFreeRequireSold();
+
+        $soldBaseByProduct = $requireSold
+            ? self::soldBaseByProduct($customerId, $warehouseId, $productIds->all())
+            : [];
+        $returnedBaseByProduct = $requireSold
+            ? self::freeReturnedBaseByProduct($customerId, $warehouseId, $productIds->all(), $excludeReturnId)
+            : [];
+
+        $claimedBase = [];
+
         foreach ($items as $i => $item) {
-            $qty = (float) ($item['qty_base'] ?? 0);
+            $qtyInput = (float) ($item['qty_base'] ?? 0);
             $harga = (float) ($item['harga_satuan'] ?? 0);
             $productId = (int) ($item['product_id'] ?? 0);
             if ($productId <= 0) {
                 $errors[] = 'Baris #'.($i + 1).': produk wajib.';
+
                 continue;
             }
-            if ($qty <= 0) {
+            if ($qtyInput <= 0) {
                 $errors[] = 'Baris #'.($i + 1).': qty harus > 0.';
             }
             if ($harga < 0) {
                 $errors[] = 'Baris #'.($i + 1).': harga tidak boleh negatif.';
             }
 
-            $product = MasterProduk::find($productId);
+            $product = $products->get($productId);
             if (! $product) {
                 $errors[] = 'Baris #'.($i + 1).': produk tidak ditemukan.';
+
                 continue;
             }
+
             if ($product->is_serial) {
                 $ulids = array_values(array_unique($item['serial_unit_ids'] ?? []));
-                if (count($ulids) !== (int) $qty) {
-                    $errors[] = "{$product->nama_produk}: jumlah unit serial harus sama dengan qty retur.";
+                $qtyCheck = $qtyAlreadyBase ? $qtyInput : $qtyInput;
+                if (count($ulids) !== (int) $qtyCheck || abs($qtyCheck - (int) $qtyCheck) > 0.0001) {
+                    $errors[] = "{$product->nama_produk}: jumlah unit serial harus sama dengan qty retur (bilangan bulat).";
+
+                    continue;
                 }
+
+                $validCount = SerialUnit::whereIn('ulid', $ulids)
+                    ->where('product_id', $productId)
+                    ->where('status', SerialUnit::STATUS_TERJUAL)
+                    ->whereHas('sale', function ($q) use ($customerId, $warehouseId) {
+                        $q->where('source', 'manual')
+                            ->where('status', 'completed')
+                            ->where('customer_id', $customerId)
+                            ->where('warehouse_id', $warehouseId);
+                    })
+                    ->count();
+                if ($validCount !== count($ulids)) {
+                    $errors[] = "{$product->nama_produk}: unit serial harus terjual dari penjualan BO customer/gudang ini.";
+                }
+
+                continue;
+            }
+
+            if (! $requireSold) {
+                continue;
+            }
+
+            $konversi = self::resolveKonversi($product, $item['unit'] ?? null);
+            $qtyBase = $qtyAlreadyBase ? $qtyInput : ($qtyInput * $konversi);
+            $claimedBase[$productId] = ($claimedBase[$productId] ?? 0) + $qtyBase;
+            $available = ($soldBaseByProduct[$productId] ?? 0) - ($returnedBaseByProduct[$productId] ?? 0);
+            if ($claimedBase[$productId] > $available + 0.0001) {
+                $errors[] = "{$product->nama_produk}: qty retur melebihi sisa terjual {$available} (base).";
             }
         }
 
@@ -185,16 +248,24 @@ class SalesReturnCalculationService
 
     /**
      * Free-mode: harga dari payload; HPP dari avg_cost / serial cost; pembulatan dokumen sales.
+     * Input qty_base dari FE = qty dalam satuan dipilih; disimpan sebagai qty * konversi.
      *
      * @return array{details: array, subtotal: float, pembulatan: float, grand_total: float}
      */
-    public static function calculateFree(array $items): array
-    {
-        self::validateFree($items);
+    public static function calculateFree(
+        array $items,
+        int $customerId,
+        int $warehouseId,
+        ?int $excludeReturnId = null
+    ): array {
+        self::validateFree($items, $customerId, $warehouseId, $excludeReturnId);
         $calculated = [];
         foreach ($items as $item) {
             $product = MasterProduk::findOrFail($item['product_id']);
-            $qtyBase = (float) $item['qty_base'];
+            $unit = $item['unit'] ?? ($product->unit_1 ?: 'PCS');
+            $konversi = $product->is_serial ? 1 : self::resolveKonversi($product, $unit);
+            $qtyInUnit = (float) $item['qty_base'];
+            $qtyBase = $product->is_serial ? $qtyInUnit : ($qtyInUnit * $konversi);
             $harga = (float) ($item['harga_satuan'] ?? 0);
             $hpp = (float) $product->avg_cost;
             if ($product->is_serial && ! empty($item['serial_unit_ids'])) {
@@ -207,12 +278,12 @@ class SalesReturnCalculationService
             $calculated[] = [
                 'sales_detail_id' => null,
                 'product_id' => $product->id,
-                'unit' => $item['unit'] ?? ($product->unit_1 ?: 'PCS'),
-                'konversi' => 1,
-                'qty' => $qtyBase,
+                'unit' => $unit,
+                'konversi' => $konversi,
+                'qty' => $qtyInUnit,
                 'qty_base' => $qtyBase,
                 'harga_satuan' => $harga,
-                'jumlah' => round($qtyBase * $harga, 2),
+                'jumlah' => round($qtyInUnit * $harga, 2),
                 'hpp_at_time' => round($hpp, 4),
                 'serial_unit_ids' => $item['serial_unit_ids'] ?? null,
             ];
@@ -237,5 +308,75 @@ class SalesReturnCalculationService
             'pembulatan' => $pembulatan,
             'grand_total' => $grandTotal,
         ];
+    }
+
+    private static function resolveKonversi(MasterProduk $product, ?string $unit): int
+    {
+        $unit = $unit ?: ($product->unit_1 ?: 'PCS');
+        for ($i = 1; $i <= 4; $i++) {
+            if ($product->{"unit_{$i}"} === $unit) {
+                return max(1, (int) ($product->{"konversi_{$i}"} ?: 1));
+            }
+        }
+
+        return 1;
+    }
+
+    /**
+     * @param  array<int>  $productIds
+     * @return array<int, float>
+     */
+    private static function soldBaseByProduct(int $customerId, int $warehouseId, array $productIds): array
+    {
+        if ($productIds === []) {
+            return [];
+        }
+
+        return DB::table('doc_sales_detail as d')
+            ->join('doc_sales as s', 's.id', '=', 'd.sales_id')
+            ->join('master_produk as p', 'p.id', '=', 'd.product_id')
+            ->where('s.source', 'manual')
+            ->where('s.status', 'completed')
+            ->where('s.customer_id', $customerId)
+            ->where('s.warehouse_id', $warehouseId)
+            ->where('p.is_serial', 0)
+            ->whereIn('d.product_id', $productIds)
+            ->groupBy('d.product_id')
+            ->selectRaw('d.product_id, SUM(d.qty_base) as sold_qty')
+            ->pluck('sold_qty', 'product_id')
+            ->map(fn ($v) => (float) $v)
+            ->all();
+    }
+
+    /**
+     * Free returns: sum qty_base by product across draft/lock/approved (exclude self).
+     *
+     * @param  array<int>  $productIds
+     * @return array<int, float>
+     */
+    private static function freeReturnedBaseByProduct(
+        int $customerId,
+        int $warehouseId,
+        array $productIds,
+        ?int $excludeReturnId
+    ): array {
+        if ($productIds === []) {
+            return [];
+        }
+
+        return DocSalesReturnDetail::query()
+            ->whereIn('product_id', $productIds)
+            ->when($excludeReturnId, fn ($q) => $q->where('return_id', '!=', $excludeReturnId))
+            ->whereHas('salesReturn', function ($q) use ($customerId, $warehouseId) {
+                $q->where('source', 'manual')
+                    ->whereIn('status', self::RETURNED_STATUSES)
+                    ->where('customer_id', $customerId)
+                    ->where('warehouse_id', $warehouseId);
+            })
+            ->selectRaw('product_id, SUM(qty_base) as total')
+            ->groupBy('product_id')
+            ->pluck('total', 'product_id')
+            ->map(fn ($v) => (float) $v)
+            ->all();
     }
 }

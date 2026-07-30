@@ -43,7 +43,7 @@ class RolePermissionSeeder extends Seeder
             'retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.delete', 'retur-beli.lock', 'retur-beli.approve',
             'deposit-supplier.view', 'deposit-supplier.create', 'deposit-supplier.update', 'deposit-supplier.delete',
             'pembayaran-hutang.view', 'pembayaran-hutang.create', 'pembayaran-hutang.update', 'pembayaran-hutang.delete', 'pembayaran-hutang.complete',
-            'sales.view', 'sales.view_harga', 'sales.create', 'sales.update', 'sales.delete', 'sales.approve', 'sales.void',
+            'sales.view', 'sales.create', 'sales.update', 'sales.delete', 'sales.approve', 'sales.void',
             'piutang.view', 'piutang.view_nominal',
             'pembayaran-piutang.view', 'pembayaran-piutang.create', 'pembayaran-piutang.update', 'pembayaran-piutang.delete', 'pembayaran-piutang.complete',
             'deposit-customer.view', 'deposit-customer.create', 'deposit-customer.update', 'deposit-customer.delete',
@@ -112,7 +112,7 @@ class RolePermissionSeeder extends Seeder
             'retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.delete', 'retur-beli.lock', 'retur-beli.approve',
             'deposit-supplier.view', 'deposit-supplier.create', 'deposit-supplier.update', 'deposit-supplier.delete',
             'pembayaran-hutang.view', 'pembayaran-hutang.create', 'pembayaran-hutang.update', 'pembayaran-hutang.delete', 'pembayaran-hutang.complete',
-            'sales.view', 'sales.view_harga', 'sales.create', 'sales.update', 'sales.delete', 'sales.approve', 'sales.void',
+            'sales.view', 'sales.create', 'sales.update', 'sales.delete', 'sales.approve', 'sales.void',
             'piutang.view', 'piutang.view_nominal',
             'pembayaran-piutang.view', 'pembayaran-piutang.create', 'pembayaran-piutang.update', 'pembayaran-piutang.delete', 'pembayaran-piutang.complete',
             'deposit-customer.view', 'deposit-customer.create', 'deposit-customer.update', 'deposit-customer.delete',
@@ -156,6 +156,8 @@ class RolePermissionSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
         $this->ensurePermissions();
+        // Harga jual tidak digate — orphan cleanup (ensurePermissions hanya firstOrCreate)
+        Permission::where('name', 'sales.view_harga')->delete();
         $this->syncSuperAdmin();
         $this->syncDefaultRoles();
         app(PermissionRegistrar::class)->forgetCachedPermissions();

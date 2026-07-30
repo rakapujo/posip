@@ -14,7 +14,18 @@ const props = defineProps({
 const emit = defineEmits(['update:visible']);
 
 const { formatCurrency, formatPercent, formatDate } = useFormatters();
-const { generating, loadSettings, saveSettings, resetSettings, applySizePreset, resolveGrid, buildSerialLabelPdf, printSerialLabels, downloadSerialLabels, PAPER_PRESETS } = useSerialLabelPrint();
+const {
+    generating,
+    loadSettings,
+    saveSettings,
+    resetSettings,
+    applySizePreset,
+    resolveGrid,
+    generateBarcodeDataURL,
+    printSerialLabels,
+    downloadSerialLabels,
+    PAPER_PRESETS
+} = useSerialLabelPrint();
 
 const settings = ref(loadSettings());
 const keterangan = ref('');
@@ -68,23 +79,38 @@ const gridInfo = computed(() => resolveGrid(settings.value));
 const perPage = computed(() => Math.max(1, gridInfo.value.perPage));
 const totalPages = computed(() => (labelItems.value.length ? Math.ceil(labelItems.value.length / perPage.value) : 0));
 
-// ── Preview (PDF halaman pertama, iframe) ──
-const previewUrl = ref('');
+// ── HTML preview (halaman 1) — mirror PrintBarcodePage, bukan iframe PDF ──
+const previewLabels = ref([]);
 const previewing = ref(false);
 let previewTimer = null;
 
-async function rebuildPreview() {
+const previewGridStyle = computed(() => ({
+    display: 'grid',
+    gridTemplateColumns: `repeat(${gridInfo.value.cols}, ${settings.value.label.width}mm)`,
+    gap: `${settings.value.grid.gapV}mm ${settings.value.grid.gapH}mm`,
+    padding: `${settings.value.grid.margin}mm`
+}));
+
+const labelStyle = computed(() => ({
+    width: `${settings.value.label.width}mm`,
+    height: `${settings.value.label.height}mm`,
+    fontSize: `${settings.value.fontBase}pt`
+}));
+
+function rebuildPreview() {
     if (!props.visible || labelItems.value.length === 0) {
-        if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
-        previewUrl.value = '';
+        previewLabels.value = [];
         return;
     }
     previewing.value = true;
     try {
-        const first = labelItems.value.slice(0, perPage.value); // hanya hal. 1 biar cepat
-        const doc = await buildSerialLabelPdf(first, settings.value, { keterangan: keterangan.value });
-        if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
-        previewUrl.value = URL.createObjectURL(doc.output('blob'));
+        const first = labelItems.value.slice(0, perPage.value);
+        const cache = {};
+        previewLabels.value = first.map((item) => {
+            const key = item.kode_internal || '';
+            if (key && !cache[key]) cache[key] = generateBarcodeDataURL(key);
+            return { ...item, barcodeImg: key ? cache[key] : '' };
+        });
     } finally {
         previewing.value = false;
     }
@@ -99,9 +125,10 @@ watch(
     () => props.visible,
     (v) => {
         if (v) rebuildPreview();
+        else previewLabels.value = [];
     }
 );
-watch([settings, keterangan], schedulePreview, { deep: true });
+watch([settings, keterangan, labelItems], schedulePreview, { deep: true });
 
 function onSizeChange() {
     if (settings.value.sizePreset !== 'Custom') {
@@ -110,21 +137,18 @@ function onSizeChange() {
     schedulePreview();
 }
 
-// Ganti preset kertas → set lebar/tinggi (A4/A5); Custom biarkan
 function onPaperPresetChange() {
     const dims = PAPER_PRESETS[settings.value.paper.preset];
     if (dims) {
         settings.value.paper.width = dims.width;
         settings.value.paper.height = dims.height;
     } else {
-        // Custom: jangan biarkan kosong → isi default A4 bila belum valid
         if (!Number(settings.value.paper.width)) settings.value.paper.width = 210;
         if (!Number(settings.value.paper.height)) settings.value.paper.height = 297;
     }
     schedulePreview();
 }
 
-// Toggle orientasi = tukar Lebar <-> Tinggi (halaman pakai dimensi apa adanya)
 function onOrientationChange() {
     const w = Number(settings.value.paper.width) || 0;
     settings.value.paper.width = Number(settings.value.paper.height) || 0;
@@ -155,8 +179,9 @@ function close() {
 
 <template>
     <Dialog :visible="visible" @update:visible="emit('update:visible', $event)" modal :header="title" :style="{ width: '860px' }" :breakpoints="{ '960px': '95vw' }">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <!-- Kiri: kontrol -->
+        <!-- preview dulu di mobile (flex-col-reverse); lg: side-by-side -->
+        <div class="flex flex-col-reverse gap-4 lg:grid lg:grid-cols-2">
+            <!-- Kontrol -->
             <div class="flex flex-col gap-3">
                 <div class="grid grid-cols-2 gap-2">
                     <div>
@@ -230,7 +255,8 @@ function close() {
                 <div>
                     <label class="block text-xs text-surface-500 mb-1">Keterangan batch (opsional)</label>
                     <InputText v-model="keterangan" class="w-full" placeholder="Contoh: Garansi 1 bln — berlaku semua label" />
-                    <p class="text-[11px] text-surface-400 mt-1">Catatan per unit dari data serial ikut tercetak otomatis. Field ini tambahan manual untuk seluruh cetakan.</p>                </div>
+                    <p class="text-[11px] text-surface-400 mt-1">Catatan per unit dari data serial ikut tercetak otomatis. Field ini tambahan manual untuk seluruh cetakan.</p>
+                </div>
 
                 <div class="bg-surface-50 dark:bg-surface-800 rounded-lg p-3 text-sm">
                     <div>
@@ -242,15 +268,30 @@ function close() {
                 <Button label="Reset Pengaturan" icon="pi pi-refresh" severity="secondary" text size="small" class="self-start" @click="onReset" />
             </div>
 
-            <!-- Kanan: preview -->
+            <!-- Preview HTML -->
             <div>
                 <div class="flex items-center justify-between mb-1">
                     <span class="text-sm font-medium">Preview (halaman 1)</span>
                     <ProgressSpinner v-if="previewing" style="width: 18px; height: 18px" strokeWidth="6" />
                 </div>
-                <div class="border border-surface-200 dark:border-surface-700 rounded-lg overflow-hidden bg-surface-100 dark:bg-surface-900" style="height: 360px">
-                    <iframe v-if="previewUrl" :src="previewUrl" style="width: 100%; height: 100%; border: 0" title="Preview label"></iframe>
-                    <div v-else class="h-full flex items-center justify-center text-surface-400 text-sm">
+                <div class="border border-surface-200 dark:border-surface-700 rounded-lg overflow-auto bg-white dark:bg-surface-900" style="max-height: 360px; min-height: 160px">
+                    <div v-if="previewLabels.length" :style="previewGridStyle">
+                        <div
+                            v-for="(label, idx) in previewLabels"
+                            :key="idx"
+                            :style="labelStyle"
+                            class="border border-surface-300 dark:border-surface-600 rounded-sm flex flex-col items-stretch justify-between overflow-hidden p-1"
+                        >
+                            <div class="truncate font-bold leading-tight">{{ label.kode_produk }} · {{ label.nama_produk }}</div>
+                            <img v-if="label.barcodeImg" :src="label.barcodeImg" alt="barcode" class="max-w-full flex-1 object-contain my-0.5" style="min-height: 0" />
+                            <div class="truncate text-[0.85em] leading-tight">{{ label.kode_internal }}</div>
+                            <div class="truncate text-[0.8em] text-surface-600 leading-tight">SN {{ label.serial_number }}</div>
+                            <div class="truncate text-[0.75em] text-surface-500 leading-tight">{{ label.spek }}</div>
+                            <div v-if="label.harga" class="font-semibold text-[0.85em] leading-tight">{{ label.harga }}</div>
+                            <div v-if="keterangan" class="truncate italic text-[0.7em] text-surface-400 leading-tight">{{ keterangan }}</div>
+                        </div>
+                    </div>
+                    <div v-else class="h-40 flex items-center justify-center text-surface-400 text-sm">
                         {{ labelItems.length ? 'Memuat preview…' : 'Tidak ada unit untuk dicetak' }}
                     </div>
                 </div>

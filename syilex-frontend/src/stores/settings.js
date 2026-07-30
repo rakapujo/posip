@@ -133,7 +133,9 @@ export const useSettingsStore = defineStore('settings', () => {
     // Getters - Returns (mode bebas retur jual/beli). Default TRUE = perilaku existing.
     const returns = computed(() => ({
         salesAllowFree: publicSettings.value.returns?.sales_allow_free ?? true,
-        purchaseAllowFree: publicSettings.value.returns?.purchase_allow_free ?? true
+        purchaseAllowFree: publicSettings.value.returns?.purchase_allow_free ?? true,
+        salesFreeRequireSold: publicSettings.value.returns?.sales_free_require_sold ?? true,
+        purchaseFreeRequirePurchased: publicSettings.value.returns?.purchase_free_require_purchased ?? false
     }));
 
     // Actions

@@ -74,7 +74,7 @@ const settings = ref({
     calculation: { discount_mode: 'recursive' },
     promo: { enabled: true, allow_manual_discount: true, max_manual_discount_percent: 100, max_manual_discount_nominal: null },
     product: { price_input_mode: 'auto' },
-    returns: { sales_allow_free: true, purchase_allow_free: true },
+    returns: { sales_allow_free: true, purchase_allow_free: true, sales_free_require_sold: true, purchase_free_require_purchased: false },
     text: { uppercase_mode: 'code_only' },
     scheduler: { price_change_enabled: true, price_change_max_batch: 50, activity_log_enabled: true, activity_log_cooldown: 10080, activity_log_retention_days: 365 },
     prefix: { purchase_order: 'POR', purchase_return: 'RPB', sales: 'INV', sales_return: 'RPJ', payment_hutang: 'PBH', stock_opname: 'OPN', adjustment: 'ADJ', transfer: 'TRF', repack: 'RPK', price_change: 'PCH', hpp_correction: 'HPC', promo: 'PRM' },
@@ -781,11 +781,21 @@ const savePrefix = async (item) => {
                                 <label>Izinkan retur penjualan tanpa nota (mode bebas)</label>
                             </div>
                             <small class="text-muted-color">Jika dimatikan, retur jual wajib mengacu ke nota penjualan.</small>
+                            <div class="flex items-center gap-2 mt-3 ml-6" :class="{ 'opacity-50': !settings.returns.sales_allow_free }">
+                                <ToggleSwitch v-model="settings.returns.sales_free_require_sold" :disabled="!canUpdate || !settings.returns.sales_allow_free" />
+                                <label>Mode bebas jual: hanya produk yang pernah terjual (non-serial)</label>
+                            </div>
+                            <small class="text-muted-color ml-6">Produk serial tetap wajib SN terjual customer. Matikan hanya jika perlu koreksi tanpa histori jual.</small>
                             <div class="flex items-center gap-2 mt-3">
                                 <ToggleSwitch v-model="settings.returns.purchase_allow_free" :disabled="!canUpdate" />
                                 <label>Izinkan retur pembelian tanpa dokumen (mode bebas)</label>
                             </div>
                             <small class="text-muted-color">Jika dimatikan, retur beli wajib mengacu ke PO atau PBS.</small>
+                            <div class="flex items-center gap-2 mt-3 ml-6" :class="{ 'opacity-50': !settings.returns.purchase_allow_free }">
+                                <ToggleSwitch v-model="settings.returns.purchase_free_require_purchased" :disabled="!canUpdate || !settings.returns.purchase_allow_free" />
+                                <label>Mode bebas beli: hanya produk yang pernah dibeli (non-serial)</label>
+                            </div>
+                            <small class="text-muted-color ml-6">Produk serial tetap wajib unit tersedia; bila aktif, unit harus asal supplier ini. Default off = cukup stok gudang.</small>
 
                             <div class="flex justify-end mt-4">
                                 <Button label="Simpan" icon="pi pi-save" :disabled="!canUpdate" v-tooltip.top="!canUpdate ? 'Anda tidak punya akses untuk mengubah pengaturan' : ''" @click="saveTab('4')" :loading="saving['4']" />

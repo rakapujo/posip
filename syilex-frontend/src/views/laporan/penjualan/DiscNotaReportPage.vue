@@ -109,7 +109,7 @@ async function exportPdf() {
             </template>
         </Toolbar>
 
-        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: baris, ringkasan, dan export sudah dikurangi retur</Message>
+        <Message v-if="reportMode === 'net'" severity="info" :closable="false" class="mb-4">Mode Net: hanya Total Diskon Nota (card, kolom, dan export) dikurangi retur proporsional. Subtotal, Disc 1–3, dan Total Setelah Diskon tetap seperti di nota.</Message>
 
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

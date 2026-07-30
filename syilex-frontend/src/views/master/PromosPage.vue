@@ -502,7 +502,8 @@ async function downloadPromoListPdf() {
                 <!-- Detail Rows -->
                 <div class="mt-4">
                     <h4 class="text-base font-medium mb-3">Baris Diskon ({{ detailData.details?.length || 0 }} baris)</h4>
-                    <div class="overflow-x-auto">
+                    <!-- Desktop: tabel -->
+                    <div class="hidden lg:block overflow-x-auto">
                         <table class="w-full text-sm border-collapse">
                             <thead>
                                 <tr class="bg-surface-100">
@@ -548,6 +549,36 @@ async function downloadPromoListPdf() {
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- Mobile: kartu per baris -->
+                    <div class="lg:hidden flex flex-col gap-3">
+                        <div
+                            v-for="(d, idx) in detailData.details"
+                            :key="'m-' + idx"
+                            class="border border-surface-200 dark:border-surface-700 rounded-lg p-3 text-sm"
+                        >
+                            <div class="font-medium mb-1">{{ idx + 1 }}. {{ targetTypeLabel(d.target_type) }}</div>
+                            <div v-if="d.target_type !== 'semua'" class="text-xs text-surface-500 mb-2">{{ d.target_name || '(data tidak ditemukan)' }}</div>
+                            <div class="flex justify-between gap-2 py-0.5"><span class="text-surface-500">Min Qty</span><span>{{ d.min_qty }}</span></div>
+                            <div class="flex justify-between gap-2 py-0.5">
+                                <span class="text-surface-500">Diskon 1</span>
+                                <span :class="formatDiskonSlot(d.diskon_1_tipe, d.diskon_1_nilai) !== '—' ? 'text-primary font-medium' : 'text-surface-400'">{{ formatDiskonSlot(d.diskon_1_tipe, d.diskon_1_nilai) }}</span>
+                            </div>
+                            <div class="flex justify-between gap-2 py-0.5">
+                                <span class="text-surface-500">Diskon 2</span>
+                                <span :class="formatDiskonSlot(d.diskon_2_tipe, d.diskon_2_nilai) !== '—' ? 'text-primary font-medium' : 'text-surface-400'">{{ formatDiskonSlot(d.diskon_2_tipe, d.diskon_2_nilai) }}</span>
+                            </div>
+                            <div class="flex justify-between gap-2 py-0.5">
+                                <span class="text-surface-500">Diskon 3</span>
+                                <span :class="formatDiskonSlot(d.diskon_3_tipe, d.diskon_3_nilai) !== '—' ? 'text-primary font-medium' : 'text-surface-400'">{{ formatDiskonSlot(d.diskon_3_tipe, d.diskon_3_nilai) }}</span>
+                            </div>
+                            <div class="flex justify-between gap-2 py-0.5">
+                                <span class="text-surface-500">Diskon 4</span>
+                                <span :class="formatDiskonSlot(d.diskon_4_tipe, d.diskon_4_nilai) !== '—' ? 'text-primary font-medium' : 'text-surface-400'">{{ formatDiskonSlot(d.diskon_4_tipe, d.diskon_4_nilai) }}</span>
+                            </div>
+                            <div class="flex justify-between gap-2 py-0.5 text-xs"><span class="text-surface-500">Keterangan</span><span class="text-surface-600 text-right">{{ d.keterangan || '—' }}</span></div>
+                        </div>
                     </div>
                 </div>
 

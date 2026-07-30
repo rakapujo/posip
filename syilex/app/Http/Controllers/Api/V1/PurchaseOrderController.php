@@ -504,11 +504,11 @@ class PurchaseOrderController extends BaseApiController
         }
 
         $products = $query->limit(20)->get();
-        $canViewHpp = auth()->user()->can('stok.view_hpp') || auth()->user()->can('po.view_harga');
-        $canViewHarga = auth()->user()->can('po.view_harga');
+        $canViewHpp = auth()->user()->can('stok.view_hpp');
 
         // Transform to include units array (filter duplicates)
-        $items = $products->map(function ($product) use ($canViewHpp, $canViewHarga) {
+        // harga_jual selalu (bukan rahasia); avg_cost hanya stok.view_hpp
+        $items = $products->map(function ($product) use ($canViewHpp) {
             $units = [];
             $seenUnits = [];
 
@@ -520,7 +520,7 @@ class PurchaseOrderController extends BaseApiController
                     $units[] = [
                         'unit' => $unit,
                         'konversi' => $product->{"konversi_{$i}"},
-                        'harga_jual' => $canViewHarga ? $product->{"harga_{$i}"} : null,
+                        'harga_jual' => $product->{"harga_{$i}"},
                     ];
                 }
             }
@@ -626,6 +626,8 @@ class PurchaseOrderController extends BaseApiController
             return $this->success([
                 'calculation' => $calculated,
             ]);
+        } catch (ValidationException $e) {
+            return $this->validationError($e->errors(), 'Validasi gagal');
         } catch (\Exception $e) {
             Log::error('Gagal menghitung purchase order', ['exception' => $e]);
             return $this->error('Gagal menghitung.', 500);

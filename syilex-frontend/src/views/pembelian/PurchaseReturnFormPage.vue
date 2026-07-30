@@ -18,6 +18,7 @@ const authStore = useAuthStore();
 const serialEnabled = computed(() => settingsStore.serialEnabled);
 const canViewHarga = computed(() => authStore.can('po.view_harga'));
 const purchaseAllowFree = computed(() => settingsStore.returns.purchaseAllowFree);
+const purchaseFreeRequirePurchased = computed(() => settingsStore.returns.purchaseFreeRequirePurchased);
 const {
     formatCurrency,
     formatQty,
@@ -567,14 +568,37 @@ function openProductPicker(index) {
 }
 
 async function fetchPickerProducts(q) {
-    const response = await purchaseReturnsApi.getProducts({ search: q });
+    const response = await purchaseReturnsApi.getProducts({
+        search: q,
+        warehouse_id: form.value.warehouse_id || undefined,
+        supplier_id: form.value.supplier_id || undefined
+    });
     if (!response.data.success) return [];
     return response.data.data.items || [];
 }
 
 function getPickerUnitPrice(product, unitObj) {
-    return Number(unitObj?.harga_jual ?? 0);
+    const v = unitObj?.harga_jual;
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
 }
+
+const pickerModeHint = computed(() => {
+    if (isDocLinked.value) {
+        return 'Mode dokumen: produk dari PO/PBS; harga dari dokumen referensi.';
+    }
+    if (!purchaseAllowFree.value) {
+        return 'Mode bebas dimatikan — pilih dokumen referensi dulu.';
+    }
+    const hist = purchaseFreeRequirePurchased.value
+        ? 'Non-serial hanya yang pernah dibeli dari supplier/gudang ini.'
+        : 'Non-serial cukup punya stok gudang.';
+    const serial = purchaseFreeRequirePurchased.value
+        ? 'Serial: unit tersedia asal supplier ini.'
+        : 'Serial: unit tersedia di gudang.';
+    return `Mode bebas: tambah manual (FIFO hutang). ${hist} ${serial}`;
+});
 
 function onPickerTakenClick(row) {
     if (row.is_serial) {
@@ -1149,7 +1173,9 @@ function onDiscountValueChange(discIndex, newValue) {
                 </Message>
 
                 <Message v-else-if="form.supplier_id && form.warehouse_id && !isDocLinked && purchaseAllowFree" severity="secondary" :closable="false" class="mb-4">
-                    Mode bebas: tambah produk manual. Approve men-net hutang supplier secara FIFO.
+                    Mode bebas: tambah produk manual. Approve men-net hutang FIFO.
+                    {{ purchaseFreeRequirePurchased ? 'Non-serial hanya yang pernah dibeli dari supplier/gudang ini.' : 'Non-serial cukup punya stok gudang.' }}
+                    Serial wajib unit tersedia{{ purchaseFreeRequirePurchased ? ' asal supplier ini' : '' }}.
                 </Message>
 
                 <Message v-else-if="form.supplier_id && form.warehouse_id && !isDocLinked && !purchaseAllowFree" severity="warn" :closable="false" class="mb-4">
@@ -1335,6 +1361,7 @@ function onDiscountValueChange(discIndex, newValue) {
                                 :productId="data.product?.ulid"
                                 :warehouseId="form.warehouse_id"
                                 :intakeId="form.serial_intake_id || undefined"
+                                :supplierId="!form.serial_intake_id && purchaseFreeRequirePurchased ? form.supplier_id : undefined"
                                 :modelValue="data.serial_unit_ids"
                                 @change="(units) => onSerialReturnChange(data, units)"
                             />
@@ -1500,6 +1527,7 @@ function onDiscountValueChange(discIndex, newValue) {
             :taken-keys="pickerTakenKeys"
             :include-serial="serialEnabled"
             :format-price="formatCurrency"
+            :mode-hint="pickerModeHint"
             @select="applyPickerSelect"
             @taken-click="onPickerTakenClick"
         />

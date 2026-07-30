@@ -15,4 +15,14 @@
 
 ## Sisa P1
 
-aging_bucket FE+BE; export gate view∧export; Bayar CTA+deep-link; summary align; kolom Retur; overdue date.
+aging UI polish; Bayar CTA deep-link residual.
+
+## Patched — gap close (2026-07-29)
+
+| Item | Fix |
+|------|-----|
+| Summary/aging filters | reuse `applyFilters` (aging tanpa `aging_bucket`) |
+| Overdue UI | date-only vs `todayString` |
+| Detail | tampilkan `nominal_retur` |
+
+**Export:** Excel + PDF list ada (`laporan.export` ∧ `view_nominal`).

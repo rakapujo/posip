@@ -48,5 +48,12 @@ runner.test('thermal storage key not used in barcode module', () => {
     runner.assertFalse(content.includes('posip-thermal-printer'));
 });
 
+runner.test('SerialLabelPrintDialog preview is HTML img not iframe PDF', () => {
+    const content = readFileSync(join(srcRoot, 'components/common/SerialLabelPrintDialog.vue'), 'utf8');
+    runner.assertFalse(/<iframe\b/.test(content));
+    runner.assertContains(content, 'generateBarcodeDataURL');
+    runner.assertContains(content, 'barcodeImg');
+});
+
 const ok = runner.summary();
 process.exit(ok ? 0 : 1);

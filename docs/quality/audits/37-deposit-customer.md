@@ -13,6 +13,16 @@
 | DC-U1/U2 | FE detail/usage/PDF gate `canViewNominal` |
 | WI-1 | Walk-in diblok BE + FE `jenis=spesifik` |
 
-## Sisa P1 / polish
+## Sisa residual
 
-Wave C: Tabs+Excel+deep-link sudah di-patch (lihat `00-penjualan-plan-review.md`).
+Wave C Tabs+Excel sudah ada; polish deep-link minor.
+
+## Patched — gap close (2026-07-29)
+
+| Item | Fix |
+|------|-----|
+| Edit customer_id | show `makeVisible` customer.id + customer_id |
+| Usage | hanya pembayaran `completed`; link edit hanya draft |
+| Index N+1 | `withExists('pembayaranUsages')` + `canBeEdited` baca flag |
+
+**Export:** Excel + PDF list ada (`laporan.export` ∧ `view_nominal`).

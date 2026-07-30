@@ -23,7 +23,6 @@ const { formatCurrency, formatQty, formatDateTime, getPrimeDateFormatShort, toDa
 const { exporting, exportSalesInvoicePdf } = useSalesInvoicePdf();
 
 // Permissions
-const canViewHarga = computed(() => authStore.can('sales.view_harga'));
 const canCreate = computed(() => authStore.can('sales.create'));
 const canEdit = computed(() => authStore.can('sales.update'));
 const canDeletePerm = computed(() => authStore.can('sales.delete'));
@@ -96,8 +95,8 @@ function isDefaultToday(d) {
 
 const activeFilterCount = computed(() => {
     let n = 0;
-    if (additionalFilters.value?.customer_id) n++;
-    if (additionalFilters.value?.warehouse_id) n++;
+    if (additionalFilters.customer_id) n++;
+    if (additionalFilters.warehouse_id) n++;
     if (selectedStatus.value) n++;
     if (startDate.value && !isDefaultMonthStart(startDate.value)) n++;
     if (endDate.value && !isDefaultToday(endDate.value)) n++;
@@ -107,19 +106,16 @@ const activeFilterCount = computed(() => {
 // Override lazyParams sortField for tanggal_po
 lazyParams.value.sortField = 'tanggal';
 
-// Detail table columns (dynamic based on permission)
-const detailColumns = computed(() => {
-    const cols = [
-        { field: '#', header: '#', width: '40px' },
-        { field: 'product', header: 'Produk' },
-        { field: 'unit', header: 'Satuan', width: '80px' },
-        { field: 'qty', header: 'Qty', align: 'right', width: '80px' }
-    ];
-    if (canViewHarga.value) {
-        cols.push({ field: 'harga', header: 'Harga', align: 'right', width: '120px' }, { field: 'diskon', header: 'Diskon', align: 'right', width: '100px' }, { field: 'subtotal', header: 'Subtotal', align: 'right', width: '120px' });
-    }
-    return cols;
-});
+// Detail table columns
+const detailColumns = computed(() => [
+    { field: '#', header: '#', width: '40px' },
+    { field: 'product', header: 'Produk' },
+    { field: 'unit', header: 'Satuan', width: '80px' },
+    { field: 'qty', header: 'Qty', align: 'right', width: '80px' },
+    { field: 'harga', header: 'Harga', align: 'right', width: '120px' },
+    { field: 'diskon', header: 'Diskon', align: 'right', width: '100px' },
+    { field: 'subtotal', header: 'Subtotal', align: 'right', width: '120px' }
+]);
 
 // Load suppliers for filter dropdown
 async function loadCustomers() {
@@ -155,7 +151,7 @@ async function exportDocPdf(item) {
         if (!data.details) return;
     }
 
-    await exportSalesInvoicePdf(data, { canViewHarga: canViewHarga.value });
+    await exportSalesInvoicePdf(data);
 }
 
 // Load data on mount
@@ -218,10 +214,10 @@ function confirmVoid(data) {
                     <Select v-model="additionalFilters.warehouse_id" :options="warehouses" optionLabel="nama_warehouse" optionValue="id" placeholder="Warehouse" filter showClear @change="onFilter" />
                     <Select v-model="selectedStatus" :options="statusOptions" optionLabel="label" optionValue="value" placeholder="Status" filter showClear @change="onFilter" />
                     <div class="list-filter-control">
-                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
+                        <DatePicker v-model="startDate" :manualInput="false" showIcon placeholder="Tanggal Awal" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" @update:modelValue="onFilter" />
                     </div>
                     <div class="list-filter-control">
-                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" />
+                        <DatePicker v-model="endDate" :manualInput="false" showIcon placeholder="Tanggal Akhir" :dateFormat="getPrimeDateFormatShort" fluid showButtonBar @date-select="onFilter" @update:modelValue="onFilter" />
                     </div>
                     <Button label="Reset" icon="pi pi-filter-slash" severity="secondary" outlined @click="resetFilters" />
                 </ListFiltersSheet>
@@ -292,7 +288,7 @@ function confirmVoid(data) {
                 </template>
             </Column>
 
-            <Column v-if="canViewHarga" field="grand_total" header="Grand Total" sortable style="min-width: 150px" bodyClass="text-right">
+            <Column field="grand_total" header="Grand Total" sortable style="min-width: 150px" bodyClass="text-right">
                 <template #body="{ data }">
                     <span class="font-semibold">{{ formatCurrency(data.grand_total) }}</span>
                 </template>
@@ -363,7 +359,7 @@ function confirmVoid(data) {
                     </div>
 
                     <!-- Totals -->
-                    <div v-if="canViewHarga" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                         <div></div>
                         <div class="border border-surface-200 rounded-lg p-4 space-y-2">
                             <div class="flex justify-between">

@@ -42,6 +42,19 @@ class LockPurchaseReturnAction
             // Load details with products and PO details
             $retur->load('details.product', 'details.purchaseOrderDetail');
 
+            if (! $retur->po_id && ! $retur->serial_intake_id) {
+                \App\Services\PurchaseReturnCalculationService::validateFreeHistory(
+                    $retur->details->map(fn ($d) => [
+                        'product_id' => $d->product_id,
+                        'qty_in_base' => $d->qty_in_base,
+                        'serial_unit_ids' => $d->serial_unit_ids,
+                    ])->all(),
+                    (int) $retur->supplier_id,
+                    (int) $retur->warehouse_id,
+                    $retur->id
+                );
+            }
+
             // Get all product IDs
             $productIds = $retur->details->pluck('product_id')->unique()->toArray();
 
@@ -122,7 +135,7 @@ class LockPurchaseReturnAction
             }
 
             foreach ($retur->details as $detail) {
-                $qtyOut = (int) $detail->qty_in_base;
+                $qtyOut = (float) $detail->qty_in_base;
                 $available = $runningCheck[$detail->product_id] ?? 0;
                 $newStock = $available - $qtyOut;
 
@@ -155,7 +168,7 @@ class LockPurchaseReturnAction
                     $product = $products[$detail->product_id];
                     $currentWarehouseStock = $runningStocks[$detail->product_id] ?? 0;
                     $currentHpp = (float) $product->avg_cost;
-                    $qtyOut = (int) $detail->qty_in_base;
+                    $qtyOut = (float) $detail->qty_in_base;
 
                     // Serial: resolve unit terpilih + valuasi pakai cost_per_unit unit (landed)
                     $serialUnits = null;
@@ -165,7 +178,7 @@ class LockPurchaseReturnAction
                             $detail->serial_unit_ids,
                             $detail->product_id,
                             $retur->warehouse_id,
-                            $qtyOut,
+                            (int) round($qtyOut),
                             'serial_unit_ids',
                             null,
                             $retur->serial_intake_id ? (int) $retur->serial_intake_id : null,

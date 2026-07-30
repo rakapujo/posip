@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { getAuthData, injectAuth, authHeaders, laravelApiBase } from './helpers/auth.js';
+import { ensurePosShift, ensureProductStock, waitForPosReady } from './helpers/pos.js';
 
 /**
  * POS Checkout E2E Test
@@ -30,83 +31,31 @@ async function fetchPosSalesTotal(request) {
     return body?.data?.pagination?.total ?? 0;
 }
 
-// Helper: wait for POS to be ready (handle setor awal if shown)
-async function waitForPosReady(page) {
-    // Wait for either setor awal dialog OR product search to appear
-    const setorBtn = page.locator('button:has-text("Simpan & Mulai")');
-    const searchBox = page.locator('input[placeholder*="Cari produk"]').first();
-
-    // Race: whichever appears first
-    await Promise.race([setorBtn.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}), searchBox.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})]);
-
-    // If setor awal is visible, handle it
-    if (await setorBtn.isVisible().catch(() => false)) {
-        await setorBtn.click();
-        await page.waitForTimeout(1500);
-    }
-
-    // Now search box should be visible
-    await expect(searchBox).toBeVisible({ timeout: 10000 });
-}
-
 test.describe.serial('POS Checkout Flow', () => {
     test.beforeAll(async ({ request }) => {
         apiURL = laravelApiBase();
         authData = await getAuthData(request);
         const headers = authHeaders(authData);
 
-        // Check if terminal exists
-        const termListRes = await request.get(`${apiURL}/pos-terminals?per_page=100`, { headers });
-        const termBody = await termListRes.json();
-        const terminals = termBody?.data?.terminals || [];
-
-        if (terminals.length === 0) {
-            // No terminal — create one
-            // Get required data
-            const [whRes, custRes, pmRes] = await Promise.all([
-                request.get(`${apiURL}/warehouses?status=active&per_page=1`, { headers }),
-                request.get(`${apiURL}/customers?per_page=100`, { headers }),
-                request.get(`${apiURL}/metode-pembayarans?status=active&per_page=100`, { headers })
-            ]);
-            const warehouses = (await whRes.json()).data?.warehouses || [];
-            const customers = (await custRes.json()).data?.customers || [];
-            const methods = (await pmRes.json()).data?.metode_pembayarans || [];
-
-            const walkIn = customers.find((c) => c.jenis === 'walk_in') || customers[0];
-            const cash = methods.find((m) => m.metode === 'tunai') || methods[0];
-
-            // Create terminal
-            await request.post(`${apiURL}/pos-terminals`, {
-                headers,
-                data: {
-                    kode_terminal: 'E2E_001',
-                    nama_terminal: 'Terminal E2E Test',
-                    warehouse_id: warehouses[0]?.id,
-                    default_customer_id: walkIn?.id,
-                    default_metode_pembayaran_id: cash?.id,
-                    auto_open_tray: false,
-                    izinkan_retur: true,
-                    durasi_retur: 24,
-                    status: 'active',
-                    user_ids: [authData.user.id],
-                    metode_pembayaran_ids: methods.map((m) => m.id)
-                }
-            });
-        }
-
-        // Get terminal ULID (fresh fetch)
-        const freshList = await request.get(`${apiURL}/pos-terminals?per_page=1`, { headers });
-        const terminalUlid = (await freshList.json()).data?.terminals?.[0]?.ulid;
-        expect(terminalUlid).toBeTruthy();
-
-        // Start shift (tolerate any error — shift might already be active)
-        await request.post(`${apiURL}/pos-terminals/${terminalUlid}/start-shift`, { headers });
-
-        // Allow negative stock so E2E can checkout without needing to create PO first
+        // negative_mode sering terkunci setelah ada stock_card — jangan andalkan allow
         await request.put(`${apiURL}/settings/stock/negative_mode`, {
             headers,
             data: { value: 'allow' }
         });
+
+        const { warehouseId } = await ensurePosShift(request, authData, { kode: 'E2E_KASIR' });
+
+        const prodRes = await request.get(`${apiURL}/produks/list?is_serial=0`, { headers });
+        const products = (await prodRes.json()).data?.produks || [];
+        const product =
+            products.find((p) => p.id != null && Number(p.harga_4 || p.harga_1 || 0) > 0) || products[0];
+        if (product?.id && warehouseId) {
+            await ensureProductStock(request, authData, {
+                productId: product.id,
+                warehouseId,
+                qty: 100
+            });
+        }
     });
 
     test('POS kasir loads and shows product search', async ({ page, baseURL }) => {
@@ -159,7 +108,7 @@ test.describe.serial('POS Checkout Flow', () => {
             await page.waitForTimeout(500);
         }
 
-        const bayarBtn = page.locator('button:has-text("BAYAR")');
+        const bayarBtn = page.getByRole('button', { name: 'BAYAR (F12)' });
         await expect(bayarBtn).toBeEnabled({ timeout: 5000 });
     });
 
@@ -261,7 +210,7 @@ test.describe.serial('POS Checkout Flow', () => {
             }
         }
         if (!found) {
-            const bayarBtn = page.locator('button:has-text("BAYAR")');
+            const bayarBtn = page.getByRole('button', { name: 'BAYAR (F12)' });
             await expect(bayarBtn).toBeDisabled({ timeout: 3000 });
             found = true;
         }

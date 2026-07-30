@@ -138,6 +138,10 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 | Export Excel | Ya | view + strip cost |
 | Export PDF | Ya (client, cap 100) | same |
 | Cetak Label | Ya (checkbox eksplisit per baris / select-all halaman, atau all-filter) | same |
+
+### Cetak Label preview (2026-07-30)
+
+`SerialLabelPrintDialog`: preview halaman 1 = **HTML** + `generateBarcodeDataURL(kode_internal)` (bukan iframe PDF). Print/Download tetap PDF. Watch `labelItems` agar unit async tetap ter-render.
 | Buka asal PBS | Ya (link) | butuh `serial-intake.view` di target |
 | Buka Nota Jual | Ya — `source=manual` → Penjualan BO `?detail=`; `source=pos` → `struk-online` | manual: `sales.view`; POS: public receipt |
 | Ubah status / edit unit | **Tidak** | — |

@@ -22,6 +22,10 @@
 
 P2 form/UX (dirty-guard approve, drawer, dll.) di luar Scope A → OPEN kecuali sudah ikut patch.
 
+## Mobile DetailDialog (2026-07-30)
+
+Tabel detail produk (Unit 1–4 × lama/baru/selisih): `lg+` tabel rowspan; `<lg` kartu per produk (tanpa scroll horizontal wajib).
+
 ## Scheduler (ringkas)
 
 - Artisan `price-change:apply` tiap 5 menit (`routes/console.php` + OS `schedule:run`)

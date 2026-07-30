@@ -262,13 +262,17 @@ export function useExportPdf() {
                 })
             );
 
+            const usableWidth = landscapeWidth - landscapeMargin * 2;
+            const totalRequestedWidth = columns.reduce((sum, col) => sum + (Number(col.width) || 0), 0);
+            const widthScale = totalRequestedWidth > usableWidth && totalRequestedWidth > 0 ? usableWidth / totalRequestedWidth : 1;
+
             // Column styles
             const columnStyles = {};
             columns.forEach((col, i) => {
                 const style = {};
                 if (col.align === 'right') style.halign = 'right';
                 if (col.align === 'center') style.halign = 'center';
-                if (col.width) style.cellWidth = col.width;
+                if (col.width) style.cellWidth = Number((Number(col.width) * widthScale).toFixed(2));
                 if (col.cellStyle) Object.assign(style, col.cellStyle);
                 if (Object.keys(style).length > 0) columnStyles[i] = style;
             });

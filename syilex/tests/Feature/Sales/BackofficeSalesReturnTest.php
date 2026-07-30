@@ -288,6 +288,13 @@ class BackofficeSalesReturnTest extends TestCase
         }
         $this->user->givePermissionTo(['retur-jual.create']);
         Sanctum::actingAs($this->user);
+        $this->approvedSale(['details' => [[
+            'product_id' => $this->product->id,
+            'unit' => 'PCS',
+            'konversi' => 1,
+            'qty' => 5,
+            'harga_satuan' => 10000,
+        ]]]);
 
         $response = $this->postJson('/api/v1/sales-returns', [
             'tanggal' => '2026-07-20',
@@ -321,6 +328,32 @@ class BackofficeSalesReturnTest extends TestCase
         $this->user->givePermissionTo(['retur-jual.create']);
         Sanctum::actingAs($this->user);
 
+        $this->product->update([
+            'unit_2' => 'BOX',
+            'konversi_2' => 12,
+            'harga_2' => 100000,
+        ]);
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 30, 'avg_cost' => 4000],
+        );
+        $this->approvedSale(['details' => [
+            [
+                'product_id' => $this->product->id,
+                'unit' => 'PCS',
+                'konversi' => 1,
+                'qty' => 2,
+                'harga_satuan' => 10000,
+            ],
+            [
+                'product_id' => $this->product->id,
+                'unit' => 'BOX',
+                'konversi' => 12,
+                'qty' => 1,
+                'harga_satuan' => 100000,
+            ],
+        ]]);
+
         $this->postJson('/api/v1/sales-returns', [
             'tanggal' => '2026-07-20',
             'customer_id' => $this->customer->id,
@@ -334,7 +367,7 @@ class BackofficeSalesReturnTest extends TestCase
                 ],
                 [
                     'product_id' => $this->product->id,
-                    'qty_base' => 12,
+                    'qty_base' => 1,
                     'harga_satuan' => 100000,
                     'unit' => 'BOX',
                 ],
@@ -342,6 +375,118 @@ class BackofficeSalesReturnTest extends TestCase
         ])->assertCreated();
 
         $this->assertSame(1, DocSalesReturn::count());
+        $this->assertEquals(13.0, (float) DocSalesReturn::first()->details()->sum('qty_base'));
+    }
+
+    public function test_free_mode_rejects_unsold_product(): void
+    {
+        foreach (['retur-jual.create'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+        $this->user->givePermissionTo(['retur-jual.create']);
+        Sanctum::actingAs($this->user);
+        SettingService::set('returns.sales_free_require_sold', true, 'boolean');
+
+        $this->postJson('/api/v1/sales-returns', [
+            'tanggal' => '2026-07-20',
+            'customer_id' => $this->customer->id,
+            'warehouse_id' => $this->warehouse->id,
+            'details' => [[
+                'product_id' => $this->product->id,
+                'qty_base' => 1,
+                'harga_satuan' => 10000,
+                'unit' => 'PCS',
+            ]],
+        ])->assertStatus(422)->assertJsonValidationErrors('details');
+    }
+
+    public function test_free_mode_allows_unsold_when_require_sold_off(): void
+    {
+        foreach (['retur-jual.create'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+        $this->user->givePermissionTo(['retur-jual.create']);
+        Sanctum::actingAs($this->user);
+        SettingService::set('returns.sales_free_require_sold', false, 'boolean');
+
+        $this->postJson('/api/v1/sales-returns', [
+            'tanggal' => '2026-07-20',
+            'customer_id' => $this->customer->id,
+            'warehouse_id' => $this->warehouse->id,
+            'details' => [[
+                'product_id' => $this->product->id,
+                'qty_base' => 1,
+                'harga_satuan' => 10000,
+                'unit' => 'PCS',
+            ]],
+        ])->assertCreated();
+
+        SettingService::set('returns.sales_free_require_sold', true, 'boolean');
+    }
+
+    public function test_concurrent_draft_linked_returns_cannot_overclaim(): void
+    {
+        $sale = $this->approvedSale(); // qty 2
+        $this->draftReturn($sale, 2);
+
+        $this->expectException(ValidationException::class);
+        $this->draftReturn($sale, 1);
+    }
+
+    public function test_returnable_products_supports_serial_keyword_and_only_sold_products(): void
+    {
+        foreach (['retur-jual.view', 'retur-jual.create'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+        $this->user->givePermissionTo(['retur-jual.view', 'retur-jual.create']);
+        Sanctum::actingAs($this->user);
+
+        $serial = MasterProduk::factory()->create([
+            'status' => 'active',
+            'is_serial' => true,
+            'kode_produk' => 'SER-JUAL-01',
+            'nama_produk' => 'Serial Sold Product',
+            'unit_1' => 'UNIT',
+            'konversi_1' => 1,
+            'harga_4' => 10000,
+        ]);
+        InventoryStock::updateOrCreate(
+            ['product_id' => $serial->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 1, 'avg_cost' => 3500],
+        );
+        $soldUnit = SerialUnit::create([
+            'product_id' => $serial->id,
+            'warehouse_id' => $this->warehouse->id,
+            'serial_number' => 'SN-JUAL-01',
+            'kode_internal' => 'KI-JUAL-01',
+            'harga_modal' => 3500,
+            'cost_per_unit' => 3500,
+            'status' => SerialUnit::STATUS_TERSEDIA,
+        ]);
+        $this->approvedSale([
+            'details' => [[
+                'product_id' => $serial->id,
+                'unit' => 'UNIT',
+                'konversi' => 1,
+                'qty' => 1,
+                'harga_satuan' => 10000,
+                'serial_unit_ids' => [$soldUnit->ulid],
+            ]],
+        ]);
+
+        $this->getJson('/api/v1/sales-returns/returnable-products?customer_id='.$this->customer->id.'&warehouse_id='.$this->warehouse->id.'&search=KI-JUAL-01')
+            ->assertOk()
+            ->assertJsonPath('data.items.0.kode_produk', 'SER-JUAL-01')
+            ->assertJsonPath('data.items.0.is_serial', true);
+
+        MasterProduk::factory()->create([
+            'status' => 'active',
+            'kode_produk' => 'UNSOLD-RET-01',
+            'nama_produk' => 'Unsold Product',
+        ]);
+        $this->getJson('/api/v1/sales-returns/returnable-products?customer_id='.$this->customer->id.'&warehouse_id='.$this->warehouse->id.'&search=UNSOLD-RET-01')
+            ->assertOk()
+            ->assertJsonCount(0, 'data.items');
     }
 
     private function approvedSale(array $overrides = []): DocSales

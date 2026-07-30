@@ -56,6 +56,11 @@ class CustomerDeposit extends Model
         return $this->belongsTo(DocSalesReturn::class, 'retur_id');
     }
 
+    public function pembayaranUsages()
+    {
+        return $this->hasMany(DocPembayaranPiutangDeposit::class, 'deposit_id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
@@ -100,9 +105,13 @@ class CustomerDeposit extends Model
 
     public function canBeEdited(): bool
     {
+        $hasUsage = array_key_exists('pembayaran_usages_exists', $this->getAttributes())
+            ? (bool) $this->getAttribute('pembayaran_usages_exists')
+            : $this->pembayaranUsages()->exists();
+
         return $this->isManual()
             && (float) $this->nominal_terpakai === 0.0
-            && ! DocPembayaranPiutangDeposit::where('deposit_id', $this->id)->exists();
+            && ! $hasUsage;
     }
 
     public function canBeDeleted(): bool

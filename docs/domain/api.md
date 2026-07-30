@@ -65,7 +65,7 @@ Ekspos store, currency, regional, text, number, **modules** (`elektronik_enabled
 ```
 GET /api/v1/settings/runtime
 ```
-Ekspos tax, rounding, product, promo, stock, calculation, **returns** (`sales_allow_free`, `purchase_allow_free`). Dipakai form retur / kasir.
+Ekspos tax, rounding, product, promo, stock, calculation, **returns** (`sales_allow_free`, `purchase_allow_free`, `sales_free_require_sold`, `purchase_free_require_purchased`). Dipakai form retur / kasir. Flag `*_require_*` hanya non-serial; serial selalu identity unit.
 
 ### Public Receipt
 ```

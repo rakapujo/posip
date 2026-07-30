@@ -217,6 +217,48 @@
         flex: 0 1 auto;
         max-width: 100%;
     }
+
+    /*
+     * ponytail: BO dialog form grids crush at md:768 while dialog is already 95vw ≤991.
+     * Force 1-col; exclude POS payment chip-grid (grid-cols-4).
+     */
+    .p-dialog:not(.pos-payment-dialog) .p-dialog-content .grid {
+        grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+    }
+
+    /* Reset col-span-* — span 2+ creates implicit columns and crushes layout again */
+    .p-dialog:not(.pos-payment-dialog) .p-dialog-content .grid > * {
+        min-width: 0;
+        max-width: 100%;
+        grid-column: auto !important;
+    }
+
+    /* Contain wide tables/inputs (Produk satuan-harga) inside dialog */
+    .p-dialog:not(.pos-payment-dialog) .p-dialog-content {
+        overflow-x: auto;
+    }
+
+    .p-dialog:not(.pos-payment-dialog) .p-dialog-content .p-fieldset,
+    .p-dialog:not(.pos-payment-dialog) .p-dialog-content .p-fieldset-content {
+        min-width: 0;
+        max-width: 100%;
+    }
+}
+
+/*
+ * Tall CRUD dialogs (Terminal, Produk, Role, …): cap height so footer stays reachable.
+ * .pos-payment-dialog keeps overflow:hidden via higher-specificity rules in PosKasirPage.
+ */
+.p-dialog {
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.p-dialog-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 /* List filters — ukuran kontrol seragam (desktop inline / mobile sheet) */

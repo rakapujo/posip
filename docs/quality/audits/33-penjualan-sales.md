@@ -131,3 +131,33 @@ ID: **SL-U\*** UI/UX/DRY · **SL-X\*** logic / security-UI / cross / state.
 List Sales BO sudah mengikuti pola `useTransactionList` + permission aksi (termasuk void) dan PDF faktur dengan strip harga. Gap kritis: **Diskon Header 1–2 editable tapi diabaikan BE**, **approve rebuild promo mengubah total draft**, dan **form belum gate `view_harga`** (PO sudah). Serial/promo UX rapuh setelah ganti gudang / reload (lock hilang). Cross-menu: tidak ada CTA piutang/pembayaran/deposit dari detail.
 
 **Fix hanya jika user bilang execute.** Berikut antrian AppMenu: Retur Penjualan → Piutang → Pembayaran → Deposit.
+
+## Patched — gap close (2026-07-29)
+
+| Item | Fix |
+|------|-----|
+| Picker KI/SN | `products()` pakai `searchPicker` (+ optional `warehouse_id`) |
+| Promo lock reload | show eager `details.promo`; FE `promo_id \|\| nama_promo` |
+| Diskon header UI | map BE `total_diskon` → `total_diskon_header` |
+| Filter badge | `additionalFilters` tanpa `.value` |
+| Date Clear/Today | `@update:modelValue="onFilter"` |
+| WH change | clear SN + reset qty serial + toast |
+
+**Export:** PDF faktur ada; Excel list **tidak** (by design — lihat Laporan Penjualan).
+
+## Patched — hapus gate harga jual (2026-07-30)
+
+| Item | Fix |
+|------|-----|
+| `sales.view_harga` | Dihapus dari catalog/admin + `Permission::delete` di seeder |
+| ManualSales index/show/products | Uang jual + piutang nested selalu; `hpp_at_time` tetap `stok.view_hpp` |
+| FE Sales list/form/PDF | Tanpa `canViewHarga`; PDF composable selalu tampil harga |
+| SL-X3 (audit lama) | Dicabut — arah dibalik: jual tidak digate |
+
+## Patched — picker mode + harga serial (2026-07-29)
+
+| Item | Fix |
+|------|-----|
+| `modeHint` drawer | Prop `ProductUnitPickerDrawer.modeHint` — Sales + Retur + PO + PBS |
+| Harga serial Rp.0 | `resolveSerialPickerPrice` di `productUnitLineHelpers.js` (slot unit terakhir / `harga_4..1`); jangan andalkan `harga_1` saja |
+| `getPickerUnitPrice` | Null-safe (tanpa strip → `—`, bukan `Rp 0`) |

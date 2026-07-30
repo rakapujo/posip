@@ -79,9 +79,7 @@ class CustomerPiutangController extends BaseApiController
         }
 
         $query = CustomerPiutang::query();
-        if ($request->filled('customer_id')) {
-            $query->byCustomer((int) $request->customer_id);
-        }
+        $this->applyFilters($query, $request);
         $nominal = auth()->user()->can('piutang.view_nominal');
 
         return $this->success(['summary' => [
@@ -100,10 +98,10 @@ class CustomerPiutangController extends BaseApiController
             return $this->forbidden('Akses aging membutuhkan permission piutang.view_nominal.');
         }
 
-        $rows = CustomerPiutang::query()->select('sisa_piutang', 'tanggal_jatuh_tempo')
-            ->outstanding()->where('sisa_piutang', '>', 0)
-            ->when($request->filled('customer_id'), fn ($q) => $q->byCustomer((int) $request->customer_id))
-            ->get();
+        $query = CustomerPiutang::query()->select('sisa_piutang', 'tanggal_jatuh_tempo')
+            ->outstanding()->where('sisa_piutang', '>', 0);
+        $this->applyFilters($query, $request, includeAgingBucket: false);
+        $rows = $query->get();
         $buckets = collect(['belum_tempo', 'b1_30', 'b31_60', 'b61_90', 'above_90'])
             ->mapWithKeys(fn ($key) => [$key => ['count' => 0, 'nominal' => 0.0]])->all();
 
@@ -142,7 +140,7 @@ class CustomerPiutangController extends BaseApiController
         );
     }
 
-    private function applyFilters($query, Request $request): void
+    private function applyFilters($query, Request $request, bool $includeAgingBucket = true): void
     {
         if ($request->filled('search')) {
             $query->search($request->search);
@@ -159,7 +157,7 @@ class CustomerPiutangController extends BaseApiController
         if ($request->filled('overdue_within_days')) {
             $request->overdue_within_days === 'all' ? $query->overdue() : $query->overdueWithinDays((int) $request->overdue_within_days);
         }
-        if ($request->filled('aging_bucket')) {
+        if ($includeAgingBucket && $request->filled('aging_bucket')) {
             $allowed = ['belum_tempo', 'b1_30', 'b31_60', 'b61_90', 'above_90'];
             if (in_array($request->aging_bucket, $allowed, true)) {
                 $query->agingBucket($request->aging_bucket);

@@ -1,8 +1,8 @@
 # Audit menu — 39 POS → Terminal
 
-> **Status:** patched Wave A + R + D + B (2026-07-26)  
+> **Status:** patched Wave A + R + D + B (2026-07-26) + mobile dialog height/grid (2026-07-30)  
 > **SSoT:** `PosTerminalPage.vue` · `PosTerminalController.php` · `MasterPosTerminal.php`  
-> **Cross:** [38-pos-shift.md](38-pos-shift.md) · [40-pos-kasir.md](40-pos-kasir.md)  
+> **Cross:** [38-pos-shift.md](38-pos-shift.md) · [40-pos-kasir.md](40-pos-kasir.md) · [72-mobile-filters-modals.md](72-mobile-filters-modals.md)  
 > **Jika konflik:** ikuti kode.
 
 ## Ringkas
@@ -22,8 +22,9 @@ CRUD/ops Terminal: destroy guard (sales/cash/returns), `isInUse` = active_user *
 | TM-S1 | start/end require `pos.access` |
 | TM-S2 | list scoped `terminal.view` \| `pos.access` |
 | TM-X2 | Link card → `/app/pos/shift` |
-| R-TM01 | Dialog breakpoints + `grid-cols-1 md:grid-cols-2` |
+| R-TM01 | Dialog breakpoints + form grid (kini `lg:grid-cols-2` + `col-span-full`) |
 | Part D | `mail_driver` XOR + secrets encrypted; strip dari list |
+| Mobile dialog (2026-07-30) | Height global 90vh; Detail `sm:grid-cols-2`; **crush-grid** via [72](72-mobile-filters-modals.md) force 1-col ≤991 + form `lg:` |
 
 ## Sisa (opsional / deferred)
 

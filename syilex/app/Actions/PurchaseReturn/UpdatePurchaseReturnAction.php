@@ -69,6 +69,15 @@ class UpdatePurchaseReturnAction
             // Produk serial: turunkan qty & harga (rata-rata modal) dari unit terpilih
             $data['details'] = $this->prepareSerialReturnDetails($data['details'], $serialIntakeId);
 
+            if (! $poId && ! $serialIntakeId) {
+                PurchaseReturnCalculationService::validateFreeHistory(
+                    $data['details'],
+                    $supplierId,
+                    $warehouseId,
+                    $retur->id
+                );
+            }
+
             // Calculate totals
             $calculated = PurchaseReturnCalculationService::calculateTotals($data);
 

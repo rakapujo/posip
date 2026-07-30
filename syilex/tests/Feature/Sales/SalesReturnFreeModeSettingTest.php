@@ -75,9 +75,29 @@ class SalesReturnFreeModeSettingTest extends TestCase
         SettingService::clearCache();
     }
 
+    private function seedSold(): void
+    {
+        (new ApproveManualSalesAction)->execute(
+            (new CreateManualSalesAction)->execute([
+                'tanggal' => '2026-07-20',
+                'customer_id' => $this->customer->id,
+                'warehouse_id' => $this->warehouse->id,
+                'tempo_hari' => 30,
+                'details' => [[
+                    'product_id' => $this->product->id,
+                    'unit' => 'PCS',
+                    'konversi' => 1,
+                    'qty' => 3,
+                    'harga_satuan' => 10000,
+                ]],
+            ]),
+        );
+    }
+
     public function test_free_create_ok_when_allow_free_true(): void
     {
         $this->setSalesFree(true);
+        $this->seedSold();
         $return = (new CreateSalesReturnAction)->execute([
             'tanggal' => '2026-07-20',
             'customer_id' => $this->customer->id,
@@ -96,6 +116,7 @@ class SalesReturnFreeModeSettingTest extends TestCase
     public function test_free_create_rejected_when_allow_free_false(): void
     {
         $this->setSalesFree(false);
+        $this->seedSold();
         $this->expectException(ValidationException::class);
         (new CreateSalesReturnAction)->execute([
             'tanggal' => '2026-07-20',
@@ -113,6 +134,7 @@ class SalesReturnFreeModeSettingTest extends TestCase
     public function test_preexisting_free_draft_can_lock_when_setting_later_disabled(): void
     {
         $this->setSalesFree(true);
+        $this->seedSold();
         $return = (new CreateSalesReturnAction)->execute([
             'tanggal' => '2026-07-20',
             'customer_id' => $this->customer->id,

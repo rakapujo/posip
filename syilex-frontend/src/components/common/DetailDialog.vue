@@ -51,7 +51,8 @@ const emit = defineEmits(['update:visible']);
 
 const dialogStyle = computed(() => ({
     width: `min(${props.width}, 95vw)`,
-    maxWidth: '95vw'
+    maxWidth: '95vw',
+    maxHeight: '90vh'
 }));
 
 function closeDialog() {
@@ -60,7 +61,16 @@ function closeDialog() {
 </script>
 
 <template>
-    <Dialog :visible="visible" @update:visible="$emit('update:visible', $event)" :style="dialogStyle" :breakpoints="{ '960px': '95vw' }" :header="title" :modal="true" :closable="!loading">
+    <Dialog
+        :visible="visible"
+        @update:visible="$emit('update:visible', $event)"
+        :style="dialogStyle"
+        :contentStyle="{ overflowY: 'auto' }"
+        :breakpoints="{ '960px': '95vw' }"
+        :header="title"
+        :modal="true"
+        :closable="!loading"
+    >
         <!-- Loading State -->
         <div v-if="loading" class="flex justify-center items-center py-8">
             <ProgressSpinner style="width: 50px; height: 50px" strokeWidth="4" />

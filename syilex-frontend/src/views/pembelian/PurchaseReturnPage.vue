@@ -22,6 +22,7 @@ const authStore = useAuthStore();
 const { formatCurrency, formatQty, formatDateTime, getPrimeDateFormatShort, getLocale, getCurrencyMinFractionDigits, getCurrencyMaxFractionDigits, currencySettings, toDateString } = useFormatters();
 
 // Permissions
+const canViewHarga = computed(() => authStore.can('po.view_harga'));
 const canCreate = computed(() => authStore.can('retur-beli.create'));
 const canUpdate = computed(() => authStore.can('retur-beli.update'));
 const canDelete = computed(() => authStore.can('retur-beli.delete'));
@@ -73,15 +74,22 @@ const statusOptions = [
 ];
 
 // Detail table columns
-const detailColumns = [
-    { field: '#', header: '#', width: '40px' },
-    { field: 'product', header: 'Produk' },
-    { field: 'unit_used', header: 'Satuan', width: '80px' },
-    { field: 'qty', header: 'Qty', align: 'right', width: '80px' },
-    { field: 'harga', header: 'Harga', align: 'right', width: '120px' },
-    { field: 'diskon', header: 'Diskon', align: 'right', width: '100px' },
-    { field: 'subtotal', header: 'Subtotal', align: 'right', width: '120px' }
-];
+const detailColumns = computed(() => {
+    const cols = [
+        { field: '#', header: '#', width: '40px' },
+        { field: 'product', header: 'Produk' },
+        { field: 'unit_used', header: 'Satuan', width: '80px' },
+        { field: 'qty', header: 'Qty', align: 'right', width: '80px' }
+    ];
+    if (canViewHarga.value) {
+        cols.push(
+            { field: 'harga', header: 'Harga', align: 'right', width: '120px' },
+            { field: 'diskon', header: 'Diskon', align: 'right', width: '100px' },
+            { field: 'subtotal', header: 'Subtotal', align: 'right', width: '120px' }
+        );
+    }
+    return cols;
+});
 
 onMounted(async () => {
     await Promise.all([loadSuppliers(), loadWarehouses()]);
@@ -388,23 +396,30 @@ async function exportDocPdf(item) {
             }
         },
         { header: 'Satuan', field: 'unit_used', width: 16 },
-        { header: 'Qty', width: 14, align: 'right', accessor: (row) => formatQty(row.qty_in_unit) },
-        { header: 'Harga', width: 22, align: 'right', accessor: (row) => formatCurrency(row.harga_per_unit) },
-        { header: 'Diskon', width: 22, align: 'right', accessor: (row) => formatCurrency(row.total_diskon_item) },
-        { header: 'Subtotal', width: 22, align: 'right', accessor: (row) => formatCurrency(row.subtotal) }
+        { header: 'Qty', width: 14, align: 'right', accessor: (row) => formatQty(row.qty_in_unit) }
     ];
+    if (canViewHarga.value) {
+        columns.push(
+            { header: 'Harga', width: 22, align: 'right', accessor: (row) => formatCurrency(row.harga_per_unit) },
+            { header: 'Diskon', width: 22, align: 'right', accessor: (row) => formatCurrency(row.total_diskon_item) },
+            { header: 'Subtotal', width: 22, align: 'right', accessor: (row) => formatCurrency(row.subtotal) }
+        );
+    }
 
-    const summary = [{ label: 'Subtotal', value: formatCurrency(data.subtotal) }];
-    if (Number(data.total_diskon_header) > 0) {
-        summary.push({ label: 'Diskon', value: `-${formatCurrency(data.total_diskon_header)}` });
-    }
-    summary.push({ label: 'DPP', value: formatCurrency(data.dpp) }, { label: `${data.pajak_nama} (${data.pajak_persen}%)`, value: formatCurrency(data.pajak_nominal) });
-    if (data.pembulatan && data.pembulatan !== 0) {
-        summary.push({ label: 'Pembulatan', value: formatCurrency(data.pembulatan) });
-    }
-    summary.push({ separator: true }, { label: 'Nilai Kalkulasi', value: formatCurrency(data.nilai_kalkulasi), bold: true });
-    if (data.status === 'approved') {
-        summary.push({ label: 'Nilai Diakui', value: formatCurrency(data.nilai_diakui), bold: true }, { label: 'Selisih', value: formatCurrency(data.selisih) });
+    let summary = null;
+    if (canViewHarga.value) {
+        summary = [{ label: 'Subtotal', value: formatCurrency(data.subtotal) }];
+        if (Number(data.total_diskon_header) > 0) {
+            summary.push({ label: 'Diskon', value: `-${formatCurrency(data.total_diskon_header)}` });
+        }
+        summary.push({ label: 'DPP', value: formatCurrency(data.dpp) }, { label: `${data.pajak_nama} (${data.pajak_persen}%)`, value: formatCurrency(data.pajak_nominal) });
+        if (data.pembulatan && data.pembulatan !== 0) {
+            summary.push({ label: 'Pembulatan', value: formatCurrency(data.pembulatan) });
+        }
+        summary.push({ separator: true }, { label: 'Nilai Kalkulasi', value: formatCurrency(data.nilai_kalkulasi), bold: true });
+        if (data.status === 'approved') {
+            summary.push({ label: 'Nilai Diakui', value: formatCurrency(data.nilai_diakui), bold: true }, { label: 'Selisih', value: formatCurrency(data.selisih) });
+        }
     }
 
     const audit = [];
@@ -533,13 +548,13 @@ const selisihClass = computed(() => {
                 </template>
             </Column>
 
-            <Column field="nilai_kalkulasi" header="Nilai Kalkulasi" sortable style="min-width: 140px" bodyClass="text-right">
+            <Column v-if="canViewHarga" field="nilai_kalkulasi" header="Nilai Kalkulasi" sortable style="min-width: 140px" bodyClass="text-right">
                 <template #body="{ data }">
                     <span class="font-semibold">{{ formatCurrency(data.nilai_kalkulasi) }}</span>
                 </template>
             </Column>
 
-            <Column field="nilai_diakui" header="Nilai Diakui" sortable style="min-width: 140px" bodyClass="text-right">
+            <Column v-if="canViewHarga" field="nilai_diakui" header="Nilai Diakui" sortable style="min-width: 140px" bodyClass="text-right">
                 <template #body="{ data }">
                     <span v-if="data.status === 'approved'" class="font-semibold">{{ formatCurrency(data.nilai_diakui) }}</span>
                     <span v-else class="text-surface-400">-</span>
@@ -615,7 +630,7 @@ const selisihClass = computed(() => {
                     </div>
 
                     <!-- Totals -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                    <div v-if="canViewHarga" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                         <div></div>
                         <div class="border border-surface-200 rounded-lg p-4 space-y-2">
                             <div class="flex justify-between">
@@ -686,7 +701,7 @@ const selisihClass = computed(() => {
                     </div>
 
                     <!-- Deposit info -->
-                    <div v-if="detailData.deposit" class="mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                    <div v-if="detailData.deposit && canViewHarga" class="mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
                         <div class="flex items-center justify-between gap-2 mb-2">
                             <h5 class="font-medium text-green-700 dark:text-green-300 m-0">Deposit Supplier Terbentuk</h5>
                             <RouterLink

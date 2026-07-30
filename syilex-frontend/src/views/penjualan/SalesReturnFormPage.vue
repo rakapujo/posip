@@ -3,7 +3,7 @@
  * Retur Penjualan BO — cascade Customer → Gudang → Nota (opsional).
  * Mode dokumen: harga efektif terkunci. Mode bebas: tambah produk + harga editable.
  */
-import { salesReturnsApi, customersApi, warehousesApi, produksApi } from '@/api';
+import { salesReturnsApi, customersApi, warehousesApi } from '@/api';
 import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed, watch, nextTick } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
@@ -17,8 +17,8 @@ const notify = useNotification();
 const router = useRouter();
 const route = useRoute();
 const settingsStore = useSettingsStore();
-const serialEnabled = computed(() => settingsStore.serialEnabled);
 const salesAllowFree = computed(() => settingsStore.returns.salesAllowFree);
+const salesFreeRequireSold = computed(() => settingsStore.returns.salesFreeRequireSold);
 const {
     formatQty,
     formatCurrency,
@@ -150,7 +150,7 @@ function mapReturnableRow(d) {
         returnable_base: d.returnable_base,
         qty_base: Number(d.returnable_base || 0),
         harga_satuan: harga,
-        is_serial: serialEnabled.value && !!d.product?.is_serial,
+        is_serial: !!d.product?.is_serial || !!(d.serial_unit_ids && d.serial_unit_ids.length),
         serial_unit_ids: [],
         returnable_units: d.returnable_units || []
     };
@@ -214,7 +214,7 @@ async function loadReturn() {
                 qty_base: Number(d.qty_base),
                 returnable_base: Number(d.qty_base),
                 harga_satuan: Number(d.harga_satuan || 0),
-                is_serial: serialEnabled.value && !!d.product?.is_serial,
+                is_serial: !!d.product?.is_serial || !!(d.serial_unit_ids && d.serial_unit_ids.length),
                 serial_unit_ids: d.serial_unit_ids || []
             }))
         };
@@ -247,7 +247,6 @@ async function loadReturn() {
 }
 
 function isSerialDetail(d) {
-    if (!serialEnabled.value) return false;
     return !!(d?.is_serial || d?.product?.is_serial || (d?.serial_unit_ids || []).length);
 }
 
@@ -293,55 +292,41 @@ function openProductPicker(index) {
 }
 
 async function fetchPickerProducts(q) {
-    const res = await produksApi.getAll({
+    if (!form.value.customer_id || !form.value.warehouse_id) return [];
+    const res = await salesReturnsApi.getReturnableProducts({
         search: q,
-        status: 'active',
-        per_page: 50,
-        sort_field: 'nama_produk',
-        sort_order: 'asc'
+        customer_id: form.value.customer_id,
+        warehouse_id: form.value.warehouse_id
     });
     if (!res.data.success) return [];
-    const list = res.data.data.produks || res.data.data.items || [];
-    // Ensure units[] for drawer flatten (API may only expose unit_1..4)
-    return list.map((p) => {
-        if (p.units?.length) return p;
-        const units = [];
-        const seen = new Set();
-        for (let i = 1; i <= 4; i++) {
-            const unit = p[`unit_${i}`];
-            if (!unit || seen.has(unit)) continue;
-            seen.add(unit);
-            units.push({
-                unit,
-                konversi: Number(p[`konversi_${i}`]) || 1,
-                harga_jual: Number(p[`harga_${i}`]) || 0
-            });
-        }
-        return { ...p, units };
-    });
+    return res.data.data.items || [];
 }
 
 function getPickerUnitPrice(product, unitObj) {
-    return Number(unitObj?.harga_jual ?? 0);
+    const v = unitObj?.harga_jual;
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
 }
+
+const pickerModeHint = computed(() => {
+    if (isLinked.value) {
+        return 'Mode dokumen: produk dari nota; harga alokasi (bukan edit di picker).';
+    }
+    if (!salesAllowFree.value) {
+        return 'Mode bebas dimatikan — pilih nota penjualan dulu.';
+    }
+    const hist = salesFreeRequireSold.value
+        ? 'Non-serial hanya yang pernah terjual ke customer/gudang ini.'
+        : 'Non-serial boleh tanpa histori jual.';
+    return `Mode bebas: harga editable. ${hist} Serial tetap wajib SN terjual.`;
+});
 
 function applyPickerSelect({ product, unit, konversi, unitObj, is_serial, price }) {
     const index = pickerTargetIndex.value;
     if (index < 0 || !product?.id) return;
-    const row = form.value.details[index];
-    row._searchQuery = '';
-    row.product = product;
-    row.product_id = product.id;
-
-    if (serialEnabled.value && is_serial) {
-        row.is_serial = true;
-        row.serial_unit_ids = [];
-        row.units = [{ unit: 'UNIT', konversi: 1, harga_jual: Number(price) || 0 }];
-        row.unit = 'UNIT';
-        row.harga_satuan = Number(price) || 0;
-        expandedRows.value = { ...expandedRows.value, [row._uid]: true };
-        return;
-    }
+    const prevRow = form.value.details[index];
+    if (!prevRow) return;
 
     const rawUnits = product.units || [];
     const seenUnits = new Set();
@@ -350,12 +335,23 @@ function applyPickerSelect({ product, unit, konversi, unitObj, is_serial, price 
         seenUnits.add(u.unit);
         return true;
     });
-
-    row.is_serial = false;
-    row.serial_unit_ids = [];
-    row.units = units.length ? units : [{ unit, konversi, harga_jual: price }];
-    row.unit = unit;
-    row.harga_satuan = Number(price ?? unitObj?.harga_jual) || 0;
+    const selectedPrice = Number(price ?? unitObj?.harga_jual) || 0;
+    const isSerial = !!is_serial;
+    const nextRow = {
+        ...prevRow,
+        _searchQuery: '',
+        product,
+        product_id: product.id,
+        is_serial: !!isSerial,
+        serial_unit_ids: [],
+        units: isSerial ? [{ unit: 'UNIT', konversi: 1, harga_jual: Number(price) || 0 }] : units.length ? units : [{ unit, konversi, harga_jual: price }],
+        unit: isSerial ? 'UNIT' : unit,
+        harga_satuan: isSerial ? Number(price) || 0 : selectedPrice
+    };
+    form.value.details[index] = nextRow;
+    if (isSerial) {
+        expandedRows.value = { ...expandedRows.value, [nextRow._uid]: true };
+    }
 }
 
 function onPickerTakenClick(row) {
@@ -565,7 +561,11 @@ function goBack() {
                 </div>
 
                 <Message v-if="isLinked && form.details.length" severity="info" :closable="false" class="mb-4">Harga memakai alokasi seperti retur POS (tanpa biaya kirim/lain & pembulatan nota). Tidak diedit manual.</Message>
-                <Message v-else-if="form.customer_id && form.warehouse_id && !isLinked && salesAllowFree" severity="secondary" :closable="false" class="mb-4">Mode bebas: default harga jual sesuai satuan; boleh diubah. Retur bebas tidak mengurangi sisa returnable per-nota.</Message>
+                <Message v-else-if="form.customer_id && form.warehouse_id && !isLinked && salesAllowFree" severity="secondary" :closable="false" class="mb-4">
+                    Mode bebas: harga editable.
+                    {{ salesFreeRequireSold ? 'Non-serial hanya yang pernah terjual ke customer/gudang ini.' : 'Non-serial boleh tanpa histori jual.' }}
+                    Serial tetap wajib SN terjual.
+                </Message>
                 <Message v-else-if="form.customer_id && form.warehouse_id && !isLinked && !salesAllowFree" severity="warn" :closable="false" class="mb-4">Mode bebas dimatikan — pilih nota penjualan terlebih dahulu.</Message>
                 <Message v-if="returnableMessage" severity="warn" :closable="false" class="mb-4">{{ returnableMessage }}</Message>
 
@@ -581,14 +581,14 @@ function goBack() {
                             <div v-if="isLinked || data.sales_detail_id" class="flex flex-col">
                                 <span class="font-medium">{{ data.product?.nama_produk }}</span>
                                 <span class="text-sm text-surface-500">{{ data.product?.kode_produk }}</span>
-                                <span v-if="serialEnabled && data.is_serial" class="text-xs text-primary">Serial</span>
+                                <span v-if="data.is_serial" class="text-xs text-primary">Serial</span>
                             </div>
                             <div v-else-if="data.product_id && data.product" class="flex flex-col gap-1">
                                 <span class="font-medium">{{ data.product?.kode_produk }}</span>
                                 <span class="text-sm text-surface-500">{{ data.product?.nama_produk }}</span>
-                                <span v-if="serialEnabled && data.is_serial" class="text-xs text-primary">Serial</span>
+                                <span v-if="data.is_serial" class="text-xs text-primary">Serial</span>
                                 <Button
-                                    v-if="!(serialEnabled && data.is_serial)"
+                                    v-if="!data.is_serial"
                                     label="Ganti"
                                     icon="pi pi-search"
                                     size="small"
@@ -613,7 +613,7 @@ function goBack() {
                     <Column header="Satuan" style="width: 120px">
                         <template #body="{ data }">
                             <Select
-                                v-if="!isLinked && !(serialEnabled && data.is_serial) && data.units?.length"
+                                v-if="!isLinked && !data.is_serial && data.units?.length"
                                 v-model="data.unit"
                                 :options="data.units"
                                 optionLabel="unit"
@@ -629,7 +629,7 @@ function goBack() {
                     </Column>
                     <Column header="Qty Retur" style="width: 140px">
                         <template #body="{ data, index }">
-                            <template v-if="serialEnabled && data.is_serial">
+                            <template v-if="data.is_serial">
                                 <Tag :value="`${data.serial_unit_ids?.length || 0} unit`" severity="info" />
                                 <div class="text-xs text-surface-500">pilih unit ↓</div>
                             </template>
@@ -675,7 +675,7 @@ function goBack() {
                         </template>
                     </Column>
                     <template #expansion="{ data }">
-                        <div v-if="serialEnabled && data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
+                        <div v-if="data.is_serial && data.product_id" class="px-4 py-3 bg-surface-50 dark:bg-surface-800">
                             <SerialUnitPicker
                                 :key="data._uid"
                                 :productId="data.product?.ulid || data.product_id"
@@ -685,6 +685,7 @@ function goBack() {
                                 :salesId="form.sales_id"
                                 :saleDetailId="data.sales_detail_id"
                                 :modelValue="data.serial_unit_ids"
+                                allow-when-disabled
                                 @change="(units) => onSerialChange(data, units)"
                             />
                         </div>
@@ -732,8 +733,9 @@ function goBack() {
             :fetch-products="fetchPickerProducts"
             :get-unit-price="getPickerUnitPrice"
             :taken-keys="pickerTakenKeys"
-            :include-serial="serialEnabled"
+            :include-serial="true"
             :format-price="formatCurrency"
+            :mode-hint="pickerModeHint"
             @select="applyPickerSelect"
             @taken-click="onPickerTakenClick"
         />

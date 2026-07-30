@@ -94,12 +94,14 @@ Tanpa langkah ini, PHP bisa gagal load `vendor/autoload.php` (Permission denied)
 1. Buka browser: `http://domain-anda.com/install`
 2. **Step 1**: Cek server (pastikan semua hijau)
 3. **Step 2**: Masukkan kredensial database dari Langkah 4
-4. **Step 3–7**: Isi informasi toko, regional, pajak, promo, akun admin
-5. **Step 5**: Aktif/nonaktifkan modul Elektronik (serial) sesuai kebutuhan toko
-6. **Step 8**: Pilih **Mulai Kosong** (production) atau **Data Demo** (belajar/uji coba)
-7. Opsional: centang **Buat POS Terminal** agar bisa langsung buka kasir
-8. Klik **Mulai Instalasi** → tunggu progress selesai
-9. Klik **Masuk ke Aplikasi** → login!
+4. **Step 3**: Informasi toko (+ URL terdeteksi, footer struk)
+5. **Step 4**: Regional & mata uang (+ desimal persen, mode huruf besar)
+6. **Step 5**: Pajak, pembulatan jual/beli, stok negatif (`block`/`allow`), retur bebas, modul elektronik, mode harga
+7. **Step 6–7**: Promo, akun admin
+8. **Step 8**: Pilih **Mulai Kosong** (production) atau **Data Demo** (belajar/uji coba)
+9. Opsional: centang **Buat POS Terminal** agar bisa langsung buka kasir
+10. Klik **Mulai Instalasi** → tunggu progress selesai
+11. Klik **Masuk ke Aplikasi** → login!
 
 ### Mode Instalasi
 

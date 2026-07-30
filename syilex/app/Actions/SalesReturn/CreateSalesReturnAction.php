@@ -54,7 +54,11 @@ class CreateSalesReturnAction
                         'customer_id' => ['Customer dan gudang wajib untuk retur bebas.'],
                     ]);
                 }
-                $calculation = SalesReturnCalculationService::calculateFree($data['details']);
+                $calculation = SalesReturnCalculationService::calculateFree(
+                    $data['details'],
+                    $customerId,
+                    $warehouseId
+                );
                 $salesId = null;
                 $pajakNama = null;
             }

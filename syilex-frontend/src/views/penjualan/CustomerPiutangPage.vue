@@ -376,7 +376,8 @@ function getStatusLabel(status) {
 
 function isOverdue(item) {
     if (!item.tanggal_jatuh_tempo || item.status === 'paid') return false;
-    return isBeforeNow(item.tanggal_jatuh_tempo);
+    const due = toDateString(item.tanggal_jatuh_tempo);
+    return due != null && due < todayString();
 }
 
 function getDaysUntilDue(item) {
@@ -649,6 +650,10 @@ async function exportExcel() {
                         <div class="flex justify-between text-green-600">
                             <span>Terbayar</span>
                             <span class="font-medium">{{ formatCurrency(detailData.nominal_terbayar) }}</span>
+                        </div>
+                        <div v-if="Number(detailData.nominal_retur) > 0" class="flex justify-between text-orange-600">
+                            <span>Retur</span>
+                            <span class="font-medium">{{ formatCurrency(detailData.nominal_retur) }}</span>
                         </div>
                         <Divider />
                         <div class="flex justify-between font-bold text-lg">

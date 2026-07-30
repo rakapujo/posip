@@ -167,10 +167,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/{serialChange}/approve', [SerialChangeController::class, 'approve'])->middleware('throttle:30,1');
         });
 
-        // Register Unit Serial (read-only) — telusuri unit per produk + status + asal dokumen
+        // Register Unit Serial (read-only) — available tanpa feature.elektronik (Q5: retur SN OK saat OFF)
+        Route::get('serial-units/available', [SerialUnitController::class, 'available']);
         Route::prefix('serial-units')->middleware('feature.elektronik')->group(function () {
             Route::get('/', [SerialUnitController::class, 'index']);
-            Route::get('/available', [SerialUnitController::class, 'available']);
             Route::get('/lookup', [SerialUnitController::class, 'lookup']);
             Route::get('/peek-kode', [SerialUnitController::class, 'peekKode']);
             Route::get('/export', [SerialUnitController::class, 'export']);
@@ -490,6 +490,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('sales-returns')->group(function () {
             Route::get('/', [BackofficeSalesReturnController::class, 'index']);
             Route::get('/returnable-sales', [BackofficeSalesReturnController::class, 'returnableSales']);
+            Route::get('/returnable-products', [BackofficeSalesReturnController::class, 'returnableProducts']);
             Route::get('/sales/{salesUlid}/returnable-details', [BackofficeSalesReturnController::class, 'returnableDetails']);
             Route::get('/{ulid}', [BackofficeSalesReturnController::class, 'show']);
 

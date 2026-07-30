@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { getAuthData, injectAuth, authHeaders, laravelApiBase } from './helpers/auth.js';
+import { ensurePosShift, waitForPosReady } from './helpers/pos.js';
 
 /**
  * Serial intake → POS sell journey.
@@ -12,65 +13,6 @@ let serialNumber;
 let kodeInternal;
 let warehouseId;
 
-async function waitForPosReady(page) {
-    const setorBtn = page.locator('button:has-text("Simpan & Mulai")');
-    const searchBox = page.locator('input[placeholder*="Cari produk"]').first();
-    await Promise.race([
-        setorBtn.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {}),
-        searchBox.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {})
-    ]);
-    if (await setorBtn.isVisible().catch(() => false)) {
-        await setorBtn.click();
-        await page.waitForTimeout(1500);
-    }
-    await expect(searchBox).toBeVisible({ timeout: 15000 });
-}
-
-/** Mirror pos-checkout: reuse/create any terminal, return { ulid, warehouseId }. */
-async function ensurePosTerminal(request, headers) {
-    const termListRes = await request.get(`${apiURL}/pos-terminals?per_page=100`, { headers });
-    let terminals = (await termListRes.json()).data?.terminals || [];
-
-    if (terminals.length === 0) {
-        const [whRes, custRes, pmRes] = await Promise.all([
-            request.get(`${apiURL}/warehouses?status=active&per_page=1`, { headers }),
-            request.get(`${apiURL}/customers?per_page=100`, { headers }),
-            request.get(`${apiURL}/metode-pembayarans?status=active&per_page=100`, { headers })
-        ]);
-        const warehouses = (await whRes.json()).data?.warehouses || [];
-        const customers = (await custRes.json()).data?.customers || [];
-        const methods = (await pmRes.json()).data?.metode_pembayarans || [];
-        const walkIn = customers.find((c) => c.jenis === 'walk_in') || customers[0];
-        const cash = methods.find((m) => m.metode === 'tunai') || methods[0];
-        const createRes = await request.post(`${apiURL}/pos-terminals`, {
-            headers,
-            data: {
-                kode_terminal: 'E2E_SER',
-                nama_terminal: 'Terminal E2E Serial',
-                warehouse_id: warehouses[0]?.id,
-                default_customer_id: walkIn?.id,
-                default_metode_pembayaran_id: cash?.id,
-                auto_open_tray: false,
-                izinkan_retur: true,
-                durasi_retur: 24,
-                status: 'active',
-                user_ids: [authData.user.id],
-                metode_pembayaran_ids: methods.map((m) => m.id).filter(Boolean)
-            }
-        });
-        expect(createRes.ok(), JSON.stringify(await createRes.json())).toBeTruthy();
-        const fresh = await request.get(`${apiURL}/pos-terminals?per_page=100`, { headers });
-        terminals = (await fresh.json()).data?.terminals || [];
-    }
-
-    const terminal = terminals[0];
-    expect(terminal?.ulid).toBeTruthy();
-    const whId = terminal.warehouse_id || terminal.warehouse?.id;
-    expect(whId, 'terminal warehouse_id').toBeTruthy();
-    await request.post(`${apiURL}/pos-terminals/${terminal.ulid}/start-shift`, { headers });
-    return { ulid: terminal.ulid, warehouseId: whId };
-}
-
 test.describe.serial('Serial intake → POS', () => {
     test.setTimeout(90000);
 
@@ -82,12 +24,8 @@ test.describe.serial('Serial intake → POS', () => {
         await request
             .put(`${apiURL}/settings/modules/elektronik_enabled`, { headers, data: { value: true } })
             .catch(() => {});
-        await request.put(`${apiURL}/settings/stock/negative_mode`, {
-            headers,
-            data: { value: 'allow' }
-        });
 
-        const { warehouseId: termWhId } = await ensurePosTerminal(request, headers);
+        const { warehouseId: termWhId } = await ensurePosShift(request, authData, { kode: 'E2E_KASIR' });
         warehouseId = termWhId;
 
         const [prodRes, whRes, supRes] = await Promise.all([
@@ -142,7 +80,6 @@ test.describe.serial('Serial intake → POS', () => {
         expect(product?.ulid, 'need serial product ulid').toBeTruthy();
         expect(warehouse?.ulid, 'need warehouse ulid matching POS terminal').toBeTruthy();
         expect(supplier?.ulid, 'need supplier ulid').toBeTruthy();
-        // Keep terminal warehouse as source of truth
         warehouseId = warehouse.id;
 
         serialNumber = `E2E-SN-${Date.now()}`;
@@ -201,7 +138,7 @@ test.describe.serial('Serial intake → POS', () => {
 
         const salesBeforeRes = await request.get(`${apiURL}/sales-report?per_page=1&source=pos`, { headers });
         const salesBefore = salesBeforeRes.ok()
-            ? (await salesBeforeRes.json())?.data?.pagination?.total ?? 0
+            ? ((await salesBeforeRes.json())?.data?.pagination?.total ?? 0)
             : 0;
 
         const scanCode = kodeInternal || serialNumber;
@@ -240,7 +177,7 @@ test.describe.serial('Serial intake → POS', () => {
         await addBtn.click();
         await page.waitForTimeout(800);
 
-        const bayarBtn = page.locator('button:has-text("BAYAR")');
+        const bayarBtn = page.getByRole('button', { name: 'BAYAR (F12)' });
         await expect(bayarBtn).toBeEnabled({ timeout: 5000 });
         await page.keyboard.press('F12');
         await page.waitForTimeout(1000);

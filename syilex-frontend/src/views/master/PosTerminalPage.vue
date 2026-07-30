@@ -814,9 +814,9 @@ onMounted(async () => {
 
         <!-- ==================== FORM DIALOG ==================== -->
         <Dialog v-model:visible="itemDialog" :style="{ width: '700px' }" :breakpoints="{ '960px': '95vw' }" :header="isEdit ? 'Edit Terminal' : 'Tambah Terminal'" :modal="true" :closable="!saving">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <!-- Section 1: Informasi Dasar -->
-                <div class="col-span-2 border-b pb-2 mb-1">
+                <div class="col-span-full border-b pb-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Informasi Dasar</span>
                 </div>
 
@@ -883,7 +883,7 @@ onMounted(async () => {
                 </div>
 
                 <!-- Section 2: Default Settings -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Default Settings</span>
                 </div>
 
@@ -910,31 +910,31 @@ onMounted(async () => {
                     <small v-else class="text-surface-500">Metode pembayaran yang dipilih otomatis saat transaksi (harus aktif dan tunai)</small>
                 </div>
 
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <label class="block font-medium mb-2">Printer Thermal</label>
                     <PrinterPickerPanel :terminal-ulid="item.ulid" class="mb-3" />
                     <Button label="Test Print" icon="pi pi-print" severity="info" outlined :loading="testingPrint" @click="testThermalPrint" />
                     <small class="block text-surface-500 mt-2">Pairing disimpan di browser perangkat ini (Chrome/Edge).</small>
                 </div>
 
-                <div class="col-span-2 flex items-center gap-3">
+                <div class="col-span-full flex items-center gap-3">
                     <ToggleSwitch v-model="item.auto_open_tray" />
                     <label class="font-medium">Auto Open Tray</label>
                 </div>
 
                 <!-- Advanced settings (collapsed on mobile via CollapsibleSection) -->
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <CollapsibleSection title="Pengaturan Lanjutan" subtitle="Auto print, keamanan, kertas, retur">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <!-- Auto Print — kontrol per-jenis-dokumen -->
-                <div class="col-span-2 border-b pb-2 mb-1">
+                <div class="col-span-full border-b pb-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Auto Print</span>
                 </div>
                 <div class="col-span-1 flex items-center gap-3">
                     <ToggleSwitch v-model="item.auto_print_receipt" />
                     <label class="font-medium">Struk Penjualan (auto saat checkout)</label>
                 </div>
-                <div class="col-span-2 text-sm text-muted-color">Struk retur, kas, dan laporan shift hanya via tombol cetak manual (kebijakan browser thermal).</div>
+                <div class="col-span-full text-sm text-muted-color">Struk retur, kas, dan laporan shift hanya via tombol cetak manual (kebijakan browser thermal).</div>
                 <div class="col-span-1 flex items-center gap-3 opacity-60 pointer-events-none" v-tooltip.top="'Hanya manual — tidak auto-print'">
                     <ToggleSwitch v-model="item.auto_print_retur" disabled />
                     <label class="font-medium">Struk Retur (manual)</label>
@@ -949,17 +949,17 @@ onMounted(async () => {
                 </div>
 
                 <!-- Keamanan -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Keamanan</span>
                 </div>
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <label class="block font-medium mb-2">Auto Lock Setelah Idle (menit)</label>
                     <InputNumber v-model="item.auto_lock_minutes" :min="1" :max="120" showButtons fluid placeholder="Kosongkan untuk nonaktif" />
                     <small class="text-surface-500">Layar POS otomatis terkunci kalau kasir tidak aktif selama X menit. Kosongkan untuk nonaktifkan.</small>
                 </div>
 
                 <!-- Paper & Print Config — ukuran kertas + feed lines -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Pengaturan Kertas & Print</span>
                 </div>
                 <div class="col-span-1">
@@ -999,16 +999,16 @@ onMounted(async () => {
                 </div>
 
                 <!-- Section 3: Konfigurasi Retur -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Konfigurasi Retur</span>
                 </div>
 
-                <div class="col-span-2 flex items-center gap-3">
+                <div class="col-span-full flex items-center gap-3">
                     <ToggleSwitch v-model="item.izinkan_retur" />
                     <label class="font-medium">Izinkan Retur</label>
                 </div>
 
-                <div v-if="item.izinkan_retur" class="col-span-2">
+                <div v-if="item.izinkan_retur" class="col-span-full">
                     <label class="block font-medium mb-2">Durasi Retur</label>
                     <InputNumber v-select-on-focus v-model="item.durasi_retur" :min="0" placeholder="Kosongkan untuk unlimited" showButtons fluid />
                     <small class="text-surface-500">0 = shift ini saja, 1+ = jumlah hari, kosong = unlimited</small>
@@ -1017,10 +1017,10 @@ onMounted(async () => {
                     </CollapsibleSection>
                 </div>
 
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <CollapsibleSection title="Identitas Toko (Override)" subtitle="Kosong = pakai Global Settings → Toko">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div class="col-span-2 text-sm text-muted-color">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div class="col-span-full text-sm text-muted-color">
                                 Hanya untuk dokumen POS outlet ini (struk thermal/PDF, email, struk online, laporan shift). Login, Topbar, dan laporan BO tetap memakai Global Settings.
                             </div>
                             <div>
@@ -1031,7 +1031,7 @@ onMounted(async () => {
                                 <label class="block font-medium mb-2">Telepon</label>
                                 <InputText v-model.trim="item.store_phone" placeholder="Kosongkan untuk pakai global" fluid maxlength="50" />
                             </div>
-                            <div class="col-span-2">
+                            <div class="col-span-full">
                                 <label class="block font-medium mb-2">Alamat</label>
                                 <Textarea v-model="item.store_address" rows="2" placeholder="Kosongkan untuk pakai global" fluid autoResize />
                             </div>
@@ -1043,7 +1043,7 @@ onMounted(async () => {
                                 <label class="block font-medium mb-2">NPWP</label>
                                 <InputText v-model.trim="item.store_npwp" placeholder="Kosongkan untuk pakai global" fluid maxlength="30" />
                             </div>
-                            <div class="col-span-2">
+                            <div class="col-span-full">
                                 <label class="block font-medium mb-2">Footer Struk</label>
                                 <Textarea v-model="item.receipt_footer" rows="2" placeholder="Kosongkan untuk pakai global" fluid autoResize />
                             </div>
@@ -1051,10 +1051,10 @@ onMounted(async () => {
                     </CollapsibleSection>
                 </div>
 
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <CollapsibleSection title="Email Struk" subtitle="Pengiriman struk ke pelanggan">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div class="col-span-2 flex flex-wrap gap-4">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div class="col-span-full flex flex-wrap gap-4">
                                 <div class="flex items-center gap-2">
                                     <RadioButton v-model="item.mail_driver" inputId="mail_none" value="none" />
                                     <label for="mail_none">Tidak aktif</label>
@@ -1095,20 +1095,20 @@ onMounted(async () => {
                                     <label class="block font-medium mb-2">Username</label>
                                     <InputText v-model.trim="item.smtp_username" autocomplete="username" fluid />
                                 </div>
-                                <div class="col-span-2">
+                                <div class="col-span-full">
                                     <label class="block font-medium mb-2">Password SMTP</label>
                                     <Password v-model="item.smtp_password" :feedback="false" toggleMask fluid />
                                     <small class="text-surface-500">Kosongkan saat edit untuk mempertahankan password saat ini.</small>
                                 </div>
                             </template>
                             <template v-if="item.mail_driver === 'resend'">
-                                <div class="col-span-2">
+                                <div class="col-span-full">
                                     <label class="block font-medium mb-2">Resend API Key <span class="text-red-500">*</span></label>
                                     <Password v-model="item.resend_api_key" :feedback="false" toggleMask fluid />
                                     <small class="text-surface-500">Kosongkan saat edit untuk mempertahankan API key saat ini.</small>
                                 </div>
                             </template>
-                            <div v-if="isEdit && item.mail_driver !== 'none'" class="col-span-2 flex flex-wrap items-end gap-2">
+                            <div v-if="isEdit && item.mail_driver !== 'none'" class="col-span-full flex flex-wrap items-end gap-2">
                                 <div class="flex-1 min-w-[12rem]">
                                     <label class="block font-medium mb-2">Uji Kirim Ke</label>
                                     <InputText v-model.trim="mailTestTo" type="email" placeholder="email@contoh.com" fluid />
@@ -1120,11 +1120,11 @@ onMounted(async () => {
                 </div>
 
                 <!-- Section 4: Metode Pembayaran yang Diizinkan -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Metode Pembayaran yang Diizinkan</span>
                 </div>
 
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <label class="block font-medium mb-2">Metode Pembayaran <span class="text-red-500">*</span></label>
                     <MultiSelect
                         v-model="item.metode_pembayaran_ids"
@@ -1141,22 +1141,22 @@ onMounted(async () => {
                 </div>
 
                 <!-- Section 5: User yang Ditugaskan -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">User yang Ditugaskan</span>
                 </div>
 
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <label class="block font-medium mb-2">User <span class="text-red-500">*</span></label>
                     <MultiSelect v-model="item.user_ids" :options="userOptions" filter optionLabel="name" optionValue="id" placeholder="Pilih user" display="chip" :invalid="submitted && !item.user_ids?.length" fluid />
                     <small v-if="submitted && !item.user_ids?.length" class="text-red-500">Minimal 1 user wajib dipilih</small>
                 </div>
 
                 <!-- Section 6: Catatan -->
-                <div class="col-span-2 border-b pb-2 mt-2 mb-1">
+                <div class="col-span-full border-b pb-2 mt-2 mb-1">
                     <span class="font-semibold text-sm text-surface-500">Catatan</span>
                 </div>
 
-                <div class="col-span-2">
+                <div class="col-span-full">
                     <Textarea v-model="item.keterangan" rows="3" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" placeholder="Keterangan (opsional)" fluid autoResize />
                 </div>
             </div>
@@ -1180,7 +1180,7 @@ onMounted(async () => {
         >
             <template #content>
                 <div class="flex flex-col gap-4">
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <DetailItem label="Kode Terminal" :value="detailData.kode_terminal" />
                         <DetailItem label="Nama Terminal" :value="detailData.nama_terminal" />
                         <DetailItem label="Warehouse" :value="detailData.warehouse?.nama_warehouse" />

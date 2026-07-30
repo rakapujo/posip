@@ -55,25 +55,8 @@ class ManualSalesController extends BaseApiController
         $direction = $request->input('sort_order') === 'asc' ? 'asc' : 'desc';
         $page = $query->orderBy($sort, $direction)->paginate($this->getPerPage($request, 15));
 
-        $canViewHarga = auth()->user()->can('sales.view_harga');
-        $items = collect($page->items())->map(function ($item) use ($canViewHarga) {
-            if (! $canViewHarga) {
-                $item->makeHidden([
-                    'subtotal', 'total_diskon', 'total_setelah_diskon',
-                    'total_biaya_pembayaran', 'dpp', 'pajak_nominal', 'pembulatan', 'grand_total',
-                    'diskon_nota_1_hasil', 'diskon_nota_2_hasil', 'diskon_nota_3_hasil',
-                    'biaya_kirim_hasil', 'biaya_lain_hasil', 'total_bayar', 'kembalian',
-                ]);
-                if ($item->relationLoaded('piutang') && $item->piutang) {
-                    $item->piutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_piutang', 'nominal_retur']);
-                }
-            }
-
-            return $item;
-        });
-
         return $this->success([
-            'items' => $items,
+            'items' => $page->items(),
             'pagination' => [
                 'current_page' => $page->currentPage(),
                 'last_page' => $page->lastPage(),
@@ -97,23 +80,6 @@ class ManualSalesController extends BaseApiController
         if (! auth()->user()->can('stok.view_hpp')) {
             foreach ($sales->details ?? [] as $detail) {
                 $detail->makeHidden(['hpp_at_time']);
-            }
-        }
-        if (! auth()->user()->can('sales.view_harga')) {
-            $sales->makeHidden([
-                'subtotal', 'total_diskon', 'total_setelah_diskon',
-                'total_biaya_pembayaran', 'dpp', 'pajak_nominal', 'pembulatan', 'grand_total',
-                'diskon_nota_1_hasil', 'diskon_nota_2_hasil', 'diskon_nota_3_hasil',
-                'biaya_kirim_hasil', 'biaya_lain_hasil', 'total_bayar', 'kembalian',
-            ]);
-            foreach ($sales->details ?? [] as $detail) {
-                $detail->makeHidden([
-                    'harga_satuan', 'harga_bruto', 'diskon_1_hasil', 'diskon_2_hasil',
-                    'diskon_3_hasil', 'diskon_4_hasil', 'diskon_5_hasil', 'diskon_total', 'jumlah',
-                ]);
-            }
-            if ($sales->relationLoaded('piutang') && $sales->piutang) {
-                $sales->piutang->makeHidden(['nominal_awal', 'nominal_terbayar', 'sisa_piutang', 'nominal_retur']);
             }
         }
 
@@ -223,7 +189,11 @@ class ManualSalesController extends BaseApiController
         if (! auth()->user()->can('sales.create') && ! auth()->user()->can('sales.update')) {
             return $this->forbidden('Anda tidak memiliki akses.');
         }
-        $request->validate(['search' => 'nullable|string|max:100']);
+        $request->validate([
+            'search' => 'nullable|string|max:100',
+            'warehouse_id' => 'nullable|integer|exists:master_warehouse,id',
+        ]);
+        $warehouseId = $request->filled('warehouse_id') ? (int) $request->input('warehouse_id') : null;
         $query = MasterProduk::active()->select([
             'id', 'ulid', 'kode_produk', 'nama_produk', 'barcode', 'is_serial',
             'unit_1', 'konversi_1', 'harga_1', 'unit_2', 'konversi_2', 'harga_2',
@@ -233,7 +203,12 @@ class ManualSalesController extends BaseApiController
             $query->where('is_serial', false);
         }
         if ($request->filled('search')) {
-            $query->search((string) $request->input('search'));
+            $query->searchPicker((string) $request->input('search'), function ($su) use ($warehouseId) {
+                $su->where('status', \App\Models\SerialUnit::STATUS_TERSEDIA);
+                if ($warehouseId) {
+                    $su->where('warehouse_id', $warehouseId);
+                }
+            });
         }
         $items = $query->limit(20)->get()->makeVisible('id')->map(function ($product) {
             $units = [];
@@ -247,14 +222,6 @@ class ManualSalesController extends BaseApiController
                 }
             }
             $product->setAttribute('units', collect($units)->unique('unit')->values());
-            if (! auth()->user()->can('sales.view_harga')) {
-                $product->makeHidden(['harga_1', 'harga_2', 'harga_3', 'harga_4']);
-                $product->units = collect($product->units)->map(function ($unit) {
-                    unset($unit['harga_jual']);
-
-                    return $unit;
-                })->values();
-            }
 
             return $product;
         });
@@ -382,6 +349,7 @@ class ManualSalesController extends BaseApiController
             'customer:id,ulid,kode_customer,nama,tempo_default,alamat,telepon',
             'warehouse:id,ulid,kode_warehouse,nama_warehouse',
             'details.product:id,ulid,kode_produk,nama_produk,barcode,is_serial,unit_1,konversi_1,unit_2,konversi_2,unit_3,konversi_3,unit_4,konversi_4',
+            'details.promo:id,nama_promo',
             'createdBy:id,name,email',
             'approvedBy:id,name,email',
             'piutang.paymentDetails.pembayaran',

@@ -41,7 +41,12 @@ class UpdateSalesReturnAction
                         'customer_id' => ['Customer dan gudang wajib untuk retur bebas.'],
                     ]);
                 }
-                $calculation = SalesReturnCalculationService::calculateFree($data['details']);
+                $calculation = SalesReturnCalculationService::calculateFree(
+                    $data['details'],
+                    $customerId,
+                    $warehouseId,
+                    $return->id
+                );
                 $return->customer_id = $customerId;
                 $return->warehouse_id = $warehouseId;
             }

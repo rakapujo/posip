@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { getAuthData, injectAuth, authHeaders, laravelApiBase } from './helpers/auth.js';
+import { ensureProductStock } from './helpers/pos.js';
 
 /**
  * Backoffice Penjualan E2E
@@ -13,10 +14,10 @@ import { getAuthData, injectAuth, authHeaders, laravelApiBase } from './helpers/
 let apiURL;
 let authData;
 
-async function createDraftSale(request) {
+async function createDraftSale(request, { seedStock = false } = {}) {
     const headers = authHeaders(authData);
     const [custRes, whRes, prodRes] = await Promise.all([
-        request.get(`${apiURL}/customers/list`, { headers }),
+        request.get(`${apiURL}/customers/list?jenis=spesifik`, { headers }),
         request.get(`${apiURL}/warehouses/list?is_saleable=1`, { headers }),
         request.get(`${apiURL}/sales/products`, { headers })
     ]);
@@ -30,28 +31,71 @@ async function createDraftSale(request) {
     let products = [];
     if (prodRes.ok()) {
         products = (await prodRes.json()).data?.items || [];
-    } else {
-        const fallback = await request.get(`${apiURL}/produks/list`, { headers });
-        expect(fallback.ok(), `produks/list ${fallback.status()} (sales/products ${prodRes.status()})`).toBeTruthy();
-        const body = await fallback.json();
-        products = body.data?.produks || body.data?.items || [];
     }
+    // Prefer non-serial for edit form (qty/harga InputNumber)
+    let nonSerial = products.filter((p) => !p.is_serial && p.id != null);
+    if (nonSerial.length === 0) {
+        const fallback = await request.get(`${apiURL}/produks/list?is_serial=0`, { headers });
+        expect(fallback.ok(), `produks/list non-serial ${fallback.status()}`).toBeTruthy();
+        nonSerial = ((await fallback.json()).data?.produks || []).filter((p) => !p.is_serial && p.id != null);
+    }
+    if (nonSerial.length === 0) {
+        const createProd = await request.post(`${apiURL}/produks`, {
+            headers,
+            data: {
+                kode_produk: `E2ESL${Date.now().toString().slice(-6)}`,
+                nama_produk: 'E2E Sales Produk',
+                is_serial: false,
+                status: 'active',
+                unit_1: 'PCS',
+                konversi_1: 1,
+                harga_1: 10000,
+                unit_2: 'PCS',
+                konversi_2: 1,
+                harga_2: 10000,
+                unit_3: 'PCS',
+                konversi_3: 1,
+                harga_3: 10000,
+                unit_4: 'PCS',
+                konversi_4: 1,
+                harga_4: 10000,
+                minimum_stok: 0
+            }
+        });
+        const createdProd = await createProd.json();
+        expect(createProd.ok(), JSON.stringify(createdProd)).toBeTruthy();
+        const created = createdProd.data?.produk || createdProd.data?.product;
+        // index/show may hide id — resolve via list search
+        if (created && !created.id && created.kode_produk) {
+            const again = await request.get(
+                `${apiURL}/produks/list?is_serial=0&search=${encodeURIComponent(created.kode_produk)}`,
+                { headers }
+            );
+            const found = ((await again.json()).data?.produks || []).find(
+                (p) => p.kode_produk === created.kode_produk
+            );
+            nonSerial = [found || created].filter((p) => p?.id != null);
+        } else {
+            nonSerial = [created].filter((p) => p?.id != null);
+        }
+    }
+    products = nonSerial;
 
-    let customer = customers.find((c) => c.id != null) || customers[0];
+    let customer = customers.find((c) => c.id != null && c.jenis !== 'walk_in') || customers[0];
     if (!customer?.id) {
         const createCust = await request.post(`${apiURL}/customers`, {
             headers,
             data: {
                 kode_customer: `E2E${Date.now().toString().slice(-6)}`,
                 nama: 'E2E Customer Penjualan',
-                jenis: 'member',
+                jenis: 'spesifik',
                 status: 'active',
                 tempo_default: 0
             }
         });
         const created = await createCust.json();
         expect(createCust.ok(), JSON.stringify(created)).toBeTruthy();
-        const again = await request.get(`${apiURL}/customers/list`, { headers });
+        const again = await request.get(`${apiURL}/customers/list?jenis=spesifik`, { headers });
         customer = ((await again.json()).data?.customers || []).find((c) => c.nama === 'E2E Customer Penjualan');
     }
 
@@ -64,6 +108,17 @@ async function createDraftSale(request) {
     expect(customer?.id, `customer keys=${customer ? Object.keys(customer) : 'none'} count=${customers.length}`).toBeTruthy();
     expect(warehouse?.id, `warehouse keys=${warehouse ? Object.keys(warehouse) : 'none'} count=${warehouses.length}`).toBeTruthy();
     expect(product?.id, `product keys=${product ? Object.keys(product) : 'none'} count=${products.length}`).toBeTruthy();
+
+    if (seedStock) {
+        const stock = await ensureProductStock(request, authData, {
+            productId: product.id,
+            warehouseId: warehouse.id,
+            qty: 100
+        });
+        if (stock.skipped) {
+            return { skipped: true, reason: stock.reason };
+        }
+    }
 
     const unit = product.unit_1 || product.units?.[0]?.unit || 'PCS';
     const konversi = product.konversi_1 || product.units?.[0]?.konversi || 1;
@@ -166,15 +221,15 @@ test.describe('Penjualan Backoffice', () => {
         await expect(page.getByText('Edit Penjualan')).toBeVisible({ timeout: 15000 });
         await expect(page.getByText('Belum ada detail produk')).toHaveCount(0);
 
-        // Non-serial rows pakai AutoComplete — label = "KODE - NAMA", bukan teks kode saja
+        // Baris terisi menampilkan kode/nama teks — bukan combobox kosong
         await expect(page.locator('.sales-detail-table .p-datatable-tbody tr')).toHaveCount(1, { timeout: 15000 });
-        const productCombobox = page.locator('.sales-detail-table').getByRole('combobox').first();
-        await expect(productCombobox).toBeVisible({ timeout: 10000 });
         const kode = product.kode_produk || '';
         if (kode) {
-            await expect(productCombobox).toHaveValue(new RegExp(kode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+            await expect(page.locator('.sales-detail-table').getByText(kode, { exact: true }).first()).toBeVisible({
+                timeout: 10000
+            });
         }
-        await expect(page.getByText(new RegExp(unit))).toBeVisible();
+        await expect(page.locator('.sales-detail-table').getByText(new RegExp(unit))).toBeVisible();
 
         const detailRow = page.locator('.sales-detail-table .p-datatable-tbody tr').first();
         const spinbuttons = detailRow.getByRole('spinbutton');
@@ -221,18 +276,14 @@ test.describe('Penjualan Backoffice', () => {
     });
 
     test('draft sales approve then appears completed in list', async ({ page, request }) => {
-        const headers = authHeaders(authData);
-        await request.put(`${apiURL}/settings/stock/negative_mode`, {
-            headers,
-            data: { value: 'allow' }
-        });
-
-        const draft = await createDraftSale(request);
+        // negative_mode sering terkunci setelah ada stock_card — seed stok via adjustment
+        const draft = await createDraftSale(request, { seedStock: true });
         if (draft.skipped) {
             test.skip(true, draft.reason);
             return;
         }
 
+        const headers = authHeaders(authData);
         const { sales } = draft;
         const nomor = sales.nomor_dokumen;
 

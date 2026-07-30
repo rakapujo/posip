@@ -249,7 +249,7 @@ async function saveBrand() {
                     <template #body="slotProps">
                     <RowActionButtons>
                         <Button icon="pi pi-eye" rounded severity="info" @click="viewDetail(slotProps.data)" v-tooltip.top="'Lihat Detail'" text />
-                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editBrand(slotProps.data)" v-tooltip.top="'Edit'" text />
+                        <Button v-if="canUpdate" icon="pi pi-pencil" rounded @click="editBrand(slotProps.data)" v-tooltip.top="'Edit'" aria-label="Edit" text />
                         <Button v-if="canUpdate" icon="pi pi-power-off" rounded :severity="getToggleSeverity(slotProps.data.status)" @click="confirmToggleStatus(slotProps.data)" v-tooltip.top="getToggleLabel(slotProps.data.status)" :aria-label="getToggleLabel(slotProps.data.status)" text />
                         <Button v-if="canDelete" icon="pi pi-trash" rounded severity="danger" @click="confirmDelete(slotProps.data)" v-tooltip.top="'Hapus'" text />
                     </RowActionButtons>

@@ -43,7 +43,7 @@ class PurchaseReturnSerialIntakeLinkedTest extends TestCase
         SettingService::set('rounding.purchase_method', 'none', 'string');
         SettingService::set('stock.negative_mode', 'block', 'string');
 
-        foreach (['retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.lock', 'retur-beli.approve', 'stok.view_hpp'] as $permission) {
+        foreach (['retur-beli.view', 'retur-beli.create', 'retur-beli.update', 'retur-beli.lock', 'retur-beli.approve', 'stok.view_hpp', 'po.view_harga'] as $permission) {
             Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'web']);
         }
 
@@ -209,6 +209,16 @@ class PurchaseReturnSerialIntakeLinkedTest extends TestCase
         $this->assertSame(2, $ret['returnable_count']);
         $this->assertCount(2, $ret['units']);
         $this->assertSame(1000.0, (float) $ret['harga_per_unit']);
+        $this->assertArrayHasKey('harga_modal', $ret['units'][0]);
+        $this->assertSame(1000.0, (float) $ret['units'][0]['harga_modal']);
+
+        // Strip harga when missing po.view_harga (HPP unit masih gated stok.view_hpp)
+        $this->user->revokePermissionTo('po.view_harga');
+        $stripped = $this->getJson('/api/v1/purchase-returns/serial-intake/'.$intake->ulid.'/returnable-units')
+            ->assertOk()
+            ->json('data');
+        $this->assertNull($stripped['harga_per_unit']);
+        $this->assertSame(2, $stripped['returnable_count']);
     }
 
     #[Test]

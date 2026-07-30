@@ -87,14 +87,37 @@
                     </select>
                 </div>
             </div>
-            <div class="w-1/3">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Desimal Kuantitas</label>
-                <select name="qty_decimal_places" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="0" {{ $data['qty_decimal_places'] == '0' ? 'selected' : '' }}>0 (bilangan bulat)</option>
-                    <option value="1" {{ $data['qty_decimal_places'] == '1' ? 'selected' : '' }}>1 desimal</option>
-                    <option value="2" {{ $data['qty_decimal_places'] == '2' ? 'selected' : '' }}>2 desimal</option>
-                </select>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Desimal Kuantitas</label>
+                    <select name="qty_decimal_places" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="0" {{ $data['qty_decimal_places'] == '0' ? 'selected' : '' }}>0 (bilangan bulat)</option>
+                        <option value="1" {{ $data['qty_decimal_places'] == '1' ? 'selected' : '' }}>1 desimal</option>
+                        <option value="2" {{ $data['qty_decimal_places'] == '2' ? 'selected' : '' }}>2 desimal</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Desimal Persen</label>
+                    <select name="percent_decimal_places" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        @foreach([0,1,2,3,4] as $n)
+                            <option value="{{ $n }}" {{ (string)($data['percent_decimal_places'] ?? '2') === (string)$n ? 'selected' : '' }}>{{ $n }}</option>
+                        @endforeach
+                    </select>
+                </div>
             </div>
+        </div>
+    </div>
+
+    <div class="border-t pt-4">
+        <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Teks</h3>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Mode huruf besar</label>
+            <select name="uppercase_mode" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="none" {{ ($data['uppercase_mode'] ?? 'code_only') === 'none' ? 'selected' : '' }}>Tidak ada</option>
+                <option value="code_only" {{ ($data['uppercase_mode'] ?? 'code_only') === 'code_only' ? 'selected' : '' }}>Hanya kode (nama tetap)</option>
+                <option value="all" {{ ($data['uppercase_mode'] ?? 'code_only') === 'all' ? 'selected' : '' }}>Semua field</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">Apakah input teks otomatis di-uppercase.</p>
         </div>
     </div>
 

@@ -144,6 +144,7 @@ class SerialUnitController extends BaseApiController
             'sales_id' => 'nullable|integer',
             'sale_detail_id' => 'nullable|integer',
             'intake_id' => 'nullable|string',
+            'supplier_id' => 'nullable|integer',
         ]);
 
         $status = $request->input('status', SerialUnit::STATUS_TERSEDIA);
@@ -167,6 +168,9 @@ class SerialUnitController extends BaseApiController
             } else {
                 $query->whereHas('intake', fn ($q) => $q->where('ulid', $iid));
             }
+        } elseif ($status === SerialUnit::STATUS_TERSEDIA && $request->filled('supplier_id')) {
+            $sid = (int) $request->input('supplier_id');
+            $query->whereHas('intake', fn ($q) => $q->where('supplier_id', $sid));
         }
 
         if ($status === SerialUnit::STATUS_TERJUAL) {
@@ -176,7 +180,9 @@ class SerialUnitController extends BaseApiController
                 $query->where('sale_id', (int) $request->input('sales_id'));
             } elseif ($request->filled('customer_id')) {
                 $cid = (int) $request->input('customer_id');
-                $query->whereHas('sale', fn ($q) => $q->where('customer_id', $cid));
+                $query->whereHas('sale', function ($q) use ($cid) {
+                    $q->where('customer_id', $cid)->where('source', 'manual');
+                });
             }
         }
 

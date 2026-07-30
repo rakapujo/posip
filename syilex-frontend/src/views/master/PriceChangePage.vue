@@ -488,8 +488,8 @@ async function downloadDetailPdf(data) {
                         <h4 class="text-lg font-medium m-0">Detail Produk ({{ detailData.details?.length || 0 }} item)</h4>
                     </div>
 
-                    <!-- Custom Table with Rowspan -->
-                    <div class="overflow-x-auto">
+                    <!-- Desktop: tabel rowspan -->
+                    <div class="hidden lg:block overflow-x-auto">
                         <table class="w-full text-sm border-collapse">
                             <thead>
                                 <tr class="bg-surface-100">
@@ -505,7 +505,6 @@ async function downloadDetailPdf(data) {
                             </thead>
                             <tbody>
                                 <template v-for="(item, index) in detailData.details" :key="item.id">
-                                    <!-- Row 1: Harga Lama -->
                                     <tr class="bg-white">
                                         <td class="border border-surface-200 px-3 py-2 text-center align-top font-medium" rowspan="3">{{ index + 1 }}</td>
                                         <td class="border border-surface-200 px-3 py-2 align-top" rowspan="3">
@@ -527,7 +526,6 @@ async function downloadDetailPdf(data) {
                                         </td>
                                         <td class="border border-surface-200 px-3 py-2 align-top text-surface-600 text-xs" rowspan="3">{{ item.notes || '-' }}</td>
                                     </tr>
-                                    <!-- Row 2: Harga Baru -->
                                     <tr class="bg-white">
                                         <td class="border border-surface-200 px-3 py-1 text-surface-500 text-xs">Harga Baru</td>
                                         <td class="border border-surface-200 px-3 py-1 text-right text-xs font-medium">
@@ -543,7 +541,6 @@ async function downloadDetailPdf(data) {
                                             {{ formatCurrency(item.harga_4_baru) }} <span class="text-surface-400 font-normal">/{{ item.product?.unit_4 }} ({{ formatQty(item.product?.konversi_4) }})</span>
                                         </td>
                                     </tr>
-                                    <!-- Row 3: Selisih -->
                                     <tr class="bg-surface-50 border-b-2 border-surface-300">
                                         <td class="border border-surface-200 px-3 py-1 text-surface-500 text-xs">Selisih</td>
                                         <td class="border border-surface-200 px-3 py-1 text-right text-xs" :class="getDifferenceSeverity(getSelisih(item, 1))">
@@ -562,6 +559,33 @@ async function downloadDetailPdf(data) {
                                 </template>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- Mobile: kartu per produk -->
+                    <div class="lg:hidden flex flex-col gap-3">
+                        <div
+                            v-for="(item, index) in detailData.details"
+                            :key="'m-' + item.id"
+                            class="border border-surface-200 dark:border-surface-700 rounded-lg p-3"
+                        >
+                            <div class="font-medium">{{ index + 1 }}. {{ item.product?.kode_produk }}</div>
+                            <div class="text-surface-500 text-xs mb-2">{{ item.product?.nama_produk }}</div>
+                            <div v-if="item.notes" class="text-xs text-surface-600 mb-2">{{ item.notes }}</div>
+                            <div class="flex flex-col gap-2">
+                                <div v-for="u in 4" :key="u" class="bg-surface-50 dark:bg-surface-800 rounded p-2 text-xs">
+                                    <div class="font-medium mb-1">
+                                        Unit {{ u }}
+                                        <span class="text-surface-400 font-normal">/{{ item.product?.[`unit_${u}`] }} ({{ formatQty(item.product?.[`konversi_${u}`]) }})</span>
+                                    </div>
+                                    <div class="flex justify-between gap-2"><span class="text-surface-500">Lama</span><span>{{ formatCurrency(item[`harga_${u}_lama`]) }}</span></div>
+                                    <div class="flex justify-between gap-2"><span class="text-surface-500">Baru</span><span class="font-medium">{{ formatCurrency(item[`harga_${u}_baru`]) }}</span></div>
+                                    <div class="flex justify-between gap-2">
+                                        <span class="text-surface-500">Selisih</span>
+                                        <span :class="getDifferenceSeverity(getSelisih(item, u))">{{ formatDifference(getSelisih(item, u)) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

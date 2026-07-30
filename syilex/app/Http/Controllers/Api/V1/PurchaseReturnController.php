@@ -550,9 +550,14 @@ class PurchaseReturnController extends BaseApiController
 
         $request->validate([
             'search' => 'nullable|string|max:100',
+            'warehouse_id' => 'nullable|integer|exists:master_warehouse,id',
+            'supplier_id' => 'nullable|integer|exists:master_supplier,id',
         ]);
 
-        $search = $request->search;
+        $search = trim((string) $request->input('search', ''));
+        $warehouseId = $request->input('warehouse_id');
+        $supplierId = $request->filled('supplier_id') ? (int) $request->input('supplier_id') : null;
+        $requirePurchased = SettingService::isPurchaseFreeRequirePurchased();
 
         $query = MasterProduk::active()
             ->select([
@@ -564,15 +569,51 @@ class PurchaseReturnController extends BaseApiController
             ]);
         SettingService::constrainNonSerialWhenDisabled($query);
 
-        if ($search) {
-            $query->search($search);
+        if ($warehouseId) {
+            $query->whereHas('inventoryStocks', function ($stock) use ($warehouseId) {
+                $stock->where('warehouse_id', (int) $warehouseId)->where('qty', '>', 0);
+            });
+        }
+
+        // Non-serial + require ON: harus punya net purchased dari supplier+WH
+        if ($requirePurchased && $supplierId && $warehouseId) {
+            $purchasedIds = collect(
+                \App\Services\PurchaseReturnCalculationService::purchasedProductIdsForPicker(
+                    $supplierId,
+                    (int) $warehouseId
+                )
+            );
+            $query->where(function ($q) use ($purchasedIds, $supplierId, $warehouseId) {
+                $q->where(function ($qq) use ($purchasedIds) {
+                    $qq->where('is_serial', false)->whereIn('id', $purchasedIds->all() ?: [0]);
+                })->orWhere(function ($qq) use ($supplierId, $warehouseId) {
+                    $qq->where('is_serial', true)
+                        ->whereHas('serialUnits', function ($su) use ($supplierId, $warehouseId) {
+                            $su->where('status', SerialUnit::STATUS_TERSEDIA)
+                                ->where('warehouse_id', $warehouseId)
+                                ->whereHas('intake', fn ($i) => $i->where('supplier_id', $supplierId));
+                        });
+                });
+            });
+        }
+
+        if ($search !== '') {
+            $query->searchPicker($search, function ($su) use ($warehouseId, $requirePurchased, $supplierId) {
+                $su->where('status', SerialUnit::STATUS_TERSEDIA);
+                if ($warehouseId) {
+                    $su->where('warehouse_id', (int) $warehouseId);
+                }
+                if ($requirePurchased && $supplierId) {
+                    $su->whereHas('intake', fn ($i) => $i->where('supplier_id', $supplierId));
+                }
+            });
         }
 
         $products = $query->limit(20)->get();
-        $canViewHarga = auth()->user()->can('po.view_harga');
+        $canViewHpp = auth()->user()->can('stok.view_hpp');
 
-        // Transform to include units array (filter duplicates)
-        $items = $products->map(function ($product) use ($canViewHarga) {
+        // harga_jual / harga_1..4 selalu (bukan rahasia); avg_cost hanya stok.view_hpp
+        $items = $products->map(function ($product) use ($canViewHpp) {
             $units = [];
             $seenUnits = [];
 
@@ -584,7 +625,7 @@ class PurchaseReturnController extends BaseApiController
                     $units[] = [
                         'unit' => $unit,
                         'konversi' => $product->{"konversi_{$i}"},
-                        'harga_jual' => $canViewHarga ? $product->{"harga_{$i}"} : null,
+                        'harga_jual' => $product->{"harga_{$i}"},
                     ];
                 }
             }
@@ -595,8 +636,12 @@ class PurchaseReturnController extends BaseApiController
                 'kode_produk' => $product->kode_produk,
                 'nama_produk' => $product->nama_produk,
                 'barcode' => $product->barcode,
-                'avg_cost' => $canViewHarga ? $product->avg_cost : null,
+                'avg_cost' => $canViewHpp ? $product->avg_cost : null,
                 'is_serial' => (bool) $product->is_serial, // frontend: tampilkan pemilih unit serial
+                'harga_1' => $product->harga_1,
+                'harga_2' => $product->harga_2,
+                'harga_3' => $product->harga_3,
+                'harga_4' => $product->harga_4,
                 'units' => $units,
             ];
         });
@@ -663,6 +708,8 @@ class PurchaseReturnController extends BaseApiController
             return $this->success([
                 'calculation' => $calculated,
             ]);
+        } catch (ValidationException $e) {
+            return $this->validationError($e->errors(), 'Validasi gagal');
         } catch (\Exception $e) {
             Log::error('Gagal menghitung retur pembelian', ['exception' => $e]);
             return $this->error('Gagal menghitung.', 500);
@@ -943,7 +990,7 @@ class PurchaseReturnController extends BaseApiController
                 'warehouse_id' => $intake->warehouse_id,
             ],
             'product' => $product,
-            'harga_per_unit' => $avgModal,
+            'harga_per_unit' => auth()->user()->can('po.view_harga') ? $avgModal : null,
             'units' => $unitsPayload,
             'returnable_count' => $units->count(),
         ]);

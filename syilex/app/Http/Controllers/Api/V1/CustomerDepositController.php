@@ -21,7 +21,7 @@ class CustomerDepositController extends BaseApiController
         $query = CustomerDeposit::with([
             'customer:id,ulid,kode_customer,nama',
             'salesReturn:id,ulid,nomor_dokumen,tanggal',
-        ]);
+        ])->withExists('pembayaranUsages');
         if ($request->filled('search')) {
             $query->search($request->search);
         }
@@ -72,6 +72,8 @@ class CustomerDepositController extends BaseApiController
         if (! $deposit) {
             return $this->notFound('Deposit tidak ditemukan.');
         }
+        $deposit->customer?->makeVisible('id');
+        $deposit->makeVisible('customer_id');
         $deposit->is_manual = $deposit->isManual();
         $deposit->can_edit = $deposit->canBeEdited();
         $deposit->can_delete = $deposit->canBeDeleted();
@@ -195,6 +197,7 @@ class CustomerDepositController extends BaseApiController
             ->join('doc_pembayaran_piutang as p', 'p.id', '=', 'd.pembayaran_id')
             ->leftJoin('master_customer as c', 'c.id', '=', 'p.customer_id')
             ->where('d.deposit_id', $deposit->id)
+            ->where('p.status', 'completed')
             ->select('d.id', 'd.nominal_digunakan', 'p.ulid as pembayaran_ulid',
                 'p.nomor_dokumen', 'p.tanggal', 'p.status', 'c.kode_customer', 'c.nama')
             ->orderByDesc('p.tanggal')->get();

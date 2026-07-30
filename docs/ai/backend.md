@@ -50,10 +50,11 @@ Export: `laporan.export`.
 
 ### Nilai sensitif (orthogonal)
 
-- `stok.view_hpp` — HPP / cost unit
-- `po.view_harga` — harga beli PO + laporan pembelian
-- `serial-intake.view_harga` — harga dokumen PBS
-- `hutang.view_nominal` — nominal hutang
+- `stok.view_hpp` — HPP / cost unit / nilai persediaan
+- `po.view_harga` — harga beli PO + Retur Beli + laporan pembelian
+- `serial-intake.view_harga` — harga dokumen PBS (modal/total)
+- `hutang.view_nominal` / `piutang.view_nominal` — nominal hutang/piutang (modul masing-masing)
+- **Bukan gate:** harga jual / total dokumen penjualan (`sales.view_harga` **dihapus**)
 
 View yang strip harga **WAJIB** strip export juga.
 

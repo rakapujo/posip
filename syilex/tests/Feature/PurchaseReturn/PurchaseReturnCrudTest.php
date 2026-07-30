@@ -10,6 +10,7 @@ use App\Models\InventoryStock;
 use App\Models\MasterProduk;
 use App\Models\MasterSupplier;
 use App\Models\MasterWarehouse;
+use App\Models\SerialUnit;
 use App\Models\StockCard;
 use App\Models\SupplierDeposit;
 use App\Models\User;
@@ -18,8 +19,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\Permission\Models\Permission;
 
 class PurchaseReturnCrudTest extends TestCase
 {
@@ -40,6 +43,7 @@ class PurchaseReturnCrudTest extends TestCase
         SettingService::set('tax.tax_purchase_percent', 0, 'integer');
         SettingService::set('rounding.purchase_method', 'none', 'string');
         SettingService::set('stock.negative_mode', 'block', 'string');
+        SettingService::set('returns.purchase_free_require_purchased', false, 'boolean');
 
         $this->user = User::factory()->create();
         $this->actingAs($this->user);
@@ -539,5 +543,76 @@ class PurchaseReturnCrudTest extends TestCase
                 $e->errors()['status'][0]
             );
         }
+    }
+
+    #[Test]
+    public function products_endpoint_supports_kode_internal_search_and_blocks_zero_stock(): void
+    {
+        Permission::findOrCreate('retur-beli.create', 'web');
+        $this->user->givePermissionTo('retur-beli.create');
+        Sanctum::actingAs($this->user);
+
+        $serialProduct = MasterProduk::factory()->create([
+            'is_serial' => true,
+            'status' => 'active',
+            'kode_produk' => 'SER-RET-01',
+            'nama_produk' => 'Serial Retur Product',
+            'unit_1' => 'UNIT',
+            'konversi_1' => 1,
+        ]);
+        InventoryStock::updateOrCreate(
+            ['product_id' => $serialProduct->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 1, 'avg_cost' => 1200]
+        );
+        SerialUnit::create([
+            'product_id' => $serialProduct->id,
+            'warehouse_id' => $this->warehouse->id,
+            'serial_number' => 'SN-RET-01',
+            'kode_internal' => 'KI-RET-01',
+            'harga_modal' => 1200,
+            'cost_per_unit' => 1200,
+            'status' => SerialUnit::STATUS_TERSEDIA,
+        ]);
+
+        $noStockProduct = MasterProduk::factory()->create([
+            'status' => 'active',
+            'kode_produk' => 'NO-STOCK-RET',
+            'nama_produk' => 'No Stock Retur',
+        ]);
+        InventoryStock::updateOrCreate(
+            ['product_id' => $noStockProduct->id, 'warehouse_id' => $this->warehouse->id],
+            ['qty' => 0, 'avg_cost' => 900]
+        );
+
+        $this->getJson('/api/v1/purchase-returns/products?warehouse_id='.$this->warehouse->id.'&search=KI-RET-01')
+            ->assertOk()
+            ->assertJsonPath('data.items.0.kode_produk', 'SER-RET-01');
+
+        $this->getJson('/api/v1/purchase-returns/products?warehouse_id='.$this->warehouse->id.'&search=NO-STOCK-RET')
+            ->assertOk()
+            ->assertJsonCount(0, 'data.items');
+    }
+
+    #[Test]
+    public function free_mode_rejects_unpurchased_when_require_purchased_on(): void
+    {
+        SettingService::set('returns.purchase_free_require_purchased', true, 'boolean');
+        try {
+            $this->createAction->execute($this->baseData());
+            $this->fail('Expected ValidationException');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('details', $e->errors());
+        } finally {
+            SettingService::set('returns.purchase_free_require_purchased', false, 'boolean');
+        }
+    }
+
+    #[Test]
+    public function free_mode_allows_stock_only_when_require_purchased_off(): void
+    {
+        SettingService::set('returns.purchase_free_require_purchased', false, 'boolean');
+        $retur = $this->createAction->execute($this->baseData());
+        $this->assertSame('draft', $retur->status);
+        $this->assertNull($retur->po_id);
     }
 }

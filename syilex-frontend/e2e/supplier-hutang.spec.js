@@ -25,8 +25,7 @@ test.describe('Supplier hutang smoke @smoke', () => {
         expect(denied).toBeFalsy();
 
         await waitForDataTable(page, 20000).catch(() => {});
-        const table = page.locator('.p-datatable');
-        const title = page.getByText(/Daftar Hutang Supplier/i);
-        await expect(title.or(table)).toBeVisible({ timeout: 15000 });
+        await expect(page.getByRole('heading', { name: /Daftar Hutang Supplier/i })).toBeVisible({ timeout: 15000 });
+        await expect(page.locator('.p-datatable').first()).toBeVisible();
     });
 });

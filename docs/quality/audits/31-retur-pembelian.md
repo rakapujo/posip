@@ -96,6 +96,35 @@ Severity: **P0** harus · **P1** kuat · **P2** perbaikan · **P3** polish.
 
 ---
 
+## Patched — search + guard qty desimal (2026-07-29)
+
+- Endpoint picker produk `purchase-returns/products` sekarang mendukung pencarian `kode_produk`, `nama_produk`, `barcode`, `kode_internal`, `serial_number`.
+- Picker retur pembelian sekarang bisa kirim konteks `warehouse_id`; backend memfilter produk ke stok gudang `qty > 0` (tidak bisa pilih produk tanpa stok).
+- `LockPurchaseReturnAction` tidak lagi truncation `(int) qty_in_base`; validasi/pengurangan stok memakai nilai desimal penuh.
+
+## Patched — flag histori mode bebas (2026-07-29)
+
+| Setting | Default | Efek |
+|---------|---------|------|
+| `returns.purchase_free_require_purchased` | false | OFF = stok WH (perilaku lama). ON = non-serial wajib net PO approved supplier+WH; serial tersedia + `intake.supplier_id` |
+| FE | — | `getProducts` kirim `supplier_id`; Settings nested toggle |
+
+## Patched — picker mode + harga serial (2026-07-29)
+
+| Item | Fix |
+|------|-----|
+| `modeHint` drawer | Mode dokumen / bebas / require-purchased di `ProductUnitPickerDrawer` |
+| Payload harga | `getProducts` ikut `harga_1..4` (selalu — jual tidak digate) agar serial resolve tidak Rp.0 |
+| FE | Shared `resolveSerialPickerPrice` + null-safe `getPickerUnitPrice` |
+
+## Patched — gate modal/HPP (2026-07-30)
+
+| Item | Fix |
+|------|-----|
+| Picker jual | `harga_jual`/`harga_1..4` selalu; `avg_cost` hanya `stok.view_hpp` |
+| PBS returnable-units | `harga_per_unit` (avg modal) digate `po.view_harga` |
+| `PurchaseReturnPage` | FE `canViewHarga=po.view_harga` list/detail/PDF |
+
 ## Ringkasan eksekutif
 
 Alur draft→lock→approve **benar secara sequential**, tapi **race Lock/Approve** lebih lemah dari Sales Return; **`po_detail_id` bisa disalahgunakan**; FE detail Approve + PO `_uid` rusak. Port pola Sales + fix FE kecil = shortest path.

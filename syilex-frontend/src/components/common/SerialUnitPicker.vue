@@ -28,14 +28,18 @@ const props = defineProps({
     salesId: { type: [String, Number], default: null },
     saleDetailId: { type: [String, Number], default: null },
     /** Batasi unit ke dokumen PBS (retur beli linked) */
-    intakeId: { type: [String, Number], default: null }
+    intakeId: { type: [String, Number], default: null },
+    /** Free retur beli + require_purchased: filter unit asal supplier */
+    supplierId: { type: [String, Number], default: null },
+    /** Q5: retur jual SN tetap boleh saat elektronik OFF */
+    allowWhenDisabled: { type: Boolean, default: false }
 });
 const emit = defineEmits(['update:modelValue', 'change']);
 
 const { formatCurrency, formatPercent } = useFormatters();
 const notify = useNotification();
 const settingsStore = useSettingsStore();
-const serialEnabled = computed(() => settingsStore.serialEnabled);
+const serialEnabled = computed(() => settingsStore.serialEnabled || props.allowWhenDisabled);
 
 const units = ref([]);
 const selected = ref([]);
@@ -120,7 +124,8 @@ async function load() {
             customer_id: props.customerId || undefined,
             sales_id: props.salesId || undefined,
             sale_detail_id: props.saleDetailId || undefined,
-            intake_id: props.intakeId || undefined
+            intake_id: props.intakeId || undefined,
+            supplier_id: props.supplierId || undefined
         });
         if (seq !== loadSeq) return;
         units.value = res.data?.success ? res.data.data.items : [];
@@ -149,7 +154,7 @@ const batteryText = (u) =>
         .join(' ') || '—';
 
 watch(
-    () => `${serialEnabled.value ? 1 : 0}|${props.productId ?? ''}|${props.warehouseId ?? ''}|${props.status ?? ''}|${props.customerId ?? ''}|${props.salesId ?? ''}|${props.saleDetailId ?? ''}|${props.intakeId ?? ''}`,
+    () => `${serialEnabled.value ? 1 : 0}|${props.productId ?? ''}|${props.warehouseId ?? ''}|${props.status ?? ''}|${props.customerId ?? ''}|${props.salesId ?? ''}|${props.saleDetailId ?? ''}|${props.intakeId ?? ''}|${props.supplierId ?? ''}`,
     load,
     { immediate: true }
 );

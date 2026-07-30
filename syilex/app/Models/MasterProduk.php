@@ -143,6 +143,27 @@ class MasterProduk extends Model
     }
 
     /**
+     * Scope search picker: produk fields + optional serial fields.
+     */
+    public function scopeSearchPicker($query, string $search, ?callable $serialConstraint = null)
+    {
+        return $query->where(function ($q) use ($search, $serialConstraint) {
+            $q->where('kode_produk', 'like', "%{$search}%")
+                ->orWhere('barcode', 'like', "%{$search}%")
+                ->orWhere('nama_produk', 'like', "%{$search}%")
+                ->orWhereHas('serialUnits', function ($su) use ($search, $serialConstraint) {
+                    $su->where(function ($ss) use ($search) {
+                        $ss->where('kode_internal', 'like', "%{$search}%")
+                            ->orWhere('serial_number', 'like', "%{$search}%");
+                    });
+                    if ($serialConstraint) {
+                        $serialConstraint($su);
+                    }
+                });
+        });
+    }
+
+    /**
      * Get brand yang memiliki produk ini.
      */
     public function brand()

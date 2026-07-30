@@ -146,6 +146,82 @@ class MarginPerBarangReportTest extends TestCase
         $items = $response->json('data.items');
         $this->assertCount(1, $items);
         $this->assertEquals(0.0, (float) $items[0]['margin_percent']);
+        $this->assertTrue((bool) $items[0]['tanpa_harga']);
+    }
+
+    public function test_serial_parent_uses_unit_avg_not_harga_4(): void
+    {
+        $wh = \App\Models\MasterWarehouse::factory()->create();
+        $produk = MasterProduk::factory()->create([
+            'kode_produk' => 'SER-1',
+            'is_serial' => true,
+            'avg_cost' => 0,
+            'harga_4' => 0,
+            'status' => 'active',
+        ]);
+
+        \App\Models\SerialUnit::create([
+            'product_id' => $produk->id,
+            'warehouse_id' => $wh->id,
+            'serial_number' => 'SN-A',
+            'cost_per_unit' => 800,
+            'harga_modal' => 800,
+            'harga_jual' => 1000,
+            'status' => 'tersedia',
+        ]);
+        \App\Models\SerialUnit::create([
+            'product_id' => $produk->id,
+            'warehouse_id' => $wh->id,
+            'serial_number' => 'SN-B',
+            'cost_per_unit' => 600,
+            'harga_modal' => 600,
+            'harga_jual' => 1000,
+            'status' => 'tersedia',
+        ]);
+
+        $item = $this->actingAs($this->userWithPerm)
+            ->getJson('/api/v1/reports/margin-per-barang?search=SER-1')
+            ->assertOk()
+            ->json('data.items.0');
+
+        $this->assertTrue((bool) $item['is_serial']);
+        $this->assertEquals(2, (int) $item['unit_count']);
+        $this->assertCount(2, $item['units']);
+        $this->assertFalse((bool) $item['tanpa_harga']);
+        $this->assertEquals(700.0, (float) $item['avg_cost']);
+        $this->assertEquals(1000.0, (float) $item['harga_jual']);
+        $this->assertEquals(30.0, (float) $item['margin_percent']);
+    }
+
+    public function test_export_flattens_serial_units(): void
+    {
+        $this->userWithPerm->givePermissionTo(
+            \Spatie\Permission\Models\Permission::firstOrCreate(['name' => 'laporan.export', 'guard_name' => 'web'])
+        );
+
+        $wh = \App\Models\MasterWarehouse::factory()->create();
+        MasterProduk::factory()->create([
+            'kode_produk' => 'RET-1', 'is_serial' => false,
+            'avg_cost' => 500, 'harga_4' => 1000, 'status' => 'active',
+        ]);
+        $ser = MasterProduk::factory()->create([
+            'kode_produk' => 'SER-X', 'is_serial' => true,
+            'avg_cost' => 0, 'harga_4' => 0, 'status' => 'active',
+        ]);
+        \App\Models\SerialUnit::create([
+            'product_id' => $ser->id,
+            'warehouse_id' => $wh->id,
+            'serial_number' => 'SN-X1',
+            'cost_per_unit' => 400,
+            'harga_modal' => 400,
+            'harga_jual' => 500,
+            'status' => 'tersedia',
+        ]);
+
+        $this->actingAs($this->userWithPerm)
+            ->get('/api/v1/reports/margin-per-barang/export')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
     public function test_search_by_kode_or_nama(): void

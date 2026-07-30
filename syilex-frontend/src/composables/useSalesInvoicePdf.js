@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth';
  * Faktur penjualan PDF — A5 landscape (continuous half-form).
  * Header toko + customer + meta diulang di setiap halaman (seperti contoh salesInvoices).
  * Total + TTD hanya di halaman terakhir. Halaman non-akhir: "Bersambung ke halaman n".
+ * Harga jual selalu ditampilkan (sales.view_harga dihapus).
  */
 export function useSalesInvoicePdf() {
     const { formatCurrency, formatQty, formatDateTime } = useFormatters();
@@ -25,7 +26,6 @@ export function useSalesInvoicePdf() {
     const ROW_H = 5.5;
     const CONTINUE_H = 8;
     const TOTALS_H = 48;
-    const TOTALS_H_NO_HARGA = 22;
     const TOTALS_GAP = 8; // jarak tabel → blok terbilang/subtotal
     const SERIAL_LINE_H = 3.2;
 
@@ -76,7 +76,7 @@ export function useSalesInvoicePdf() {
         return parts.join(' · ');
     }
 
-    function buildBodyRows(details, canViewHarga) {
+    function buildBodyRows(details) {
         return (details || []).map((row, i) => {
             const discParts = [];
             for (let s = 1; s <= 5; s++) {
@@ -92,27 +92,23 @@ export function useSalesInvoicePdf() {
                 nama += '\n' + serialUnits.map((u) => `  ${formatSerialLine(u)}`).join('\n');
             }
 
-            const base = {
+            return {
                 no: String(i + 1),
                 kode: row.product?.kode_produk || '',
                 nama,
                 unit: row.unit || '',
                 qty: formatQty(row.qty),
-                _h: ROW_H + serialUnits.length * SERIAL_LINE_H
-            };
-            if (!canViewHarga) return base;
-            return {
-                ...base,
                 harga: formatCurrency(row.harga_satuan),
                 disc: discParts.length ? discParts.join(' + ') : '-',
-                jumlah: formatCurrency(row.jumlah)
+                jumlah: formatCurrency(row.jumlah),
+                _h: ROW_H + serialUnits.length * SERIAL_LINE_H
             };
         });
     }
 
     /** Pack by estimated height — baris serial lebih tinggi. */
-    function paginateRows(rows, canViewHarga) {
-        const totalsH = (canViewHarga ? TOTALS_H : TOTALS_H_NO_HARGA) + TOTALS_GAP;
+    function paginateRows(rows) {
+        const totalsH = TOTALS_H + TOTALS_GAP;
         const availMid = PAGE_HEIGHT - MARGIN * 2 - HEADER_H - TABLE_HEAD_H - CONTINUE_H;
         const availLast = PAGE_HEIGHT - MARGIN * 2 - HEADER_H - TABLE_HEAD_H - totalsH;
         const heightOf = (list) => list.reduce((s, r) => s + (r._h || ROW_H), 0);
@@ -238,52 +234,50 @@ export function useSalesInvoicePdf() {
         doc.text(`Bersambung ke halaman ${pageNo + 1}`, PAGE_WIDTH / 2, y, { align: 'center' });
     }
 
-    function drawTotals(doc, data, canViewHarga, startY) {
+    function drawTotals(doc, data, startY) {
         // Gap jelas antara tabel terakhir dan blok terbilang / subtotal
         const blockY = startY + TOTALS_GAP;
         let y = blockY;
-        if (canViewHarga) {
-            const summary = [];
-            summary.push(['Subtotal', formatCurrency(data.subtotal)]);
-            for (let i = 1; i <= 3; i++) {
-                const tipe = data[`diskon_nota_${i}_tipe`];
-                const nilai = Number(data[`diskon_nota_${i}_nilai`] || 0);
-                const hasil = Number(data[`diskon_nota_${i}_hasil`] || 0);
-                if (!tipe || tipe === 'none' || !nilai) continue;
-                const label = data[`diskon_nota_${i}_label`] || `Disc Nota ${i}`;
-                summary.push([label, `-${formatCurrency(hasil)}`]);
-            }
-            if (Number(data.biaya_kirim_hasil) > 0) summary.push(['Biaya Kirim', formatCurrency(data.biaya_kirim_hasil)]);
-            if (Number(data.biaya_lain_hasil) > 0) summary.push(['Biaya Lain', formatCurrency(data.biaya_lain_hasil)]);
-            if (Number(data.pajak_nominal) > 0) {
-                summary.push(['DPP', formatCurrency(data.dpp)]);
-                summary.push([`${data.pajak_nama || 'Pajak'} (${data.pajak_persen || 0}%)`, formatCurrency(data.pajak_nominal)]);
-            }
-            if (data.pembulatan && Number(data.pembulatan) !== 0) {
-                summary.push(['Pembulatan', formatCurrency(data.pembulatan)]);
-            }
-            summary.push(['Grand Total', formatCurrency(data.grand_total)]);
-
-            const sumX = PAGE_WIDTH - MARGIN - 70;
-            doc.setFontSize(7);
-            for (const [label, value] of summary) {
-                const bold = label === 'Grand Total';
-                doc.setFont('helvetica', bold ? 'bold' : 'normal');
-                doc.text(label, sumX, y);
-                doc.text(value, PAGE_WIDTH - MARGIN, y, { align: 'right' });
-                y += bold ? 4 : 3.2;
-            }
-
-            doc.setFont('helvetica', 'italic');
-            doc.setFontSize(6.5);
-            const terbilangLines = doc.splitTextToSize(`Terbilang: ${terbilangRupiah(data.grand_total)}`, CONTENT_WIDTH * 0.55);
-            doc.text(terbilangLines, MARGIN, blockY);
+        const summary = [];
+        summary.push(['Subtotal', formatCurrency(data.subtotal)]);
+        for (let i = 1; i <= 3; i++) {
+            const tipe = data[`diskon_nota_${i}_tipe`];
+            const nilai = Number(data[`diskon_nota_${i}_nilai`] || 0);
+            const hasil = Number(data[`diskon_nota_${i}_hasil`] || 0);
+            if (!tipe || tipe === 'none' || !nilai) continue;
+            const label = data[`diskon_nota_${i}_label`] || `Disc Nota ${i}`;
+            summary.push([label, `-${formatCurrency(hasil)}`]);
         }
+        if (Number(data.biaya_kirim_hasil) > 0) summary.push(['Biaya Kirim', formatCurrency(data.biaya_kirim_hasil)]);
+        if (Number(data.biaya_lain_hasil) > 0) summary.push(['Biaya Lain', formatCurrency(data.biaya_lain_hasil)]);
+        if (Number(data.pajak_nominal) > 0) {
+            summary.push(['DPP', formatCurrency(data.dpp)]);
+            summary.push([`${data.pajak_nama || 'Pajak'} (${data.pajak_persen || 0}%)`, formatCurrency(data.pajak_nominal)]);
+        }
+        if (data.pembulatan && Number(data.pembulatan) !== 0) {
+            summary.push(['Pembulatan', formatCurrency(data.pembulatan)]);
+        }
+        summary.push(['Grand Total', formatCurrency(data.grand_total)]);
+
+        const sumX = PAGE_WIDTH - MARGIN - 70;
+        doc.setFontSize(7);
+        for (const [label, value] of summary) {
+            const bold = label === 'Grand Total';
+            doc.setFont('helvetica', bold ? 'bold' : 'normal');
+            doc.text(label, sumX, y);
+            doc.text(value, PAGE_WIDTH - MARGIN, y, { align: 'right' });
+            y += bold ? 4 : 3.2;
+        }
+
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(6.5);
+        const terbilangLines = doc.splitTextToSize(`Terbilang: ${terbilangRupiah(data.grand_total)}`, CONTENT_WIDTH * 0.55);
+        doc.text(terbilangLines, MARGIN, blockY);
 
         if (data.notes) {
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(6.5);
-            const noteY = Math.max(y, blockY + (canViewHarga ? 14 : 2));
+            const noteY = Math.max(y, blockY + 14);
             doc.text(doc.splitTextToSize(`Catatan: ${data.notes}`, CONTENT_WIDTH * 0.55), MARGIN, noteY);
             y = Math.max(y, noteY + 4);
         }
@@ -309,10 +303,8 @@ export function useSalesInvoicePdf() {
 
     /**
      * @param {Object} data - full sales doc (with details, customer, warehouse)
-     * @param {{ canViewHarga?: boolean }} [opts]
      */
-    async function exportSalesInvoicePdf(data, opts = {}) {
-        const canViewHarga = opts.canViewHarga !== false;
+    async function exportSalesInvoicePdf(data) {
         exporting.value = true;
         try {
             const { jsPDF } = await import('jspdf');
@@ -336,18 +328,14 @@ export function useSalesInvoicePdf() {
                 { header: 'Kode', dataKey: 'kode' },
                 { header: 'Nama Produk', dataKey: 'nama' },
                 { header: 'Satuan', dataKey: 'unit' },
-                { header: 'Qty', dataKey: 'qty' }
+                { header: 'Qty', dataKey: 'qty' },
+                { header: 'Harga', dataKey: 'harga' },
+                { header: 'Disc', dataKey: 'disc' },
+                { header: 'Jumlah', dataKey: 'jumlah' }
             ];
-            if (canViewHarga) {
-                columns.push(
-                    { header: 'Harga', dataKey: 'harga' },
-                    { header: 'Disc', dataKey: 'disc' },
-                    { header: 'Jumlah', dataKey: 'jumlah' }
-                );
-            }
 
-            const allRows = buildBodyRows(data.details, canViewHarga);
-            const pages = paginateRows(allRows, canViewHarga);
+            const allRows = buildBodyRows(data.details);
+            const pages = paginateRows(allRows);
             const pageCount = pages.length;
 
             pages.forEach((chunk, idx) => {
@@ -380,23 +368,21 @@ export function useSalesInvoicePdf() {
                         fontStyle: 'bold',
                         lineWidth: 0.25
                     },
-                    columnStyles: canViewHarga
-                        ? {
-                              0: { cellWidth: 7, halign: 'center' },
-                              1: { cellWidth: 26 },
-                              2: { cellWidth: 'auto' },
-                              3: { cellWidth: 18 },
-                              4: { halign: 'right', cellWidth: 12 },
-                              5: { halign: 'right', cellWidth: 22 },
-                              6: { cellWidth: 28, overflow: 'linebreak' },
-                              7: { halign: 'right', cellWidth: 24 }
-                          }
-                        : { 0: { cellWidth: 7, halign: 'center' }, 4: { halign: 'right' } },
+                    columnStyles: {
+                        0: { cellWidth: 7, halign: 'center' },
+                        1: { cellWidth: 26 },
+                        2: { cellWidth: 'auto' },
+                        3: { cellWidth: 18 },
+                        4: { halign: 'right', cellWidth: 12 },
+                        5: { halign: 'right', cellWidth: 22 },
+                        6: { cellWidth: 28, overflow: 'linebreak' },
+                        7: { halign: 'right', cellWidth: 24 }
+                    },
                     theme: 'grid'
                 });
 
                 if (isLast) {
-                    drawTotals(doc, data, canViewHarga, doc.lastAutoTable.finalY);
+                    drawTotals(doc, data, doc.lastAutoTable.finalY);
                 } else {
                     drawContinueFooter(doc, pageNo);
                 }

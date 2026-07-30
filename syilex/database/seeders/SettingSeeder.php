@@ -136,6 +136,8 @@ class SettingSeeder extends Seeder
             // =====================================================================
             ['group' => 'returns', 'key' => 'sales_allow_free', 'value' => 'true', 'type' => 'boolean'],
             ['group' => 'returns', 'key' => 'purchase_allow_free', 'value' => 'true', 'type' => 'boolean'],
+            ['group' => 'returns', 'key' => 'sales_free_require_sold', 'value' => 'true', 'type' => 'boolean'],
+            ['group' => 'returns', 'key' => 'purchase_free_require_purchased', 'value' => 'false', 'type' => 'boolean'],
         ];
 
         foreach ($settings as $setting) {

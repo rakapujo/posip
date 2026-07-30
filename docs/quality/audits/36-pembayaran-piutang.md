@@ -13,6 +13,14 @@
 | PP-X1 | Unique `(pembayaran_id, piutang_id, sumber)` — cash+deposit OK |
 | WI-1 | Walk-in diblok BE `assertActiveBackofficeCustomer` + FE `jenis=spesifik` |
 
-## Sisa P1
+## Sisa residual
 
-Q5 draft over-sisa; view_nominal strip; helpers create\|update; deep-link; confirmComplete copy; deposit pool clamp; hard-fail CustomerDeposit::use.
+Q5 draft over-sisa soft-reserve (YAGNI deferred); deep-link polish.
+
+## Patched — gap close (2026-07-29)
+
+| Item | Fix |
+|------|-----|
+| view_nominal FE | kolom Total Bayar + PDF + totals detail di-gate |
+
+**Export:** PDF dokumen ada; Excel list **tidak** (by design, seperti Bayar Hutang).

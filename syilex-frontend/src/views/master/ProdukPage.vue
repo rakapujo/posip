@@ -1397,7 +1397,7 @@ onMounted(async () => {
             <div class="flex flex-col gap-4">
                 <!-- Informasi Dasar -->
                 <Fieldset legend="Informasi Dasar">
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="flex flex-col gap-2">
                             <label for="kode_produk" class="font-medium">Kode Produk <span class="text-red-500">*</span></label>
                             <InputText id="kode_produk" v-model="produk.kode_produk" :disabled="isEdit" :invalid="!!validationErrors.kode_produk" :style="{ textTransform: 'uppercase' }" placeholder="Contoh: PRD001" />
@@ -1439,7 +1439,7 @@ onMounted(async () => {
 
                 <!-- Klasifikasi -->
                 <Fieldset legend="Klasifikasi">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div class="flex flex-col gap-2">
                             <label for="brand_id" class="font-medium">Brand</label>
                             <Select id="brand_id" v-model="produk.brand_id" :options="brandOptions" optionLabel="label" optionValue="value" placeholder="Pilih Brand" showClear filter />
@@ -1476,8 +1476,9 @@ onMounted(async () => {
                         <span class="text-red-700">{{ validationErrors.konversi_order }}</span>
                     </div>
 
-                    <div class="overflow-x-auto">
-                        <table class="w-full border-collapse">
+                    <!-- Desktop: tabel -->
+                    <div class="hidden lg:block w-full max-w-full min-w-0">
+                        <table class="border-collapse w-full">
                             <thead>
                                 <tr class="bg-surface-100">
                                     <th class="p-2 text-left w-12">#</th>
@@ -1490,21 +1491,22 @@ onMounted(async () => {
                             <tbody>
                                 <tr v-for="n in 4" :key="n" :class="{ 'bg-surface-50': isUnitLocked(n) }">
                                     <td class="p-2 font-medium">{{ n }}</td>
-                                    <td class="p-2">
-                                        <div class="flex flex-col gap-1">
+                                    <td class="p-2 min-w-0">
+                                        <div class="flex flex-col gap-1 min-w-0">
                                             <InputText
                                                 v-model="produk[`unit_${n}`]"
                                                 :disabled="isUnitLocked(n) && n > 1"
                                                 :invalid="!!getUnitError(n)"
                                                 placeholder="Contoh: PCS"
                                                 class="w-full"
+                                                fluid
                                                 :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }"
                                             />
                                             <small v-if="getUnitError(n)" class="text-red-500 text-xs">{{ getUnitError(n) }}</small>
                                         </div>
                                     </td>
-                                    <td class="p-2">
-                                        <div class="flex flex-col gap-1">
+                                    <td class="p-2 min-w-0">
+                                        <div class="flex flex-col gap-1 min-w-0">
                                             <InputNumber
                                                 v-select-on-focus
                                                 v-model="produk[`konversi_${n}`]"
@@ -1516,12 +1518,13 @@ onMounted(async () => {
                                                 :maxFractionDigits="getQtyMaxFractionDigits"
                                                 placeholder="1"
                                                 class="w-full"
+                                                fluid
                                             />
                                             <small v-if="getKonversiError(n)" class="text-red-500 text-xs">{{ getKonversiError(n) }}</small>
                                         </div>
                                     </td>
-                                    <td class="p-2">
-                                        <div class="flex flex-col gap-1">
+                                    <td class="p-2 min-w-0">
+                                        <div class="flex flex-col gap-1 min-w-0">
                                             <InputNumber
                                                 v-select-on-focus
                                                 v-model="produk[`harga_${n}`]"
@@ -1533,6 +1536,7 @@ onMounted(async () => {
                                                 :minFractionDigits="currencySettings.decimalPlaces"
                                                 :maxFractionDigits="currencySettings.decimalPlaces"
                                                 class="w-full"
+                                                fluid
                                             />
                                             <small v-if="getHargaError(n)" class="text-red-500 text-xs">{{ getHargaError(n) }}</small>
                                         </div>
@@ -1545,6 +1549,72 @@ onMounted(async () => {
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- Mobile: kartu per unit (hindari scroll horizontal) -->
+                    <div class="lg:hidden flex flex-col gap-3">
+                        <div
+                            v-for="n in 4"
+                            :key="'m-' + n"
+                            class="border border-surface-200 dark:border-surface-700 rounded-lg p-3"
+                            :class="{ 'bg-surface-50 dark:bg-surface-800': isUnitLocked(n) }"
+                        >
+                            <div class="flex items-center justify-between gap-2 mb-3">
+                                <span class="font-medium">Unit {{ n }}</span>
+                                <Tag v-if="n === 4" value="BASE" severity="success" />
+                                <Tag v-else-if="isUnitLocked(n) && n > 1" value="LOCKED" severity="secondary" />
+                                <Tag v-else-if="n === 1" value="TERBESAR" severity="info" />
+                            </div>
+                            <div class="flex flex-col gap-3">
+                                <div class="flex flex-col gap-1 min-w-0">
+                                    <label class="text-sm font-medium">Satuan <span class="text-red-500">*</span></label>
+                                    <InputText
+                                        v-model="produk[`unit_${n}`]"
+                                        :disabled="isUnitLocked(n) && n > 1"
+                                        :invalid="!!getUnitError(n)"
+                                        placeholder="Contoh: PCS"
+                                        class="w-full"
+                                        fluid
+                                        :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }"
+                                    />
+                                    <small v-if="getUnitError(n)" class="text-red-500 text-xs">{{ getUnitError(n) }}</small>
+                                </div>
+                                <div class="flex flex-col gap-1 min-w-0">
+                                    <label class="text-sm font-medium">Konversi <span class="text-red-500">*</span></label>
+                                    <InputNumber
+                                        v-select-on-focus
+                                        v-model="produk[`konversi_${n}`]"
+                                        :disabled="n === 4 || (isUnitLocked(n) && n > 1)"
+                                        :invalid="!!getKonversiError(n)"
+                                        :min="1"
+                                        :locale="getLocale"
+                                        :minFractionDigits="getQtyMinFractionDigits"
+                                        :maxFractionDigits="getQtyMaxFractionDigits"
+                                        placeholder="1"
+                                        class="w-full"
+                                        fluid
+                                    />
+                                    <small v-if="getKonversiError(n)" class="text-red-500 text-xs">{{ getKonversiError(n) }}</small>
+                                </div>
+                                <div class="flex flex-col gap-1 min-w-0">
+                                    <label class="text-sm font-medium">Harga <span class="text-red-500">*</span></label>
+                                    <InputNumber
+                                        v-select-on-focus
+                                        v-model="produk[`harga_${n}`]"
+                                        :disabled="isPriceReadonly(n)"
+                                        :invalid="!!getHargaError(n)"
+                                        :prefix="currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
+                                        :suffix="currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
+                                        :locale="getLocale"
+                                        :minFractionDigits="currencySettings.decimalPlaces"
+                                        :maxFractionDigits="currencySettings.decimalPlaces"
+                                        class="w-full"
+                                        fluid
+                                    />
+                                    <small v-if="getHargaError(n)" class="text-red-500 text-xs">{{ getHargaError(n) }}</small>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="mt-2 text-sm text-surface-500">
                         <i class="pi pi-info-circle mr-1"></i>
@@ -1581,15 +1651,15 @@ onMounted(async () => {
         >
             <template #content>
                 <!-- Gambar & Info Dasar -->
-                <div class="flex gap-4 mb-4">
+                <div class="flex flex-col sm:flex-row gap-4 mb-4">
                     <div v-if="detailData.gambar_url" class="shrink-0">
                         <img :src="detailData.gambar_url" alt="Gambar Produk" class="w-24 h-24 object-cover rounded-lg border" />
                     </div>
-                    <div class="flex-1 grid grid-cols-2 gap-4">
+                    <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
                         <DetailItem label="Kode Produk" :value="detailData.kode_produk" />
                         <DetailItem label="Jenis" :value="detailData.is_serial ? 'Produk Serial' : 'Retail'" type="badge" :badge-severity="detailData.is_serial ? 'help' : 'secondary'" />
                         <DetailItem v-if="!detailData.is_serial" label="Barcode" :value="detailData.barcode" />
-                        <div class="col-span-2">
+                        <div class="sm:col-span-2">
                             <DetailItem label="Nama Produk" :value="detailData.nama_produk" />
                         </div>
                         <DetailItem label="Status" :value="getStatusLabel(detailData.status)" type="badge" :badge-severity="getStatusSeverity(detailData.status)" />
@@ -1600,7 +1670,7 @@ onMounted(async () => {
 
                 <!-- Klasifikasi -->
                 <h6 class="text-surface-600 font-medium mb-3">Klasifikasi</h6>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <DetailItem label="Brand" :value="detailData.brand?.nama_brand" />
                     <DetailItem label="Tipe" :value="detailData.tipe?.nama_tipe" />
                     <DetailItem label="Kategori" :value="detailData.kategori?.nama_kategori" />
@@ -1636,7 +1706,7 @@ onMounted(async () => {
 
                     <!-- Stok & HPP -->
                     <h6 class="text-surface-600 font-medium mb-3">Stok & HPP</h6>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <DetailItem label="Minimum Stok" :value="`${formatQty(detailData.minimum_stok || 0)} ${detailData.unit_4 || ''}`" />
                         <div v-if="canViewHpp" class="flex flex-col gap-1">
                             <span class="text-surface-500 text-sm">HPP (Harga Pokok)</span>

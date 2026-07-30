@@ -9,7 +9,7 @@ Step-by-step buat dev baru yang mau setup POSIP di mesin lokal (Windows, asumsi 
 
 **Estimasi waktu: 30-45 menit** (belum termasuk download).
 
-> **Production / shared hosting tanpa SSH?** Gunakan wizard `/install` — lihat [../deploy/INSTALL-SHARED-HOSTING.md](../ops/install-shared-hosting.md).
+> **Production / shared hosting tanpa SSH?** Gunakan wizard `/install` — lihat [../ops/install-shared-hosting.md](../ops/install-shared-hosting.md). Step 3–5 mencakup URL toko, footer struk, desimal %, uppercase, pembulatan beli, dan kebijakan retur.
 
 ---
 

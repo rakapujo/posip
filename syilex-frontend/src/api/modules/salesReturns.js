@@ -12,6 +12,7 @@ export const salesReturnsApi = {
     lock: (ulid) => client.post(`/sales-returns/${ulid}/lock`),
     approve: (ulid, data) => client.post(`/sales-returns/${ulid}/approve`, data),
     getReturnableSales: (params = {}) => client.get('/sales-returns/returnable-sales', { params }),
+    getReturnableProducts: (params = {}) => client.get('/sales-returns/returnable-products', { params }),
     getReturnableDetails: (salesUlid) => client.get(`/sales-returns/sales/${salesUlid}/returnable-details`)
 };
 

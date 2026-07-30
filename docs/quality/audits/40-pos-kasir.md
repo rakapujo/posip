@@ -1,6 +1,6 @@
 # Audit menu — 40 POS → Kasir / Run Terminal
 
-> **Status:** patched Wave A P0/P1 + Wave R + Wave R2 + Part D email + Wave B (2026-07-26)  
+> **Status:** patched Wave A P0/P1 + Wave R + Wave R2 + Part D email + Wave B (2026-07-26) + payment dialog mobile chip-grid (2026-07-30)  
 > **SSoT kode:** `PosController` · `CheckoutSalesAction` · `VoidSalesAction` · `ProcessSalesReturnAction` · `PosCheckoutRules` · `CashTransactionController` · `SalesReturnController` (prefix `pos/`) · `PosKasirPage` · `usePosCart` · routes `api.php` `pos/*`  
 > **Cross:** [38-pos-shift.md](38-pos-shift.md) · [39-pos-terminal.md](39-pos-terminal.md) · [00-penjualan-plan-review.md](00-penjualan-plan-review.md) Q5  
 > **Jika konflik:** ikuti kode.
@@ -58,6 +58,7 @@ Idempotency **wajib** di checkout; `qty_base`/`konversi`/`harga_satuan` di-rebui
 | Transaksi | List sembunyi saat detail/retur open `<lg`; empty panel desktop-only |
 | Kas | `overflow-y-auto` stack; history `overflow-x-auto` |
 | Held | `grid-cols-1` phone; touch targets |
+| Payment dialog `<md` (2026-07-30) | Dialog `maxHeight:90vh` + content overflow hidden; metode `grid-cols-4` chip `h-14` (cap 2 baris); detail `flex-1`; QR `w-24`; CTA stack full-width |
 
 ## Catatan responsive PrimeVue
 

@@ -699,7 +699,11 @@ async function exportExcel() {
                                             <template #body="{ data }">
                                                 <RouterLink
                                                     v-if="data.pembayaran_ulid"
-                                                    :to="{ name: 'penjualan-pembayaran-piutang-edit', params: { ulid: data.pembayaran_ulid } }"
+                                                    :to="{
+                                                        name: data.status === 'draft' ? 'penjualan-pembayaran-piutang-edit' : 'penjualan-pembayaran-piutang',
+                                                        params: data.status === 'draft' ? { ulid: data.pembayaran_ulid } : undefined,
+                                                        query: data.status === 'draft' ? undefined : { search: data.nomor_dokumen }
+                                                    }"
                                                     class="font-medium text-primary hover:underline"
                                                 >
                                                     {{ data.nomor_dokumen }}

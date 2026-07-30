@@ -65,6 +65,18 @@ class SettingService
         return (bool) self::get('returns.purchase_allow_free', true);
     }
 
+    /** Free retur jual non-serial: wajib pernah terjual customer+WH. Serial selalu ketat. Default true. */
+    public static function isSalesFreeRequireSold(): bool
+    {
+        return (bool) self::get('returns.sales_free_require_sold', true);
+    }
+
+    /** Free retur beli non-serial: wajib pernah dibeli supplier+WH. Serial selalu tersedia(+supplier bila ON). Default false. */
+    public static function isPurchaseFreeRequirePurchased(): bool
+    {
+        return (bool) self::get('returns.purchase_free_require_purchased', false);
+    }
+
     /**
      * Tolak payload serial baru saat Modul Elektronik OFF.
      * Revert existing SN (void/lock) tidak memakai helper ini.

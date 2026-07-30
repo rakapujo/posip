@@ -56,7 +56,13 @@ class LockSalesReturnAction
                     'unit' => $detail->unit,
                     'serial_unit_ids' => $detail->serial_unit_ids,
                 ])->all();
-                SalesReturnCalculationService::validateFree($items);
+                SalesReturnCalculationService::validateFree(
+                    $items,
+                    (int) $return->customer_id,
+                    (int) $return->warehouse_id,
+                    $return->id,
+                    qtyAlreadyBase: true
+                );
             }
 
             $productIds = $return->details->pluck('product_id')->unique()->values();

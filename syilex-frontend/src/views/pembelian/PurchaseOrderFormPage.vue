@@ -1330,6 +1330,7 @@ function onDiscountValueChange(discIndex, newValue) {
             :taken-keys="pickerTakenKeys"
             :include-serial="false"
             :show-price="false"
+            mode-hint="Mode PO: produk aktif (non-serial di form); harga diisi di baris."
             @select="applyPickerSelect"
             @taken-click="onPickerTakenClick"
         />

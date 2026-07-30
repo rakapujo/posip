@@ -130,7 +130,7 @@ async function save() {
 
 <template>
     <Dialog :visible="visible" @update:visible="emit('update:visible', $event)" :style="{ width: '750px' }" :breakpoints="{ '960px': '95vw' }" :header="isEdit ? 'Edit Customer' : 'Tambah Customer'" :modal="true" :closable="!saving">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <!-- Kode Customer -->
             <div>
                 <label class="block font-medium mb-2">
@@ -183,13 +183,13 @@ async function save() {
             </div>
 
             <!-- Alamat -->
-            <div class="col-span-2">
+            <div class="col-span-full">
                 <label class="block font-medium mb-2">Alamat</label>
                 <Textarea v-model="form.alamat" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" fluid rows="2" placeholder="Alamat lengkap (opsional)" autoResize />
             </div>
 
             <!-- Section: Klasifikasi -->
-            <div class="col-span-2 border-t pt-4 mt-2">
+            <div class="col-span-full border-t pt-4 mt-2">
                 <h5 class="text-surface-600 font-medium mb-3">Klasifikasi</h5>
             </div>
 
@@ -222,7 +222,7 @@ async function save() {
             </div>
 
             <!-- Section: Status -->
-            <div class="col-span-2 border-t pt-4 mt-2">
+            <div class="col-span-full border-t pt-4 mt-2">
                 <h5 class="text-surface-600 font-medium mb-3">Status</h5>
             </div>
 

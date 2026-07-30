@@ -28,7 +28,7 @@ test.describe('Laporan smoke', () => {
         await page.waitForLoadState('networkidle');
 
         await expect(page.getByRole('toolbar').getByText('Penjualan per Barang')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('Total Produk')).toBeVisible();
+        await expect(page.getByText('Produk', { exact: true }).first()).toBeVisible();
         await expect(page.getByPlaceholder('Cari kode, nama produk...')).toBeVisible();
     });
 
@@ -45,7 +45,7 @@ test.describe('Laporan smoke', () => {
         await page.waitForLoadState('networkidle');
 
         await expect(page.getByText('Laporan Gross Profit')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('Revenue (Net)')).toBeVisible();
+        await expect(page.getByText('Setelah dikurangi retur', { exact: true }).first()).toBeVisible();
         await expect(page.getByText('Trend Harian')).toBeVisible();
     });
 

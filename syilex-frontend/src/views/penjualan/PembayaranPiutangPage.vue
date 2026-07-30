@@ -23,6 +23,7 @@ const canCreate = computed(() => authStore.can('pembayaran-piutang.create'));
 const canEditPerm = computed(() => authStore.can('pembayaran-piutang.update'));
 const canDeletePerm = computed(() => authStore.can('pembayaran-piutang.delete'));
 const canCompletePerm = computed(() => authStore.can('pembayaran-piutang.complete'));
+const canViewNominal = computed(() => authStore.can('piutang.view_nominal'));
 
 // Customers for filter
 const customers = ref([]);
@@ -307,7 +308,7 @@ onMounted(async () => {
                 </template>
             </Column>
 
-            <Column field="total_pembayaran" header="Total Bayar" sortable style="min-width: 150px" bodyClass="text-right">
+            <Column v-if="canViewNominal" field="total_pembayaran" header="Total Bayar" sortable style="min-width: 150px" bodyClass="text-right">
                 <template #body="{ data }">
                     <span class="font-semibold">{{ formatCurrency(data.total_pembayaran) }}</span>
                 </template>
@@ -323,7 +324,7 @@ onMounted(async () => {
                 <template #body="{ data }">
                     <RowActionButtons>
                         <Button icon="pi pi-eye" severity="info" text rounded @click="viewDetail(data)" v-tooltip.top="'Lihat Detail'"  />
-                        <Button icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
+                        <Button v-if="canViewNominal" icon="pi pi-file-pdf" severity="help" text rounded :loading="exporting" @click="exportDocPdf(data)" v-tooltip.top="'Export PDF'"  />
                         <Button v-if="canEditPerm && canEditItem(data)" icon="pi pi-pencil" severity="warning" text rounded @click="editItem(data)" v-tooltip.top="'Edit'"  />
                         <Button v-if="canDeletePerm && canDelete(data)" icon="pi pi-trash" severity="danger" text rounded @click="confirmDelete(data)" v-tooltip.top="'Hapus'"  />
                         <Button v-if="canCompletePerm && canCompleteItem(data)" icon="pi pi-check" severity="success" text rounded @click="confirmComplete(data)" v-tooltip.top="'Complete'"  />
@@ -393,7 +394,7 @@ onMounted(async () => {
                     </div>
 
                     <!-- Totals -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                    <div v-if="canViewNominal" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                         <div></div>
                         <div class="border border-surface-200 rounded-lg p-4 space-y-2">
                             <div class="flex justify-between">

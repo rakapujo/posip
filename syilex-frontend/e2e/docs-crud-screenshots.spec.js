@@ -36,16 +36,28 @@ test.describe('CRUD documentation screenshots', () => {
         await snap(page, 'crud-produk-hapus-konfirmasi');
         await page.getByRole('button', { name: 'Batal' }).click();
 
-        // Brand
+        // Brand — seed one row if empty (demo DB may have no brands)
         await page.goto(`${baseURL}/app/master/brand`);
         await waitForDataTable(page);
+        if (await page.getByText('Tidak ada data brand').isVisible().catch(() => false)) {
+            await page.getByRole('button', { name: 'Tambah Brand' }).click();
+            await expect(page.locator('.p-dialog-title', { hasText: 'Tambah Brand' })).toBeVisible();
+            const kode = `E2EB${Date.now().toString().slice(-5)}`;
+            await page.getByPlaceholder('Masukkan kode brand').fill(kode);
+            await page.getByPlaceholder('Masukkan nama brand').fill('E2E Brand Docs');
+            await page.locator('.p-dialog').filter({ hasText: 'Tambah Brand' }).getByRole('button', { name: /Simpan/i }).click();
+            await expect(page.locator('.p-dialog-title', { hasText: 'Tambah Brand' })).toBeHidden({ timeout: 15000 });
+            await waitForDataTable(page);
+        }
         await snap(page, 'crud-brand-list');
         await page.getByRole('button', { name: 'Tambah Brand' }).click();
         await expect(page.locator('.p-dialog-title', { hasText: 'Tambah Brand' })).toBeVisible();
         await snap(page, 'crud-brand-form-tambah');
         await page.getByRole('button', { name: 'Batal' }).click();
-        await page.locator('.p-datatable-tbody tr').first().locator('.pi-pencil').click();
-        await expect(page.locator('.p-dialog-title', { hasText: 'Edit Brand' })).toBeVisible();
+        const brandRow = page.locator('.p-datatable-tbody tr').first();
+        await expect(brandRow).toBeVisible({ timeout: 10000 });
+        await brandRow.locator('button[aria-label="Edit"], .pi-pencil').first().click();
+        await expect(page.locator('.p-dialog-title', { hasText: 'Edit Brand' })).toBeVisible({ timeout: 15000 });
         await snap(page, 'crud-brand-form-edit');
         await page.getByRole('button', { name: 'Batal' }).click();
 

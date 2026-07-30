@@ -23,3 +23,9 @@ See [00-laporan-plan-review.md](00-laporan-plan-review.md). Leaf residuals close
 - Pendapatan line = NETT_EXPR
 - Revenue GP = NETT − retur (S1)
 - Kas fisik = tunai net ± laci
+
+## Mode Net (ACC-4) — scope jujur (2026-07-30)
+
+- **Di-net:** Biaya Kirim / Lain / Total Biaya (card, kolom, Excel) proporsi retur.
+- **Tetap bruto:** kolom terkait `total_setelah_diskon` di list.
+- FE banner Mode Net diperjelas.

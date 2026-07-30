@@ -5,7 +5,6 @@ import { onMounted, ref, computed, watch, nextTick } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
 import { useSettingsStore } from '@/stores/settings';
-import { useAuthStore } from '@/stores/auth';
 import SerialUnitPicker from '@/components/common/SerialUnitPicker.vue';
 import ProductUnitPickerDrawer from '@/components/common/ProductUnitPickerDrawer.vue';
 import {
@@ -18,8 +17,6 @@ const notify = useNotification();
 const router = useRouter();
 const route = useRoute();
 const settingsStore = useSettingsStore();
-const authStore = useAuthStore();
-const canViewHarga = computed(() => authStore.can('sales.view_harga'));
 const {
     formatCurrency,
     formatQty,
@@ -179,9 +176,15 @@ watch(
     () => form.value.warehouse_id,
     (newVal, oldVal) => {
         if (oldVal != null && newVal !== oldVal) {
+            let cleared = false;
             form.value.details.forEach((d) => {
+                if ((d.serial_unit_ids || []).length || (d.is_serial && Number(d.qty_in_unit) > 0)) {
+                    cleared = true;
+                }
                 d.serial_unit_ids = [];
+                if (d.is_serial) d.qty_in_unit = 0;
             });
+            if (cleared) notify.warn('Gudang berubah — SN & qty serial dikosongkan.');
         }
     }
 );
@@ -282,7 +285,7 @@ async function loadSales() {
                         diskon_5_tipe: d.diskon_5_tipe || 'none',
                         diskon_5_nilai: d.diskon_5_nilai || 0,
                         promo_id: d.promo_id || null,
-                        nama_promo: d.nama_promo || null
+                        nama_promo: d.nama_promo || d.promo?.nama_promo || null
                     };
                 })
             };
@@ -481,14 +484,24 @@ function openProductPicker(index) {
 }
 
 async function fetchPickerProducts(q) {
-    const response = await salesApi.getProducts({ search: q });
+    const response = await salesApi.getProducts({
+        search: q,
+        warehouse_id: form.value.warehouse_id || undefined
+    });
     if (!response.data.success) return [];
     return response.data.data.items || [];
 }
 
 function getPickerUnitPrice(product, unitObj) {
-    return Number(unitObj?.harga_jual ?? 0);
+    const v = unitObj?.harga_jual;
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
 }
+
+const pickerModeHint = computed(() =>
+    'Mode penjualan BO: produk aktif, harga jual master per satuan. Serial = 1 baris/UNIT (stok gudang dipilih).'
+);
 
 function applyPickerSelect({ product, unit, konversi, unitObj, is_serial, price }) {
     const index = pickerTargetIndex.value;
@@ -632,7 +645,10 @@ function insertDetailAfter(index) {
 
 function applyCalculationResult(calc) {
     const totals = calc?.totals || calc;
-    calculated.value = totals;
+    calculated.value = {
+        ...totals,
+        total_diskon_header: totals?.total_diskon_header ?? totals?.total_diskon ?? 0
+    };
     if (calc?.labels) {
         discLabels.value = calc.labels;
     }
@@ -1006,7 +1022,7 @@ function canEditDiscount(data) {
 
 /** Opsi A: Disc 1–4 terkunci jika baris punya promo otomatis. */
 function isPromoLockedSlot(detail, slot) {
-    return !!detail?.nama_promo && slot >= 1 && slot <= 4;
+    return !!(detail?.promo_id || detail?.nama_promo) && slot >= 1 && slot <= 4;
 }
 
 const editingDiscountDetail = computed(() =>
@@ -1311,7 +1327,7 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column v-if="canViewHarga" header="Harga/Unit" style="width: 150px">
+                    <Column header="Harga/Unit" style="width: 150px">
                         <template #body="{ data }">
                             <div v-if="serialEnabled && data.is_serial">
                                 <span class="font-medium">{{ formatCurrency(data.harga_per_unit) }}</span>
@@ -1333,7 +1349,7 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column v-if="canViewHarga" header="Diskon" style="width: 160px">
+                    <Column header="Diskon" style="width: 160px">
                         <template #body="{ data, index }">
                             <span v-if="serialEnabled && data.is_serial" class="text-surface-400 text-xs">—</span>
                             <div v-else-if="hasDiscount(data)" class="flex items-center gap-1">
@@ -1363,7 +1379,7 @@ function onDiscountValueChange(discIndex, newValue) {
                         </template>
                     </Column>
 
-                    <Column v-if="canViewHarga" header="Subtotal" style="width: 130px" bodyClass="text-right">
+                    <Column header="Subtotal" style="width: 130px" bodyClass="text-right">
                         <template #body="{ data }">
                             <span class="font-medium">{{ formatCurrency(getItemSubtotal(data)) }}</span>
                         </template>
@@ -1394,7 +1410,7 @@ function onDiscountValueChange(discIndex, newValue) {
                                 :productId="data.product?.ulid"
                                 :warehouseId="form.warehouse_id"
                                 :modelValue="data.serial_unit_ids"
-                                :showSell="canViewHarga"
+                                :showSell="true"
                                 @change="(units) => onSerialChange(data, units)"
                             />
                         </div>
@@ -1408,7 +1424,7 @@ function onDiscountValueChange(discIndex, newValue) {
             </div>
 
             <!-- Bottom Section: Costs & Totals -->
-            <div v-if="canViewHarga" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <!-- Left: Discounts & Costs -->
                 <div class="space-y-4">
                     <!-- Header Discounts -->
@@ -1549,7 +1565,7 @@ function onDiscountValueChange(discIndex, newValue) {
         </form>
 
         <!-- Discount Dialog -->
-        <Dialog v-if="canViewHarga" v-model:visible="discountDialog" header="Diskon Item" modal :style="{ width: 'min(420px, 95vw)' }" :closable="true" @hide="closeDiscountDialog">
+        <Dialog v-model:visible="discountDialog" header="Diskon Item" modal :style="{ width: 'min(420px, 95vw)' }" :closable="true" @hide="closeDiscountDialog">
             <template v-if="editingDiscountDetail">
                 <div class="space-y-4">
                     <!-- Discount mode info -->
@@ -1649,6 +1665,7 @@ function onDiscountValueChange(discIndex, newValue) {
             :taken-keys="pickerTakenKeys"
             :include-serial="serialEnabled"
             :format-price="formatCurrency"
+            :mode-hint="pickerModeHint"
             @select="applyPickerSelect"
             @taken-click="onPickerTakenClick"
         />

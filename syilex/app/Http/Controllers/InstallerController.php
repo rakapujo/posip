@@ -100,11 +100,13 @@ class InstallerController extends Controller
 
     // ========== STEP 3: Store Info ==========
 
-    public function step3()
+    public function step3(Request $request)
     {
         if (!session('installer.db')) {
             return redirect()->route('installer.step2');
         }
+
+        $detectedUrl = rtrim($request->getSchemeAndHttpHost().$request->getBasePath(), '/');
 
         $data = session('installer.store', [
             'name' => '',
@@ -112,7 +114,16 @@ class InstallerController extends Controller
             'phone' => '',
             'email' => '',
             'npwp' => '',
+            'url' => $detectedUrl,
+            'receipt_footer' => 'Terima Kasih!',
         ]);
+
+        if (($data['url'] ?? '') === '') {
+            $data['url'] = $detectedUrl;
+        }
+        if (! array_key_exists('receipt_footer', $data) || $data['receipt_footer'] === null) {
+            $data['receipt_footer'] = 'Terima Kasih!';
+        }
 
         return view('installer.step3', [
             'steps' => $this->steps(),
@@ -129,7 +140,12 @@ class InstallerController extends Controller
             'phone' => 'required|string|max:20',
             'email' => 'required|email|max:100',
             'npwp' => 'nullable|string|max:30',
+            'url' => 'nullable|string|max:255',
+            'receipt_footer' => 'nullable|string|max:500',
         ]);
+
+        $validated['url'] = $validated['url'] ?? '';
+        $validated['receipt_footer'] = $validated['receipt_footer'] ?? 'Terima Kasih!';
 
         session(['installer.store' => $validated]);
         return redirect()->route('installer.step4');
@@ -154,6 +170,8 @@ class InstallerController extends Controller
             'decimal_separator' => ',',
             'decimal_places' => '0',
             'qty_decimal_places' => '0',
+            'percent_decimal_places' => '2',
+            'uppercase_mode' => 'code_only',
         ]);
 
         $timezones = $this->getTimezoneList();
@@ -179,6 +197,8 @@ class InstallerController extends Controller
             'decimal_separator' => 'required|string|max:1',
             'decimal_places' => 'required|in:0,1,2',
             'qty_decimal_places' => 'required|in:0,1,2',
+            'percent_decimal_places' => 'required|in:0,1,2,3,4',
+            'uppercase_mode' => 'required|in:none,code_only,all',
         ]);
 
         session(['installer.regional' => $validated]);
@@ -201,11 +221,21 @@ class InstallerController extends Controller
             'tax_sales_percent' => '11',
             'rounding_sales_method' => 'round',
             'rounding_sales_precision' => '100',
+            'rounding_purchase_method' => 'none',
+            'rounding_purchase_precision' => '0',
             'negative_mode' => 'block',
             'discount_mode' => 'recursive',
             'price_input_mode' => 'auto',
             'elektronik_enabled' => true,
+            'sales_allow_free' => true,
+            'sales_free_require_sold' => true,
+            'purchase_allow_free' => true,
+            'purchase_free_require_purchased' => false,
         ]);
+
+        if (($data['negative_mode'] ?? '') === 'warn') {
+            $data['negative_mode'] = 'block';
+        }
 
         return view('installer.step5', [
             'steps' => $this->steps(),
@@ -224,13 +254,19 @@ class InstallerController extends Controller
             'tax_sales_percent' => 'required|numeric|min:0|max:100',
             'rounding_sales_method' => 'required|in:none,round,floor,ceil',
             'rounding_sales_precision' => 'required|in:1,10,100,500,1000',
-            'negative_mode' => 'required|in:block,warn',
+            'rounding_purchase_method' => 'required|in:none,round,floor,ceil',
+            'rounding_purchase_precision' => 'required|in:0,1,10,100,500,1000',
+            'negative_mode' => 'required|in:block,allow',
             'discount_mode' => 'required|in:recursive,sum',
             'price_input_mode' => 'required|in:auto,manual',
         ]);
 
         $validated['tax_purchase_included_in_hpp'] = $request->has('tax_purchase_included_in_hpp');
         $validated['elektronik_enabled'] = $request->has('elektronik_enabled');
+        $validated['sales_allow_free'] = $request->has('sales_allow_free');
+        $validated['sales_free_require_sold'] = $request->has('sales_free_require_sold');
+        $validated['purchase_allow_free'] = $request->has('purchase_allow_free');
+        $validated['purchase_free_require_purchased'] = $request->has('purchase_free_require_purchased');
         session(['installer.tax' => $validated]);
         return redirect()->route('installer.step6');
     }
@@ -764,6 +800,8 @@ class InstallerController extends Controller
             'store.phone' => $store['phone'],
             'store.email' => $store['email'],
             'store.npwp' => $store['npwp'] ?? '',
+            'store.url' => $store['url'] ?? '',
+            'store.receipt_footer' => $store['receipt_footer'] ?? 'Terima Kasih!',
             'regional.timezone' => $regional['timezone'] ?? 'Asia/Jakarta',
             'regional.date_format' => $regional['date_format'] ?? 'DD/MM/YYYY',
             'regional.time_format' => $regional['time_format'] ?? 'HH:mm',
@@ -774,6 +812,8 @@ class InstallerController extends Controller
             'currency.decimal_separator' => $regional['decimal_separator'] ?? ',',
             'currency.decimal_places' => $regional['decimal_places'] ?? 0,
             'number.qty_decimal_places' => $regional['qty_decimal_places'] ?? 0,
+            'number.percent_decimal_places' => $regional['percent_decimal_places'] ?? 2,
+            'text.uppercase_mode' => $regional['uppercase_mode'] ?? 'code_only',
             'tax.tax_purchase_name' => $tax['tax_purchase_name'] ?? 'PPN',
             'tax.tax_purchase_percent' => $tax['tax_purchase_percent'] ?? 11,
             'tax.tax_purchase_included_in_hpp' => $tax['tax_purchase_included_in_hpp'] ?? false,
@@ -781,10 +821,16 @@ class InstallerController extends Controller
             'tax.tax_sales_percent' => $tax['tax_sales_percent'] ?? 11,
             'rounding.sales_method' => $tax['rounding_sales_method'] ?? 'round',
             'rounding.sales_precision' => $tax['rounding_sales_precision'] ?? 100,
+            'rounding.purchase_method' => $tax['rounding_purchase_method'] ?? 'none',
+            'rounding.purchase_precision' => $tax['rounding_purchase_precision'] ?? 0,
             'stock.negative_mode' => $tax['negative_mode'] ?? 'block',
             'calculation.discount_mode' => $tax['discount_mode'] ?? 'recursive',
             'product.price_input_mode' => $tax['price_input_mode'] ?? 'auto',
             'modules.elektronik_enabled' => $tax['elektronik_enabled'] ?? true,
+            'returns.sales_allow_free' => $tax['sales_allow_free'] ?? true,
+            'returns.sales_free_require_sold' => $tax['sales_free_require_sold'] ?? true,
+            'returns.purchase_allow_free' => $tax['purchase_allow_free'] ?? true,
+            'returns.purchase_free_require_purchased' => $tax['purchase_free_require_purchased'] ?? false,
             'promo.enabled' => $promo['enabled'] ?? true,
             'promo.allow_manual_discount' => $promo['allow_manual_discount'] ?? true,
             'promo.max_manual_discount_percent' => $promo['max_manual_discount_percent'] ?? 100,

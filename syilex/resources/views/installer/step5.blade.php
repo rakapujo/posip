@@ -46,29 +46,59 @@
 
     {{-- Rounding --}}
     <div class="border-b pb-4">
-        <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Pembulatan Penjualan</h3>
-        <div class="grid grid-cols-2 gap-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Metode</label>
-                <select name="rounding_sales_method" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="none" {{ $data['rounding_sales_method'] === 'none' ? 'selected' : '' }}>Tidak ada pembulatan</option>
-                    <option value="round" {{ $data['rounding_sales_method'] === 'round' ? 'selected' : '' }}>Bulatkan (terdekat)</option>
-                    <option value="floor" {{ $data['rounding_sales_method'] === 'floor' ? 'selected' : '' }}>Bulatkan ke bawah</option>
-                    <option value="ceil" {{ $data['rounding_sales_method'] === 'ceil' ? 'selected' : '' }}>Bulatkan ke atas</option>
-                </select>
+        <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Pembulatan</h3>
+        <div class="grid grid-cols-2 gap-6">
+            <div class="space-y-3">
+                <p class="text-xs font-semibold text-gray-500">Penjualan</p>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Metode</label>
+                        <select name="rounding_sales_method" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="none" {{ $data['rounding_sales_method'] === 'none' ? 'selected' : '' }}>Tidak ada</option>
+                            <option value="round" {{ $data['rounding_sales_method'] === 'round' ? 'selected' : '' }}>Terdekat</option>
+                            <option value="floor" {{ $data['rounding_sales_method'] === 'floor' ? 'selected' : '' }}>Ke bawah</option>
+                            <option value="ceil" {{ $data['rounding_sales_method'] === 'ceil' ? 'selected' : '' }}>Ke atas</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Presisi</label>
+                        <select name="rounding_sales_precision" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="1" {{ $data['rounding_sales_precision'] == '1' ? 'selected' : '' }}>Rp 1</option>
+                            <option value="10" {{ $data['rounding_sales_precision'] == '10' ? 'selected' : '' }}>Rp 10</option>
+                            <option value="100" {{ $data['rounding_sales_precision'] == '100' ? 'selected' : '' }}>Rp 100</option>
+                            <option value="500" {{ $data['rounding_sales_precision'] == '500' ? 'selected' : '' }}>Rp 500</option>
+                            <option value="1000" {{ $data['rounding_sales_precision'] == '1000' ? 'selected' : '' }}>Rp 1.000</option>
+                        </select>
+                    </div>
+                </div>
             </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Presisi</label>
-                <select name="rounding_sales_precision" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                    <option value="1" {{ $data['rounding_sales_precision'] == '1' ? 'selected' : '' }}>Rp 1</option>
-                    <option value="10" {{ $data['rounding_sales_precision'] == '10' ? 'selected' : '' }}>Rp 10</option>
-                    <option value="100" {{ $data['rounding_sales_precision'] == '100' ? 'selected' : '' }}>Rp 100 (umum)</option>
-                    <option value="500" {{ $data['rounding_sales_precision'] == '500' ? 'selected' : '' }}>Rp 500</option>
-                    <option value="1000" {{ $data['rounding_sales_precision'] == '1000' ? 'selected' : '' }}>Rp 1.000</option>
-                </select>
+            <div class="space-y-3">
+                <p class="text-xs font-semibold text-gray-500">Pembelian</p>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Metode</label>
+                        <select name="rounding_purchase_method" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="none" {{ ($data['rounding_purchase_method'] ?? 'none') === 'none' ? 'selected' : '' }}>Tidak ada</option>
+                            <option value="round" {{ ($data['rounding_purchase_method'] ?? 'none') === 'round' ? 'selected' : '' }}>Terdekat</option>
+                            <option value="floor" {{ ($data['rounding_purchase_method'] ?? 'none') === 'floor' ? 'selected' : '' }}>Ke bawah</option>
+                            <option value="ceil" {{ ($data['rounding_purchase_method'] ?? 'none') === 'ceil' ? 'selected' : '' }}>Ke atas</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Presisi</label>
+                        <select name="rounding_purchase_precision" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="0" {{ (string)($data['rounding_purchase_precision'] ?? '0') === '0' ? 'selected' : '' }}>0 (default)</option>
+                            <option value="1" {{ ($data['rounding_purchase_precision'] ?? '0') == '1' ? 'selected' : '' }}>Rp 1</option>
+                            <option value="10" {{ ($data['rounding_purchase_precision'] ?? '0') == '10' ? 'selected' : '' }}>Rp 10</option>
+                            <option value="100" {{ ($data['rounding_purchase_precision'] ?? '0') == '100' ? 'selected' : '' }}>Rp 100</option>
+                            <option value="500" {{ ($data['rounding_purchase_precision'] ?? '0') == '500' ? 'selected' : '' }}>Rp 500</option>
+                            <option value="1000" {{ ($data['rounding_purchase_precision'] ?? '0') == '1000' ? 'selected' : '' }}>Rp 1.000</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
-        <p class="text-xs text-gray-400 mt-2">Contoh: Rp 12.345 dengan pembulatan terdekat Rp 100 → Rp 12.300</p>
+        <p class="text-xs text-gray-400 mt-2">Contoh jual: Rp 12.345 terdekat Rp 100 → Rp 12.300. Pembelian biasanya tanpa pembulatan.</p>
     </div>
 
     {{-- Stock --}}
@@ -77,8 +107,8 @@
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Mode Stok Negatif</label>
             <select name="negative_mode" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <option value="block" {{ $data['negative_mode'] === 'block' ? 'selected' : '' }}>Blokir — tidak bisa jual jika stok habis</option>
-                <option value="warn" {{ $data['negative_mode'] === 'warn' ? 'selected' : '' }}>Peringatan — bisa jual, tapi muncul peringatan</option>
+                <option value="block" {{ in_array($data['negative_mode'] ?? 'block', ['block', 'warn'], true) ? 'selected' : '' }}>Blokir — tidak bisa jual jika stok habis</option>
+                <option value="allow" {{ ($data['negative_mode'] ?? '') === 'allow' ? 'selected' : '' }}>Izinkan — bisa jual meski stok habis</option>
             </select>
         </div>
     </div>
@@ -109,6 +139,34 @@
                 <p class="text-xs text-gray-400">Untuk toko elektronik: tracking IMEI/serial per unit, pembelian serial, koreksi HPP serial, dll. Nonaktifkan jika tidak diperlukan.</p>
             </div>
         </label>
+    </div>
+
+    {{-- Retur --}}
+    <div class="border-b pb-4">
+        <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Retur</h3>
+        <div class="space-y-3">
+            <label class="flex items-center gap-3 text-sm text-gray-700">
+                <input type="checkbox" name="sales_allow_free" id="sales_allow_free" value="1" {{ old('sales_allow_free', $data['sales_allow_free'] ?? true) ? 'checked' : '' }} class="rounded border-gray-300 text-blue-600" onchange="document.getElementById('sales_free_nested').style.display = this.checked ? 'block' : 'none'">
+                Izinkan retur penjualan tanpa nota (mode bebas)
+            </label>
+            <div id="sales_free_nested" class="ml-6 space-y-1" style="display: {{ old('sales_allow_free', $data['sales_allow_free'] ?? true) ? 'block' : 'none' }}">
+                <label class="flex items-center gap-3 text-sm text-gray-700">
+                    <input type="checkbox" name="sales_free_require_sold" value="1" {{ old('sales_free_require_sold', $data['sales_free_require_sold'] ?? true) ? 'checked' : '' }} class="rounded border-gray-300 text-blue-600">
+                    Mode bebas jual: hanya produk yang pernah terjual (non-serial)
+                </label>
+                <p class="text-xs text-gray-400">Produk serial tetap wajib SN terjual. Matikan hanya untuk koreksi tanpa histori.</p>
+            </div>
+            <label class="flex items-center gap-3 text-sm text-gray-700">
+                <input type="checkbox" name="purchase_allow_free" id="purchase_allow_free" value="1" {{ old('purchase_allow_free', $data['purchase_allow_free'] ?? true) ? 'checked' : '' }} class="rounded border-gray-300 text-blue-600" onchange="document.getElementById('purchase_free_nested').style.display = this.checked ? 'block' : 'none'">
+                Izinkan retur pembelian tanpa dokumen (mode bebas)
+            </label>
+            <div id="purchase_free_nested" class="ml-6 space-y-1" style="display: {{ old('purchase_allow_free', $data['purchase_allow_free'] ?? true) ? 'block' : 'none' }}">
+                <label class="flex items-center gap-3 text-sm text-gray-700">
+                    <input type="checkbox" name="purchase_free_require_purchased" value="1" {{ old('purchase_free_require_purchased', $data['purchase_free_require_purchased'] ?? false) ? 'checked' : '' }} class="rounded border-gray-300 text-blue-600">
+                    Mode bebas beli: hanya produk yang pernah dibeli
+                </label>
+            </div>
+        </div>
     </div>
 
     {{-- Price Input Mode --}}

@@ -27,7 +27,7 @@ Route → Controller (thin) → Action (write + transaction) → Model
 - Check: `auth()->user()->can('…')`
 - Seed: `database/seeders/RolePermissionSeeder.php`
 - Laporan: `laporan.{penjualan|pembelian|keuangan|performa|promo|inventory}`; export = `laporan.export`; `laporan.view` = Dashboard saja
-- Nilai sensitif (orthogonal): `stok.view_hpp`, `po.view_harga`, `serial-intake.view_harga`, `hutang.view_nominal` — view yang strip **WAJIB** strip export
+- Nilai sensitif (orthogonal): `stok.view_hpp`, `po.view_harga`, `serial-intake.view_harga`, `hutang.view_nominal`, `piutang.view_nominal` — view yang strip **WAJIB** strip export. Harga jual / Sales BO **tidak** digate (`sales.view_harga` dihapus).
 
 ## Feature flags
 

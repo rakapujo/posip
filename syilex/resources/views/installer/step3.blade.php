@@ -27,6 +27,16 @@
         <label class="block text-sm font-medium text-gray-700 mb-1">NPWP <span class="text-gray-400 text-xs">(opsional)</span></label>
         <input type="text" name="npwp" value="{{ old('npwp', $data['npwp']) }}" placeholder="00.000.000.0-000.000" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
     </div>
+    <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">URL Toko <span class="text-gray-400 text-xs">(opsional)</span></label>
+        <input type="text" name="url" value="{{ old('url', $data['url']) }}" placeholder="https://pos.tokomu.com" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        <p class="text-xs text-gray-400 mt-1">Terdeteksi dari alamat install; ubah jika domain produksi berbeda.</p>
+    </div>
+    <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Footer Struk</label>
+        <textarea name="receipt_footer" rows="2" placeholder="Terima Kasih!" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">{{ old('receipt_footer', $data['receipt_footer']) }}</textarea>
+        <p class="text-xs text-gray-400 mt-1">Ditampilkan di bawah struk (PDF, thermal, online).</p>
+    </div>
 
     <div class="flex justify-between pt-4">
         <a href="{{ route('installer.step2') }}" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">&larr; Kembali</a>

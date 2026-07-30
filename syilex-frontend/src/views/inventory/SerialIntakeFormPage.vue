@@ -768,6 +768,7 @@ function cancel() {
             :serial-only="true"
             :show-konversi="false"
             :show-price="false"
+            mode-hint="Mode PBS: hanya produk serial aktif."
             @select="applyPickerSelect"
         />
     </div>

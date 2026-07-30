@@ -23,7 +23,7 @@ class PenjualanAccessCoverageTest extends TestCase
         $this->ulid = (string) Str::ulid();
 
         foreach ([
-            'sales.view', 'sales.view_harga', 'sales.create', 'sales.update',
+            'sales.view', 'sales.create', 'sales.update',
             'sales.delete', 'sales.approve', 'sales.void',
             'retur-jual.view', 'retur-jual.create', 'retur-jual.update',
             'retur-jual.delete', 'retur-jual.lock', 'retur-jual.approve',

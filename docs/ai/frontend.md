@@ -31,6 +31,7 @@
 
 `ImageUpload`, `DetailDialog`, `DetailItem`, `DetailTable`, `DataTableHeader`, `SerialUnitPicker`, `ProductUnitPickerDrawer`, `SerialLabelPrintDialog`, `CustomerFormDialog`, `MoneySummaryPanel`, `AgingBucketPanel`, `ListFiltersSheet`, `CollapsibleSection`, `RowActionButtons`
 
+- `ProductUnitPickerDrawer`: prop `modeHint` (teks mode di atas search); harga serial via `resolveSerialPickerPrice` di `utils/productUnitLineHelpers.js` (bukan `harga_1` saja)
 - Di dalam DetailDialog: pakai `DetailTable` (bukan DataTable PrimeVue)
 - Filter list/laporan: `ListFiltersSheet` + `.list-filter-control` (bukan strip `w-40` di Toolbar `#end`)
 - Dialog isi multi-kolom: `grid-cols-1 md:grid-cols-*`; shell lebar sudah di-cap `95vw` mobile (`_responsive.scss`)

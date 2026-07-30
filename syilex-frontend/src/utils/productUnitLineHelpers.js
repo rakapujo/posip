@@ -10,6 +10,22 @@ export function productUnitKey(productId, unit, isSerial = false) {
 }
 
 /**
+ * Harga tampilan serial di picker: jangan andalkan harga_1 saja
+ * (banyak master isi harga di slot 4 / unit terakhir).
+ */
+export function resolveSerialPickerPrice(product) {
+    const fromUnits = (product?.units || [])
+        .map((u) => Number(u?.harga_jual ?? u?.harga))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    if (fromUnits.length) return fromUnits[fromUnits.length - 1];
+    for (let i = 4; i >= 1; i--) {
+        const h = Number(product?.[`harga_${i}`]);
+        if (Number.isFinite(h) && h > 0) return h;
+    }
+    return null;
+}
+
+/**
  * Flatten API products into picker rows.
  * @param {object[]} products
  * @param {{ expandUnits?: boolean, serialOnly?: boolean, includeSerial?: boolean, getUnitPrice?: Function }} opts
@@ -24,7 +40,10 @@ export function flattenProductUnitRows(products, opts = {}) {
         if (!includeSerial && isSerial) continue;
 
         if (isSerial || !expandUnits) {
-            const unitObj = isSerial ? { unit: 'UNIT', konversi: 1, harga_jual: Number(product.harga_1 || product.units?.[0]?.harga_jual || 0) } : uniqueUnits(product)[0] || { unit: product.unit_1 || 'PCS', konversi: 1, harga_jual: 0 };
+            const serialPrice = isSerial ? resolveSerialPickerPrice(product) : 0;
+            const unitObj = isSerial
+                ? { unit: 'UNIT', konversi: 1, harga_jual: serialPrice }
+                : uniqueUnits(product)[0] || { unit: product.unit_1 || 'PCS', konversi: 1, harga_jual: 0 };
             const price = getUnitPrice ? getUnitPrice(product, unitObj) : (unitObj.harga_jual ?? unitObj.harga ?? null);
             rows.push({
                 key: `${product.id}|${unitObj.unit}`,

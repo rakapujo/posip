@@ -76,10 +76,9 @@ const statusOptions = [
 const detailColumns = [
     { field: '#', header: '#', width: '40px' },
     { field: 'product', header: 'Produk' },
-    { field: 'unit_used', header: 'Satuan', width: '80px' },
+    { field: 'unit', header: 'Satuan', width: '80px' },
     { field: 'qty', header: 'Qty', align: 'right', width: '80px' },
     { field: 'harga', header: 'Harga', align: 'right', width: '120px' },
-    { field: 'diskon', header: 'Diskon', align: 'right', width: '100px' },
     { field: 'subtotal', header: 'Subtotal', align: 'right', width: '120px' }
 ];
 
@@ -393,24 +392,20 @@ async function exportDocPdf(item) {
                 return s;
             }
         },
-        { header: 'Satuan', field: 'unit_used', width: 16 },
-        { header: 'Qty', width: 14, align: 'right', accessor: (row) => formatQty(row.qty_in_unit) },
-        { header: 'Harga', width: 22, align: 'right', accessor: (row) => formatCurrency(row.harga_per_unit) },
-        { header: 'Diskon', width: 22, align: 'right', accessor: (row) => formatCurrency(row.total_diskon_item) },
-        { header: 'Subtotal', width: 22, align: 'right', accessor: (row) => formatCurrency(row.subtotal) }
+        { header: 'Satuan', field: 'unit', width: 16 },
+        { header: 'Qty', width: 14, align: 'right', accessor: (row) => formatQty(row.qty ?? row.qty_base) },
+        { header: 'Harga', width: 22, align: 'right', accessor: (row) => formatCurrency(row.harga_satuan) },
+        { header: 'Subtotal', width: 22, align: 'right', accessor: (row) => formatCurrency(row.jumlah) }
     ];
 
     const summary = [{ label: 'Subtotal', value: formatCurrency(data.subtotal) }];
-    if (Number(data.total_diskon_header) > 0) {
-        summary.push({ label: 'Diskon', value: `-${formatCurrency(data.total_diskon_header)}` });
-    }
     if (Number(data.pajak_nominal) > 0) {
-        summary.push({ label: 'DPP', value: formatCurrency(data.dpp) }, { label: `${data.pajak_nama} (${data.pajak_persen}%)`, value: formatCurrency(data.pajak_nominal) });
+        summary.push({ label: `${data.pajak_nama || 'Pajak'} (${data.pajak_persen}%)`, value: formatCurrency(data.pajak_nominal) });
     }
     if (data.pembulatan && Number(data.pembulatan) !== 0) {
         summary.push({ label: 'Pembulatan', value: formatCurrency(data.pembulatan) });
     }
-    summary.push({ separator: true }, { label: 'Nilai Kalkulasi', value: formatCurrency(data.grand_total), bold: true });
+    summary.push({ separator: true }, { label: 'Grand Total', value: formatCurrency(data.grand_total), bold: true });
     if (data.status === 'approved') {
         summary.push({ label: 'Nilai Diakui', value: formatCurrency(data.nilai_diakui), bold: true }, { label: 'Selisih', value: formatCurrency(data.selisih) });
     }
@@ -612,11 +607,10 @@ const selisihClass = computed(() => {
                                     </div>
                                 </div>
                             </template>
-                            <template #qty="{ item }">{{ formatQty(item.qty_in_unit) }}</template>
-                            <template #harga="{ item }">{{ formatCurrency(item.harga_per_unit) }}</template>
-                            <template #diskon="{ item }">{{ formatCurrency(item.total_diskon_item) }}</template>
+                            <template #qty="{ item }">{{ formatQty(item.qty ?? item.qty_base) }}</template>
+                            <template #harga="{ item }">{{ formatCurrency(item.harga_satuan) }}</template>
                             <template #subtotal="{ item }">
-                                <span class="font-medium">{{ formatCurrency(item.subtotal) }}</span>
+                                <span class="font-medium">{{ formatCurrency(item.jumlah) }}</span>
                             </template>
                         </DetailTable>
                     </div>

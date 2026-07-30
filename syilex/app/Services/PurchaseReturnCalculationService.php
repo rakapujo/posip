@@ -49,6 +49,169 @@ class PurchaseReturnCalculationService
     }
 
     /**
+     * Free-mode: non-serial cap net purchased from supplier+WH bila require_purchased ON.
+     * Serial: selalu tersedia@WH; bila require ON harus intake.supplier_id match.
+     * Input details: product_id, qty_in_base (atau qty_in_unit×konversi), serial_unit_ids.
+     */
+    public static function validateFreeHistory(
+        array $details,
+        int $supplierId,
+        int $warehouseId,
+        ?int $excludeReturnId = null
+    ): void {
+        if (! SettingService::isPurchaseFreeRequirePurchased()) {
+            // Serial identity tetap dicek di prepare/lock; non-serial longgar.
+            self::assertSerialUnitsAvailable($details, $warehouseId, null);
+
+            return;
+        }
+
+        $errors = [];
+        $productIds = collect($details)->pluck('product_id')->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        $products = MasterProduk::whereIn('id', $productIds)->get()->keyBy('id');
+
+        $purchased = self::purchasedBaseByProduct($supplierId, $warehouseId, $productIds->all());
+        $returned = self::freeReturnedBaseByProduct($supplierId, $warehouseId, $productIds->all(), $excludeReturnId);
+        $claimed = [];
+
+        foreach ($details as $i => $detail) {
+            $productId = (int) ($detail['product_id'] ?? 0);
+            $product = $products->get($productId);
+            if (! $product) {
+                $errors[] = 'Baris #'.($i + 1).': produk tidak ditemukan.';
+
+                continue;
+            }
+
+            if ($product->is_serial) {
+                continue; // handled below
+            }
+
+            $qtyBase = (float) ($detail['qty_in_base'] ?? 0);
+            if ($qtyBase <= 0 && isset($detail['qty_in_unit'], $detail['unit_konversi'])) {
+                $qtyBase = (float) $detail['qty_in_unit'] * max(1, (int) $detail['unit_konversi']);
+            }
+            $claimed[$productId] = ($claimed[$productId] ?? 0) + $qtyBase;
+            $available = ($purchased[$productId] ?? 0) - ($returned[$productId] ?? 0);
+            if ($claimed[$productId] > $available + 0.0001) {
+                $errors[] = "{$product->nama_produk}: qty retur melebihi sisa dibeli {$available} (base).";
+            }
+        }
+
+        self::assertSerialUnitsAvailable($details, $warehouseId, $supplierId);
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages(['details' => array_values(array_unique($errors))]);
+        }
+    }
+
+    private static function assertSerialUnitsAvailable(array $details, int $warehouseId, ?int $supplierId): void
+    {
+        $errors = [];
+        foreach ($details as $i => $detail) {
+            $ulids = array_values(array_unique(array_filter($detail['serial_unit_ids'] ?? [])));
+            if ($ulids === []) {
+                continue;
+            }
+            $productId = (int) ($detail['product_id'] ?? 0);
+            $q = \App\Models\SerialUnit::whereIn('ulid', $ulids)
+                ->where('product_id', $productId)
+                ->where('warehouse_id', $warehouseId)
+                ->where('status', \App\Models\SerialUnit::STATUS_TERSEDIA);
+            if ($supplierId) {
+                $q->whereHas('intake', fn ($iq) => $iq->where('supplier_id', $supplierId));
+            }
+            if ($q->count() !== count($ulids)) {
+                $errors[] = 'Baris #'.($i + 1).': unit serial harus tersedia di gudang'
+                    .($supplierId ? ' dan asal supplier ini' : '').'.';
+            }
+        }
+        if ($errors !== []) {
+            throw ValidationException::withMessages(['details' => array_values(array_unique($errors))]);
+        }
+    }
+
+    /**
+     * Product IDs with net purchased qty > 0 for free picker (require_purchased ON).
+     *
+     * @return array<int>
+     */
+    public static function purchasedProductIdsForPicker(int $supplierId, int $warehouseId): array
+    {
+        $purchased = self::purchasedBaseAll($supplierId, $warehouseId);
+        $returned = self::freeReturnedBaseByProduct($supplierId, $warehouseId, array_keys($purchased), null);
+        $ids = [];
+        foreach ($purchased as $productId => $qty) {
+            if (($qty - ($returned[$productId] ?? 0)) > 0.0001) {
+                $ids[] = (int) $productId;
+            }
+        }
+
+        return $ids;
+    }
+
+    /** @return array<int, float> */
+    private static function purchasedBaseAll(int $supplierId, int $warehouseId): array
+    {
+        return \Illuminate\Support\Facades\DB::table('doc_purchase_order_detail as d')
+            ->join('doc_purchase_order as po', 'po.id', '=', 'd.po_id')
+            ->where('po.status', 'approved')
+            ->where('po.supplier_id', $supplierId)
+            ->where('po.warehouse_id', $warehouseId)
+            ->groupBy('d.product_id')
+            ->selectRaw('d.product_id, SUM(d.qty_in_base) as purchased_qty')
+            ->pluck('purchased_qty', 'product_id')
+            ->map(fn ($v) => (float) $v)
+            ->all();
+    }
+
+    /** @param  array<int>  $productIds @return array<int, float> */
+    private static function purchasedBaseByProduct(int $supplierId, int $warehouseId, array $productIds): array
+    {
+        if ($productIds === []) {
+            return self::purchasedBaseAll($supplierId, $warehouseId);
+        }
+
+        return \Illuminate\Support\Facades\DB::table('doc_purchase_order_detail as d')
+            ->join('doc_purchase_order as po', 'po.id', '=', 'd.po_id')
+            ->where('po.status', 'approved')
+            ->where('po.supplier_id', $supplierId)
+            ->where('po.warehouse_id', $warehouseId)
+            ->whereIn('d.product_id', $productIds)
+            ->groupBy('d.product_id')
+            ->selectRaw('d.product_id, SUM(d.qty_in_base) as purchased_qty')
+            ->pluck('purchased_qty', 'product_id')
+            ->map(fn ($v) => (float) $v)
+            ->all();
+    }
+
+    /** @param  array<int>  $productIds @return array<int, float> */
+    private static function freeReturnedBaseByProduct(
+        int $supplierId,
+        int $warehouseId,
+        array $productIds,
+        ?int $excludeReturnId
+    ): array {
+        if ($productIds === []) {
+            return [];
+        }
+
+        return \App\Models\DocPurchaseReturnDetail::query()
+            ->whereIn('product_id', $productIds)
+            ->when($excludeReturnId, fn ($q) => $q->where('retur_id', '!=', $excludeReturnId))
+            ->whereHas('purchaseReturn', function ($q) use ($supplierId, $warehouseId) {
+                $q->whereIn('status', ['draft', 'lock', 'approved'])
+                    ->where('supplier_id', $supplierId)
+                    ->where('warehouse_id', $warehouseId);
+            })
+            ->selectRaw('product_id, SUM(qty_in_base) as total')
+            ->groupBy('product_id')
+            ->pluck('total', 'product_id')
+            ->map(fn ($v) => (float) $v)
+            ->all();
+    }
+
+    /**
      * Calculate complete Purchase Return totals.
      *
      * @param array $data - Full return data including details and header discounts

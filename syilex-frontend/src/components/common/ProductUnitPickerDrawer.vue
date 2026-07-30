@@ -24,6 +24,8 @@ const props = defineProps({
     showPrice: { type: Boolean, default: true },
     showKonversi: { type: Boolean, default: true },
     takenLabel: { type: String, default: 'Sudah ada' },
+    /** Ringkas mode picker (histori / stok / dokumen) — tampil di drawer */
+    modeHint: { type: String, default: '' },
     /** (n) => string */
     formatPrice: { type: Function, default: null }
 });
@@ -123,8 +125,9 @@ watch(
         </template>
 
         <div class="flex flex-col gap-3 h-full">
+            <div v-if="modeHint" class="text-xs text-surface-500 leading-snug px-0.5">{{ modeHint }}</div>
             <div class="flex gap-2">
-                <InputText v-model="localQuery" class="flex-1" placeholder="Cari kode / nama produk…" @keydown.enter.prevent="onEnter" />
+                <InputText v-model="localQuery" class="flex-1" placeholder="Cari kode/nama/barcode/KI/SN…" @keydown.enter.prevent="onEnter" />
                 <Button icon="pi pi-search" :loading="loading" @click="onEnter" aria-label="Cari" />
             </div>
 

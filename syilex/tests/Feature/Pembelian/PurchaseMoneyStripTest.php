@@ -331,17 +331,26 @@ class PurchaseMoneyStripTest extends TestCase
         $this->assertArrayNotHasKey('sisa_deposit', $item);
     }
     #[Test]
-    public function supplier_deposit_index_shows_nominal_with_view_nominal(): void
+    public function purchase_return_products_always_expose_sell_price_avg_cost_needs_hpp(): void
     {
-        $this->makeManualDeposit(500000);
+        Permission::firstOrCreate(['name' => 'stok.view_hpp', 'guard_name' => 'web']);
+        Permission::firstOrCreate(['name' => 'retur-beli.create', 'guard_name' => 'web']);
 
-        $viewer = $this->userWith(['deposit-supplier.view', 'hutang.view_nominal']);
+        $viewer = $this->userWith(['retur-beli.create']);
         $item = $this->actingAs($viewer)
-            ->getJson('/api/v1/supplier-deposits')
+            ->getJson('/api/v1/purchase-returns/products?search='.$this->product->kode_produk)
             ->assertOk()
             ->json('data.items.0');
 
-        $this->assertArrayHasKey('nominal_awal', $item);
-        $this->assertEquals(500000, (float) $item['nominal_awal']);
+        $this->assertNotNull($item);
+        $this->assertNotNull($item['units'][0]['harga_jual'] ?? null);
+        $this->assertNull($item['avg_cost'] ?? null);
+
+        $withHpp = $this->userWith(['retur-beli.create', 'stok.view_hpp']);
+        $itemHpp = $this->actingAs($withHpp)
+            ->getJson('/api/v1/purchase-returns/products?search='.$this->product->kode_produk)
+            ->assertOk()
+            ->json('data.items.0');
+        $this->assertNotNull($itemHpp['avg_cost'] ?? null);
     }
 }

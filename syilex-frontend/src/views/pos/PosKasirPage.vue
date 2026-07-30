@@ -3144,56 +3144,63 @@ const clearAll = () => {
         </template>
     </Dialog>
 
-    <!-- Payment Dialog -->
-    <Dialog v-model:visible="paymentDialog" modal :style="{ width: '700px' }" :breakpoints="{ '960px': '95vw' }" :closable="!paymentProcessing" :header="false" class="!p-0">
+    <!-- Payment Dialog — mobile: chip-grid + nested scroll; desktop: 2-col -->
+    <!-- ponytail: soft keyboard may cover CTA on short phones — scroll-into-view if cashiers report -->
+    <Dialog
+        v-model:visible="paymentDialog"
+        modal
+        :style="{ width: '700px', maxHeight: '90vh' }"
+        :contentStyle="{ overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }"
+        :breakpoints="{ '960px': '95vw' }"
+        :closable="!paymentProcessing"
+        :header="false"
+        class="!p-0 pos-payment-dialog"
+    >
         <template #header>
             <span class="font-bold text-lg">PEMBAYARAN</span>
         </template>
 
-        <div v-if="cart.totals.value" class="flex flex-col" style="max-height: calc(90vh - 140px)">
-            <!-- Grand Total (full width, top) -->
-            <div class="text-center py-3 bg-surface-50 dark:bg-surface-800 rounded-lg mx-1 mb-3 shrink-0">
+        <div v-if="cart.totals.value" class="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <!-- Grand Total -->
+            <div class="text-center py-2 md:py-3 bg-surface-50 dark:bg-surface-800 rounded-lg mx-1 mb-3 shrink-0">
                 <div class="text-surface-500 text-sm">Grand Total</div>
-                <div class="text-3xl font-bold text-primary">{{ formatCurrency(cart.totals.value.grand_total) }}</div>
+                <div class="text-2xl md:text-3xl font-bold text-primary">{{ formatCurrency(cart.totals.value.grand_total) }}</div>
             </div>
 
-            <!-- 2-column layout -->
             <div class="flex flex-col md:flex-row gap-4 flex-1 min-h-0 mx-1">
                 <!-- LEFT: Payment Method Cards -->
-                <div class="w-full md:w-48 shrink-0 overflow-y-auto">
-                    <div class="text-xs font-medium text-surface-500 mb-2">Pilih Metode:</div>
-                    <div class="grid grid-cols-2 gap-2">
+                <div class="w-full md:w-48 shrink-0 flex flex-col min-h-0">
+                    <div class="text-xs font-medium text-surface-500 mb-2 shrink-0">Pilih Metode:</div>
+                    <div class="grid grid-cols-4 md:grid-cols-2 gap-2 max-h-[7.5rem] md:max-h-none overflow-y-auto">
                         <div
                             v-for="method in allowedPaymentMethods"
                             :key="method.id"
-                            class="flex flex-col items-center justify-center min-h-20 h-20 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md"
+                            class="flex flex-col items-center justify-center min-h-11 h-14 md:min-h-20 md:h-20 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md"
                             :class="paymentMethods.some((p) => p.metode_pembayaran_id === method.id) ? 'border-primary bg-primary/10' : 'border-surface-200 dark:border-surface-700 hover:border-primary/50'"
                             @click="togglePaymentLine(method)"
                         >
-                            <img v-if="method.logo_url" :src="method.logo_url" :alt="method.nama_pembayaran" class="w-8 h-8 object-contain mb-1" />
-                            <i v-else :class="getMethodIcon(method)" class="text-xl mb-1" :style="{ color: paymentMethods.some((p) => p.metode_pembayaran_id === method.id) ? 'var(--p-primary-color)' : undefined }"></i>
-                            <span class="text-[10px] text-center leading-tight font-medium px-1">{{ method.nama_pembayaran }}</span>
+                            <img v-if="method.logo_url" :src="method.logo_url" :alt="method.nama_pembayaran" class="w-5 h-5 md:w-8 md:h-8 object-contain mb-0.5 md:mb-1" />
+                            <i v-else :class="getMethodIcon(method)" class="text-base md:text-xl mb-0.5 md:mb-1" :style="{ color: paymentMethods.some((p) => p.metode_pembayaran_id === method.id) ? 'var(--p-primary-color)' : undefined }"></i>
+                            <span class="text-[9px] md:text-[10px] text-center leading-tight font-medium px-0.5 truncate w-full">{{ method.nama_pembayaran }}</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- RIGHT: Payment Lines Detail -->
-                <div class="flex-1 overflow-y-auto border-l border-surface-200 dark:border-surface-700 pl-4">
+                <div class="flex-1 min-h-0 overflow-y-auto md:border-l border-surface-200 dark:border-surface-700 md:pl-4">
                     <div class="text-xs font-medium text-surface-500 mb-2">Detail Pembayaran:</div>
 
                     <div v-if="paymentMethods.length > 0" class="space-y-3">
                         <div v-for="(pm, idx) in paymentMethods" :key="pm.metode_pembayaran_id" class="p-3 border border-surface-200 dark:border-surface-700 rounded-lg">
-                            <!-- Header -->
                             <div class="flex items-center justify-between mb-2">
-                                <div class="flex items-center gap-2">
-                                    <img v-if="pm.method?.logo_url" :src="pm.method.logo_url" :alt="pm.method.nama_pembayaran" class="w-5 h-5 object-contain" />
-                                    <i v-else :class="getMethodIcon(pm.method)" class="text-base"></i>
-                                    <span class="font-bold text-sm">{{ pm.method?.nama_pembayaran }}</span>
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <img v-if="pm.method?.logo_url" :src="pm.method.logo_url" :alt="pm.method.nama_pembayaran" class="w-5 h-5 object-contain shrink-0" />
+                                    <i v-else :class="getMethodIcon(pm.method)" class="text-base shrink-0"></i>
+                                    <span class="font-bold text-sm truncate">{{ pm.method?.nama_pembayaran }}</span>
                                 </div>
-                                <Button icon="pi pi-times" text rounded severity="danger" size="small" class="!w-5 !h-5" @click="removePaymentLine(idx)" />
+                                <Button icon="pi pi-times" text rounded severity="danger" size="small" class="!w-5 !h-5 shrink-0" @click="removePaymentLine(idx)" />
                             </div>
 
-                            <!-- Nominal -->
                             <div class="mb-2">
                                 <InputNumber
                                     v-select-on-focus
@@ -3208,7 +3215,6 @@ const clearAll = () => {
                                 />
                             </div>
 
-                            <!-- Pay Recommendations (tunai only, per-line sisa) -->
                             <div v-if="pm.method?.metode === 'tunai' && getLineRecommendations(idx).length > 0" class="mb-2">
                                 <div class="flex flex-wrap gap-1">
                                     <Button
@@ -3224,18 +3230,15 @@ const clearAll = () => {
                                 </div>
                             </div>
 
-                            <!-- Reference (non-tunai only) -->
                             <div v-if="pm.method?.metode !== 'tunai'" class="mb-2">
                                 <label class="block text-xs text-surface-500 mb-1">No. Referensi</label>
                                 <InputText v-select-on-focus v-model="pm.reference" placeholder="No. Referensi / Approval Code" size="small" class="w-full" :style="{ textTransform: shouldUppercase ? 'uppercase' : 'none' }" />
                             </div>
 
-                            <!-- QR Code (non-tunai, if available) -->
                             <div v-if="pm.method?.metode !== 'tunai' && pm.method?.qr_code_url" class="mb-2 flex justify-center">
-                                <img :src="pm.method.qr_code_url" alt="QR Code" class="w-36 h-36 object-contain border border-surface-200 dark:border-surface-700 rounded-lg p-2 bg-white" />
+                                <img :src="pm.method.qr_code_url" alt="QR Code" class="w-24 h-24 md:w-36 md:h-36 object-contain border border-surface-200 dark:border-surface-700 rounded-lg p-2 bg-white" />
                             </div>
 
-                            <!-- Fee -->
                             <div v-if="calculateFee(pm.nominal || 0, pm.method) > 0" class="text-xs text-surface-500">
                                 Biaya: {{ formatCurrency(calculateFee(pm.nominal || 0, pm.method)) }}
                                 <span v-if="pm.method?.biaya_tambahan_tipe === 'percent'">({{ pm.method.biaya_tambahan_nilai }}%)</span>
@@ -3243,17 +3246,17 @@ const clearAll = () => {
                         </div>
                     </div>
 
-                    <!-- Empty state -->
                     <div v-else class="flex items-center justify-center h-32 text-surface-400 text-sm">
                         <div class="text-center">
-                            <i class="pi pi-arrow-left text-2xl mb-2 block"></i>
+                            <i class="pi pi-arrow-up md:hidden text-2xl mb-2 block"></i>
+                            <i class="pi pi-arrow-left hidden md:block text-2xl mb-2"></i>
                             Pilih metode pembayaran
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Bottom Summary (sticky, full width) -->
+            <!-- Bottom Summary (shrink-0; not p-dialog-footer — stack CTA on mobile) -->
             <div class="border-t border-surface-200 dark:border-surface-700 pt-3 mt-3 shrink-0 mx-1">
                 <div class="flex items-center justify-between text-sm mb-3">
                     <div class="text-center flex-1">
@@ -3273,9 +3276,9 @@ const clearAll = () => {
                         <div class="font-bold text-base text-green-600">{{ formatCurrency(kembalian) }}</div>
                     </div>
                 </div>
-                <div class="flex justify-end gap-2">
-                    <Button label="Batal" severity="secondary" @click="paymentDialog = false" :disabled="paymentProcessing" />
-                    <Button label="PROSES PEMBAYARAN" icon="pi pi-check" @click="processPayment" :loading="paymentProcessing" :disabled="!canProcessPayment" />
+                <div class="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
+                    <Button label="Batal" severity="secondary" class="w-full md:w-auto" @click="paymentDialog = false" :disabled="paymentProcessing" />
+                    <Button label="PROSES PEMBAYARAN" icon="pi pi-check" class="w-full md:w-auto" @click="processPayment" :loading="paymentProcessing" :disabled="!canProcessPayment" />
                 </div>
             </div>
         </div>
@@ -3811,6 +3814,20 @@ const clearAll = () => {
 .pos-pane-toggle .p-togglebutton {
     flex: 1 1 0;
     justify-content: center;
+}
+
+/* Payment dialog: flex chain so nested scroll (methods + detail) works under maxHeight */
+.pos-payment-dialog.p-dialog {
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+}
+.pos-payment-dialog .p-dialog-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Main tabs equal 25% — mobile only; desktop keep content-width */

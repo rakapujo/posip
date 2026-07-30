@@ -42,13 +42,13 @@ Deep audit berurutan mengikuti `AppMenu.vue` (Home → Master Data).
 | 28 | Pembelian → Pembelian Serial | [28-pembelian-serial.md](28-pembelian-serial.md) | patched (P0+P1 core) |
 | 29 | Pembelian → Hutang Supplier | [29-hutang-supplier.md](29-hutang-supplier.md) | patched (P0+P1 core) |
 | 30 | Pembelian → Pembayaran Hutang | [30-pembayaran-hutang.md](30-pembayaran-hutang.md) | patched (P0+P1 core) |
-| 31 | Pembelian → Retur Pembelian | [31-retur-pembelian.md](31-retur-pembelian.md) | patched (P0+P1 core) |
+| 31 | Pembelian → Retur Pembelian | [31-retur-pembelian.md](31-retur-pembelian.md) | patched search+stock + histori-flag 2026-07-29 |
 | 32 | Pembelian → Deposit Supplier | [32-deposit-supplier.md](32-deposit-supplier.md) | patched (P0+P1 core) |
-| 33 | Penjualan → Penjualan (Sales BO) | [33-penjualan-sales.md](33-penjualan-sales.md) | patched Wave A + walk-in BO |
-| 34 | Penjualan → Retur Penjualan | [34-retur-penjualan.md](34-retur-penjualan.md) | patched Wave A + walk-in BO |
-| 35 | Penjualan → Piutang Customer | [35-piutang-customer.md](35-piutang-customer.md) | patched Wave A + walk-in BO |
-| 36 | Penjualan → Pembayaran Piutang | [36-pembayaran-piutang.md](36-pembayaran-piutang.md) | patched Wave A + walk-in BO |
-| 37 | Penjualan → Deposit Customer | [37-deposit-customer.md](37-deposit-customer.md) | patched Wave A + walk-in BO |
+| 33 | Penjualan → Penjualan (Sales BO) | [33-penjualan-sales.md](33-penjualan-sales.md) | patched gap-close 2026-07-29 (picker/promo/UX) |
+| 34 | Penjualan → Retur Penjualan | [34-retur-penjualan.md](34-retur-penjualan.md) | patched gap-close + histori-flag 2026-07-29 |
+| 35 | Penjualan → Piutang Customer | [35-piutang-customer.md](35-piutang-customer.md) | patched gap-close 2026-07-29 (summary/overdue) |
+| 36 | Penjualan → Pembayaran Piutang | [36-pembayaran-piutang.md](36-pembayaran-piutang.md) | patched gap-close 2026-07-29 (view_nominal FE) |
+| 37 | Penjualan → Deposit Customer | [37-deposit-customer.md](37-deposit-customer.md) | patched gap-close 2026-07-29 (edit/usage/N+1) |
 | 38 | POS → Shift | [38-pos-shift.md](38-pos-shift.md) | patched Wave A P0 |
 | 39 | POS → Terminal | [39-pos-terminal.md](39-pos-terminal.md) | patched Wave A + R + D + B |
 | 40 | POS → Kasir (Run Terminal) | [40-pos-kasir.md](40-pos-kasir.md) | patched Wave A + R + D + B |
@@ -65,7 +65,7 @@ Deep audit berurutan mengikuti `AppMenu.vue` (Home → Master Data).
 | 50 | Laporan → Pembelian → Diskon | [50-diskon-beli.md](50-diskon-beli.md) | Wave A+B patched |
 | 51 | Laporan → Pembelian → Harga Terakhir | [51-harga-terakhir.md](51-harga-terakhir.md) | Wave A+B patched |
 | 52 | Laporan → Keuangan → Gross Profit | [52-gross-profit.md](52-gross-profit.md) | Wave A+B patched |
-| 53 | Laporan → Keuangan → Margin per Barang | [53-margin-per-barang.md](53-margin-per-barang.md) | Wave A+B patched |
+| 53 | Laporan → Keuangan → Margin per Barang | [53-margin-per-barang.md](53-margin-per-barang.md) | Serial expand + Excel/PDF parent-child flat + PDF width guard (2026-07-29) |
 | 54 | Laporan → Keuangan → Arus Kas | [54-arus-kas.md](54-arus-kas.md) | Wave A+B patched |
 | 55 | Laporan → Promo → Usage | [55-promo-usage.md](55-promo-usage.md) | Wave A+B patched |
 | 56 | Laporan → Promo → Produk | [56-produk-dapat-promo.md](56-produk-dapat-promo.md) | Wave A+B patched |
@@ -85,5 +85,6 @@ Deep audit berurutan mengikuti `AppMenu.vue` (Home → Master Data).
 | 70 | App Shell (layout / menu / chrome) | [70-app-shell.md](70-app-shell.md) | draft (P0 via #69) |
 | 71 | Terminal store branding (POS docs) | [71-terminal-store-branding.md](71-terminal-store-branding.md) | patched |
 | 72 | Mobile filters + Dialog responsif | [72-mobile-filters-modals.md](72-mobile-filters-modals.md) | patched |
+| 73 | Installer wizard (settings hari-1) | [73-installer-settings.md](73-installer-settings.md) | url/footer, purchase rounding, returns.*, uppercase, percent decimal; fix negative_mode allow (2026-07-30) |
 
 Rule Cursor: `.cursor/rules/posip-menu-audit.mdc`

@@ -36,12 +36,29 @@ async function snap(page, name) {
     });
 }
 
+/** Wizard hidup di Laravel (bukan Vite SPA). Skip jika app sudah installed. */
+function installBaseUrl() {
+    return (process.env.E2E_INSTALL_BASE_URL || process.env.VITE_API_PROXY || 'http://POSIP.test/syilex/public').replace(
+        /\/$/,
+        ''
+    );
+}
+
 test.describe('Installer wizard documentation', () => {
-    test('walk through all install steps and capture screenshots', async ({ page, baseURL }) => {
+    test('walk through all install steps and capture screenshots', async ({ page }) => {
         test.setTimeout(300000);
 
-        await page.goto(`${baseURL}/install`);
-        await expect(page.getByRole('heading', { name: 'Cek Server' })).toBeVisible({ timeout: 15000 });
+        // Destructive full reinstall only when explicitly prepared:
+        // php scripts/prepare-browser-install.php
+        await page.goto(`${installBaseUrl()}/install`);
+        const cekServer = page.getByRole('heading', { name: 'Cek Server' });
+        if (!(await cekServer.isVisible({ timeout: 8000 }).catch(() => false))) {
+            test.skip(
+                true,
+                'Installer tidak terbuka (sudah installed). Untuk regenerate screenshots: php scripts/prepare-browser-install.php lalu set E2E_INSTALL_BASE_URL'
+            );
+            return;
+        }
         await snap(page, 'install-01-cek-server');
 
         await page.getByRole('button', { name: /Lanjut/i }).click();
@@ -61,14 +78,21 @@ test.describe('Installer wizard documentation', () => {
         await page.fill('textarea[name="address"]', STORE.address);
         await page.fill('input[name="phone"]', STORE.phone);
         await page.fill('input[name="email"]', STORE.email);
+        await expect(page.locator('input[name="url"]')).toBeVisible();
+        await expect(page.locator('textarea[name="receipt_footer"]')).toBeVisible();
         await page.getByRole('button', { name: /^Lanjut/i }).click();
         await expect(page.getByRole('heading', { name: 'Regional & Mata Uang' })).toBeVisible();
         await snap(page, 'install-04-regional-mata-uang');
 
+        await expect(page.locator('select[name="percent_decimal_places"]')).toBeVisible();
+        await expect(page.locator('select[name="uppercase_mode"]')).toBeVisible();
         await page.getByRole('button', { name: /^Lanjut/i }).click();
         await expect(page.getByRole('heading', { name: 'Pajak & Perhitungan' })).toBeVisible();
         await snap(page, 'install-05-pajak-perhitungan');
 
+        await expect(page.locator('select[name="rounding_purchase_method"]')).toBeVisible();
+        await expect(page.locator('#sales_allow_free')).toBeVisible();
+        await expect(page.locator('select[name="negative_mode"] option[value="allow"]')).toHaveCount(1);
         await page.getByRole('button', { name: /^Lanjut/i }).click();
         await expect(page.getByRole('heading', { name: 'Promo & Diskon' })).toBeVisible();
         await snap(page, 'install-06-promo-diskon');
