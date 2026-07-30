@@ -18,6 +18,33 @@ const products = ref([]);
 const loadingProducts = ref(false);
 const selectedProducts = ref([]);
 
+// Checkbox eksplisit (bukan Column selectionMode): di production build selection column PrimeVue sering tidak ter-render.
+function isProductSelected(product) {
+    return selectedProducts.value.some((p) => p.ulid === product.ulid);
+}
+
+function toggleProduct(product, checked) {
+    if (checked) {
+        if (!isProductSelected(product)) selectedProducts.value = [...selectedProducts.value, product];
+        return;
+    }
+    selectedProducts.value = selectedProducts.value.filter((p) => p.ulid !== product.ulid);
+}
+
+const allProductsSelected = computed(() => products.value.length > 0 && products.value.every((p) => isProductSelected(p)));
+const someProductsSelected = computed(() => products.value.some((p) => isProductSelected(p)));
+
+function toggleSelectAllProducts(checked) {
+    if (checked) {
+        const map = new Map(selectedProducts.value.map((p) => [p.ulid, p]));
+        for (const p of products.value) map.set(p.ulid, p);
+        selectedProducts.value = [...map.values()];
+        return;
+    }
+    const pageIds = new Set(products.value.map((p) => p.ulid));
+    selectedProducts.value = selectedProducts.value.filter((p) => !pageIds.has(p.ulid));
+}
+
 const searchProducts = async () => {
     if (!searchQuery.value?.trim()) return;
     loadingProducts.value = true;
@@ -29,6 +56,7 @@ const searchProducts = async () => {
             per_page: 20
         });
         products.value = res.data?.data?.produks || [];
+        selectedProducts.value = [];
     } catch {
         notify.loadListError('produk');
     } finally {
@@ -338,8 +366,26 @@ const onDownload = async () => {
                 </div>
                 <p v-if="serialEnabled" class="text-xs text-surface-400 mb-3 -mt-1"><i class="pi pi-info-circle mr-1"></i>Produk serial tidak ditampilkan — cetak labelnya via <span class="font-medium">Register Unit Serial → Cetak Label</span>.</p>
 
-                <DataTable v-model:selection="selectedProducts" :value="products" :loading="loadingProducts" dataKey="ulid" scrollable scrollHeight="350px" size="small" :paginator="false">
-                    <Column selectionMode="multiple" headerStyle="width: 3rem" />
+                <DataTable :value="products" :loading="loadingProducts" dataKey="ulid" scrollable scrollHeight="350px" size="small" :paginator="false">
+                    <Column headerStyle="width: 3rem" bodyStyle="width: 3rem">
+                        <template #header>
+                            <Checkbox
+                                :modelValue="allProductsSelected"
+                                :indeterminate="someProductsSelected && !allProductsSelected"
+                                binary
+                                aria-label="Pilih semua produk"
+                                @update:modelValue="toggleSelectAllProducts"
+                            />
+                        </template>
+                        <template #body="{ data }">
+                            <Checkbox
+                                :modelValue="isProductSelected(data)"
+                                binary
+                                :aria-label="`Pilih ${data.kode_produk}`"
+                                @update:modelValue="(v) => toggleProduct(data, v)"
+                            />
+                        </template>
+                    </Column>
                     <Column field="kode_produk" header="Kode" style="min-width: 100px">
                         <template #body="{ data }">
                             <span class="font-medium">{{ data.kode_produk }}</span>
