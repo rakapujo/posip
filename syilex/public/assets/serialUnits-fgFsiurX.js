@@ -1,1 +1,0 @@
-import{e as s}from"./index-BdiLcKCL.js";const i={getAll:(e={})=>s.get("/serial-units",{params:e}),export:(e={})=>s.get("/serial-units/export",{params:e,responseType:"blob"}),available:(e={})=>s.get("/serial-units/available",{params:e}),lookup:(e={})=>s.get("/serial-units/lookup",{params:e}),peekKode:()=>s.get("/serial-units/peek-kode")};export{i as s};

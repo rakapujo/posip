@@ -90,8 +90,10 @@ let recalcTimer = null;
 function recalc() {
     if (recalcTimer) clearTimeout(recalcTimer);
     recalcTimer = setTimeout(async () => {
+        if (!form.value.product_id) return;
         try {
             const res = await serialIntakesApi.calculate({
+                product_id: form.value.product_id,
                 units: form.value.units.map((u) => ({ harga_modal: Number(u.harga_modal) || 0 })),
                 diskon_1_tipe: form.value.diskon_1_tipe,
                 diskon_1_nilai: form.value.diskon_1_nilai,
@@ -114,6 +116,7 @@ function recalc() {
 
 watch(
     () => [
+        form.value.product_id,
         form.value.units,
         form.value.diskon_1_tipe,
         form.value.diskon_1_nilai,

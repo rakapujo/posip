@@ -1,6 +1,6 @@
 # Audit menu — 28 Pembelian → Pembelian Serial (PBS)
 
-> **Status:** audit complete (belum patch; 2026-07-24)  
+> **Status:** audit complete; SI-FE-calc patched 2026-07-30 (Ringkasan `product_id`)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/SerialIntakePage.vue` · `SerialIntakeFormPage.vue` · `api/modules/serialIntakes.js` · `SerialLabelPrintDialog`  
 > - BE: `syilex/app/Http/Controllers/Api/V1/SerialIntakeController.php` · `Actions/SerialIntake/{Create,Update,Approve}SerialIntakeAction.php` · `Concerns/HandlesSerialUnits.php` · `Models/DocSerialIntake.php` · `Models/SerialUnit.php` · trait `SettlesCashPayment`  
@@ -93,6 +93,7 @@ Pembelian **1 produk serial + N unit** per dokumen: **draft → approved (termin
 
 | ID | Sev | Temuan | Bukti | Usulan |
 |----|-----|--------|-------|--------|
+| SI-FE-calc | P0 | **FIXED 2026-07-30.** Ringkasan form stuck 0: `recalc()` POST `/serial-intakes/calculate` tanpa `product_id` → BE 422 ditelan `catch`. | `SerialIntakeFormPage` recalc; BE `calculate` wajib produk | Kirim `product_id` + early-return jika kosong + watch `product_id` |
 | SI-U1 | P1 | Edit form **tanpa loading gate** (PO punya spinner) — race hydrate vs Simpan | Form loading ref unused | ProgressSpinner / disable |
 | SI-U2 | P1 | Cash maxlength FE > BE (100/100/50 vs 50/50/30) — sama PO | Form vs Controller | Samakan |
 | SI-U3 | P1 | `activeFilterCount` `.value` pada reactive — sama PO | Page 33–40 | Fix tanpa `.value` |

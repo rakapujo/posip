@@ -280,10 +280,10 @@ function close() {
                             v-for="(label, idx) in previewLabels"
                             :key="idx"
                             :style="labelStyle"
-                            class="border border-surface-300 dark:border-surface-600 rounded-sm flex flex-col items-stretch justify-between overflow-hidden p-1"
+                            class="border border-surface-300 dark:border-surface-600 rounded-sm flex flex-col items-center text-center justify-between overflow-hidden p-1"
                         >
-                            <div class="truncate font-bold leading-tight">{{ label.kode_produk }} · {{ label.nama_produk }}</div>
-                            <img v-if="label.barcodeImg" :src="label.barcodeImg" alt="barcode" class="max-w-full flex-1 object-contain my-0.5" style="min-height: 0" />
+                            <div class="truncate font-bold leading-tight w-full">{{ label.kode_produk }} · {{ label.nama_produk }}</div>
+                            <img v-if="label.barcodeImg" :src="label.barcodeImg" alt="barcode" class="max-w-full flex-1 object-contain my-0.5 mx-auto" style="min-height: 0" />
                             <div class="truncate text-[0.85em] leading-tight">{{ label.kode_internal }}</div>
                             <div class="truncate text-[0.8em] text-surface-600 leading-tight">SN {{ label.serial_number }}</div>
                             <div class="truncate text-[0.75em] text-surface-500 leading-tight">{{ label.spek }}</div>

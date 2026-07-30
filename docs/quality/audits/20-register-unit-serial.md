@@ -1,6 +1,6 @@
 # Audit menu — 20 Inventory → Register Unit Serial
 
-> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; nota-jual by `source` + checkbox eksplisit 2026-07-28)  
+> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; nota-jual by `source` + checkbox eksplisit 2026-07-28; label preview align center 2026-07-30)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/SerialUnitRegisterPage.vue` · `api/modules/serialUnits.js` · `components/common/SerialLabelPrintDialog.vue` · `SerialUnitPicker.vue` (konsumen `available`)  
 > - BE: `syilex/app/Http/Controllers/Api/V1/SerialUnitController.php` · `Models/SerialUnit.php` · `Models/SerialUnitMovement.php` · `Exports/SerialUnitExport.php`  
@@ -142,6 +142,8 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 ### Cetak Label preview (2026-07-30)
 
 `SerialLabelPrintDialog`: preview halaman 1 = **HTML** + `generateBarcodeDataURL(kode_internal)` (bukan iframe PDF). Print/Download tetap PDF. Watch `labelItems` agar unit async tetap ter-render.
+
+**Align (patched 2026-07-30):** kartu preview `items-center text-center` + `mx-auto` pada img barcode — mirror Print Barcode / PDF (`align: 'center'`). Sebelumnya `items-stretch` (sisa refactor iframe→HTML) → teks/barcode rata kiri di preview.
 | Buka asal PBS | Ya (link) | butuh `serial-intake.view` di target |
 | Buka Nota Jual | Ya — `source=manual` → Penjualan BO `?detail=`; `source=pos` → `struk-online` | manual: `sales.view`; POS: public receipt |
 | Ubah status / edit unit | **Tidak** | — |
