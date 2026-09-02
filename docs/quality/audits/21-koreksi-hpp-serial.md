@@ -85,7 +85,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 | SH-C3 | P1 | **Coverage tipis:** tidak ada tes silent-skip approve, double-approve race, overlap draft, noop StockCard, permission×`view_hpp`, elektronik OFF khusus HPS, duplikat unit, delete non-draft, update product switch. | `SerialHppCorrectionTest` (5 skenario happy+edge) | Tambah kasus di atas. |
 | SH-C4 | P2 | `units` → `->get()` unpaginated seluruh unit tersedia produk. SKU ribuan unit = payload besar. | Controller 110–112 | Paginate / search / virtual. |
 | SH-C5 | P2 | Form `loading` di-set tapi **tidak dipakai** di template (no skeleton/disable). | Form 16–17, 42–46 vs template | `v-if`/`BlockUI`. |
-| SH-C6 | P2 | Produk form `per_page: 200` — produk serial ke-201+ tidak muncul di Select. | Form 51 | Autocomplete server-side (mirror picker lain). |
+| SH-C6 | P2 | **FIXED** — form pakai `ProductUnitPickerDrawer` + `produksApi.getAll({ is_serial: 1, search, per_page: 50 })` (mirror PBS). API `getPerPage` max 100; Select filter client tidak dipakai. | Form picker | — |
 | SH-C7 | P3 | Movement `movement_type: STATUS_CHANGE` dengan from=to status — semantik menyesatkan untuk koreksi cost-only. | Action 65–77 | Tipe `COST_CHANGE` / `ATTR_CHANGE` bila katalog mendukung. |
 
 ### Cross-modul

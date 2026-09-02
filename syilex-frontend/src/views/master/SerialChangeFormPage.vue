@@ -4,8 +4,11 @@ import { useRouter, useRoute } from 'vue-router';
 import { onMounted, ref, computed } from 'vue';
 import { useFormatters } from '@/composables/useFormatters';
 import { useNotification } from '@/composables/useNotification';
+import { useConfirm } from 'primevue/useconfirm';
+import ProductUnitPickerDrawer from '@/components/common/ProductUnitPickerDrawer.vue';
 
 const notify = useNotification();
+const confirm = useConfirm();
 const router = useRouter();
 const route = useRoute();
 const isEdit = computed(() => !!route.params.ulid);
@@ -13,7 +16,9 @@ const pageTitle = computed(() => (isEdit.value ? 'Edit Perubahan Data Serial' : 
 const { shouldUppercase, getPrimeDateFormatShort, toDateTimeString, now, parseDateTime, getLocale, getCurrencyMinFractionDigits, getCurrencyMaxFractionDigits, getPercentMinFractionDigits, getPercentMaxFractionDigits, currencySettings } =
     useFormatters();
 
-const produkOptions = ref([]);
+const selectedProduct = ref(null);
+const pickerQuery = ref('');
+const pickerVisible = ref(false);
 const loading = ref(false);
 const saving = ref(false);
 const loadingUnits = ref(false);
@@ -34,20 +39,63 @@ const checkedCount = computed(() => rows.value.filter((r) => r._checked).length)
 
 onMounted(async () => {
     loading.value = true;
-    await loadProduk();
     if (isEdit.value) await loadChange();
     loading.value = false;
 });
 
-async function loadProduk() {
-    try {
-        const res = await produksApi.getAll({ is_serial: 1, status: 'active', per_page: 200, sort_field: 'nama_produk', sort_order: 'asc' });
-        if (res.data.success) {
-            produkOptions.value = res.data.data.produks.map((p) => ({ label: `${p.kode_produk} — ${p.nama_produk}`, value: p.ulid }));
-        }
-    } catch (error) {
-        notify.apiError(error, 'Gagal memuat produk serial');
+function openProductPicker() {
+    if (isEdit.value) return;
+    if (selectedProduct.value && !(pickerQuery.value || '').trim()) {
+        pickerQuery.value = selectedProduct.value.kode_produk || selectedProduct.value.nama_produk || '';
     }
+    pickerVisible.value = true;
+}
+
+async function fetchPickerProducts(q) {
+    const res = await produksApi.getAll({
+        is_serial: 1,
+        status: 'active',
+        search: q,
+        per_page: 50,
+        sort_field: 'nama_produk',
+        sort_order: 'asc'
+    });
+    if (!res.data.success) return [];
+    return (res.data.data.produks || []).map((p) => ({
+        ...p,
+        id: p.id ?? p.ulid,
+        is_serial: true
+    }));
+}
+
+function applyPickerSelect({ product }) {
+    const ulid = product.ulid || product.id;
+    if (!ulid || isEdit.value) return;
+
+    const apply = () => {
+        selectedProduct.value = {
+            ulid,
+            kode_produk: product.kode_produk,
+            nama_produk: product.nama_produk,
+            is_serial: true
+        };
+        form.value.product_id = ulid;
+        if (errors.value.product_id) delete errors.value.product_id;
+        loadUnits(ulid);
+    };
+
+    if (form.value.product_id && form.value.product_id !== ulid && checkedCount.value > 0) {
+        confirm.require({
+            message: 'Ganti produk? Centangan dan isian unit yang sudah dipilih akan diganti daftar unit produk baru.',
+            header: 'Ganti Produk Serial',
+            icon: 'pi pi-exclamation-triangle',
+            acceptLabel: 'Ganti',
+            rejectLabel: 'Batal',
+            accept: apply
+        });
+        return;
+    }
+    apply();
 }
 
 function rowFromUnit(u, checked = false) {
@@ -91,11 +139,6 @@ async function loadUnits(productUlid, preset = null) {
     }
 }
 
-async function onProductChange() {
-    if (isEdit.value) return; // produk immutable saat edit
-    await loadUnits(form.value.product_id);
-}
-
 async function loadChange() {
     try {
         const res = await serialChangesApi.get(route.params.ulid);
@@ -106,7 +149,16 @@ async function loadChange() {
             router.push({ name: 'master-serial-change' });
             return;
         }
-        form.value = { product_id: d.product?.ulid ?? null, tanggal: d.tanggal ? parseDateTime(d.tanggal) : now(), notes: d.notes || '' };
+        const p = d.product;
+        if (p) {
+            selectedProduct.value = {
+                ulid: p.ulid,
+                kode_produk: p.kode_produk,
+                nama_produk: p.nama_produk,
+                is_serial: true
+            };
+        }
+        form.value = { product_id: p?.ulid ?? null, tanggal: d.tanggal ? parseDateTime(d.tanggal) : now(), notes: d.notes || '' };
 
         await loadUnits(form.value.product_id);
         (d.details || []).forEach((det) => {
@@ -220,18 +272,18 @@ function cancel() {
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div>
                 <label class="block font-medium mb-1">Produk Serial <span class="text-red-500">*</span></label>
-                <Select
-                    v-model="form.product_id"
-                    :options="produkOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                    filter
-                    :disabled="isEdit"
-                    placeholder="Pilih produk serial"
-                    class="w-full"
-                    :class="{ 'p-invalid': errors.product_id }"
-                    @change="onProductChange"
-                />
+                <div v-if="selectedProduct" class="flex items-center gap-2 p-2 border border-surface-200 dark:border-surface-700 rounded-lg">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium truncate">{{ selectedProduct.nama_produk }}</div>
+                        <div class="text-xs text-surface-500">{{ selectedProduct.kode_produk }}</div>
+                    </div>
+                    <Button v-if="!isEdit" icon="pi pi-search" size="small" outlined @click="openProductPicker" aria-label="Ganti produk" />
+                </div>
+                <div v-else class="flex gap-2">
+                    <InputText v-model="pickerQuery" class="flex-1" placeholder="Ketik lalu Enter / cari…" :class="{ 'p-invalid': errors.product_id }" @keydown.enter.prevent="openProductPicker" />
+                    <Button icon="pi pi-search" @click="openProductPicker" aria-label="Cari produk serial" />
+                </div>
+                <small v-if="errors.product_id" class="text-red-500">{{ errors.product_id }}</small>
             </div>
             <div>
                 <label class="block font-medium mb-1">Tanggal <span class="text-red-500">*</span></label>
@@ -355,5 +407,18 @@ function cancel() {
             <Button label="Batal" severity="secondary" outlined @click="cancel" :disabled="saving" />
             <Button label="Simpan" icon="pi pi-save" @click="save" :loading="saving" />
         </div>
+
+        <ProductUnitPickerDrawer
+            v-model:visible="pickerVisible"
+            :query="pickerQuery"
+            title="Pilih Produk Serial"
+            :fetch-products="fetchPickerProducts"
+            :expand-units="false"
+            :serial-only="true"
+            :show-konversi="false"
+            :show-price="false"
+            mode-hint="Hanya produk serial aktif. Ketik kode/nama/barcode — hasil dari server, bukan 100 produk pertama."
+            @select="applyPickerSelect"
+        />
     </div>
 </template>

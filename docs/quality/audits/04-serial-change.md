@@ -11,6 +11,7 @@
 |----|-----|---------|--------|
 | SC-F1 | P0 | FE tidak blok SN duplikat antar baris (domain izinkan kembar/swap) | FIXED |
 | SC-F2 | P0 | Rematch edit by **ulid**, bukan `serial_number` | FIXED |
+| SC-U1 | P2 | Form add: `Select` filter client + `per_page: 200` cap API 100 — produk serial di luar 100 nama pertama tidak bisa dipilih | FIXED (`ProductUnitPickerDrawer` + `search`) |
 
 ### Catatan SC-F2 (docs only)
 
