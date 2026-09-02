@@ -1,6 +1,6 @@
 # Audit menu — 33 Penjualan → Penjualan (Sales BO)
 
-> **Status:** patched Wave A P0 (2026-07-25); walk-in BO exclude 2026-07-25; P1 residual di plan  
+> **Status:** patched Wave A P0 (2026-07-25); walk-in BO exclude 2026-07-25; P1 residual di plan; list search customer BO 2026-08-14  
 > **Review:** [00-penjualan-plan-review.md](00-penjualan-plan-review.md)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/penjualan/SalesPage.vue` · `SalesFormPage.vue` · `api/modules/sales.js` · `composables/useSalesInvoicePdf.js` · `composables/useTransactionList.js`  
@@ -32,6 +32,8 @@ Dokumen **penjualan backoffice** (`source=manual`): **draft → completed → op
 | AppMenu | `sales.view` | |
 
 **CRUD UI:** list search/filter/sort/paginate; detail dialog; PDF A5; create/edit draft; approve; void. **Tidak:** Excel list, lock, edit completed, deep-link `?ulid=`, CTA piutang/pembayaran/deposit dari detail.
+
+**Patched 2026-08-14:** list search BO (`GET /sales`) match nama/kode customer via `DocSales::scopeSearchWithCustomer`. `scopeSearch` (nomor+notes) tetap untuk POS history/retur.
 
 ---
 

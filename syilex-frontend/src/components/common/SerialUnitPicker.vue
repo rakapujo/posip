@@ -101,6 +101,26 @@ function onScan() {
     scanInput.value = '';
 }
 
+function isUnitSelected(unit) {
+    return selected.value.some((u) => u.ulid === unit.ulid);
+}
+
+const allSelected = computed(() => units.value.length > 0 && units.value.every((u) => isUnitSelected(u)));
+const someSelected = computed(() => units.value.some((u) => isUnitSelected(u)));
+
+function toggleUnit(unit, checked) {
+    if (checked) {
+        if (!isUnitSelected(unit)) onSelectionUpdate([...selected.value, unit]);
+        return;
+    }
+    onSelectionUpdate(selected.value.filter((u) => u.ulid !== unit.ulid));
+}
+
+function toggleSelectAll(checked) {
+    if (checked) selectAll();
+    else clearAll();
+}
+
 function selectAll() {
     onSelectionUpdate([...units.value]);
 }
@@ -180,19 +200,16 @@ watch(
         </div>
         <small v-if="scanFeedback" :class="scanFeedback.ok ? 'text-green-600' : 'text-red-500'" class="block mb-2 text-xs">{{ scanFeedback.msg }}</small>
 
-        <DataTable
-            :value="units"
-            :selection="selected"
-            dataKey="ulid"
-            :loading="loading"
-            size="small"
-            scrollable
-            scrollHeight="260px"
-            stripedRows
-            class="text-sm"
-            @update:selection="onSelectionUpdate"
-        >
-            <Column selectionMode="multiple" headerStyle="width: 3rem" />
+        <DataTable :value="units" dataKey="ulid" :loading="loading" size="small" scrollable scrollHeight="260px" stripedRows class="text-sm">
+            <!-- Checkbox eksplisit: Column selectionMode sering hilang di production (sama Print Barcode / Register). -->
+            <Column headerStyle="width: 3rem" bodyStyle="width: 3rem">
+                <template #header>
+                    <Checkbox :modelValue="allSelected" :indeterminate="someSelected && !allSelected" binary aria-label="Pilih semua unit" @update:modelValue="toggleSelectAll" />
+                </template>
+                <template #body="{ data }">
+                    <Checkbox :modelValue="isUnitSelected(data)" binary :aria-label="`Pilih ${data.kode_internal || data.serial_number}`" @update:modelValue="(v) => toggleUnit(data, v)" />
+                </template>
+            </Column>
             <Column field="kode_internal" header="Kode Internal">
                 <template #body="{ data }">
                     <span class="font-mono font-medium">{{ data.kode_internal || '—' }}</span>

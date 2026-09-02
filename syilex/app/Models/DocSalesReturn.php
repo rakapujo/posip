@@ -178,7 +178,11 @@ class DocSalesReturn extends Model
     public function scopeSearch($query, string $search)
     {
         return $query->where(function ($q) use ($search) {
-            $q->where('nomor_dokumen', 'like', "%{$search}%");
+            $q->where('nomor_dokumen', 'like', "%{$search}%")
+                ->orWhereHas('customer', function ($cq) use ($search) {
+                    $cq->where('nama', 'like', "%{$search}%")
+                        ->orWhere('kode_customer', 'like', "%{$search}%");
+                });
         });
     }
 

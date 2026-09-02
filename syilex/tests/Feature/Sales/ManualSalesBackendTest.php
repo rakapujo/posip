@@ -136,6 +136,23 @@ class ManualSalesBackendTest extends TestCase
             ->assertJsonPath('data.items.0.ulid', $manual->ulid);
     }
 
+    public function test_index_search_matches_customer_name(): void
+    {
+        Permission::findOrCreate('sales.view', 'web');
+        $this->user->givePermissionTo('sales.view');
+        Sanctum::actingAs($this->user);
+        $sale = (new CreateManualSalesAction)->execute($this->data());
+
+        $this->getJson('/api/v1/sales?search='.urlencode('Customer BO'))
+            ->assertOk()
+            ->assertJsonPath('data.pagination.total', 1)
+            ->assertJsonPath('data.items.0.ulid', $sale->ulid);
+
+        $this->getJson('/api/v1/sales?search=ZZZ-NOPE')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.total', 0);
+    }
+
     public function test_approval_revalidates_saleable_warehouse(): void
     {
         $sale = (new CreateManualSalesAction)->execute($this->data());

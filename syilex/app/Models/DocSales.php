@@ -227,6 +227,18 @@ class DocSales extends Model
         });
     }
 
+    /** List BO only — POS history/retur tetap pakai scopeSearch (nomor + notes). */
+    public function scopeSearchWithCustomer($query, string $search)
+    {
+        return $query->where(function ($q) use ($search) {
+            $q->search($search)
+                ->orWhereHas('customer', function ($cq) use ($search) {
+                    $cq->where('nama', 'like', "%{$search}%")
+                        ->orWhere('kode_customer', 'like', "%{$search}%");
+                });
+        });
+    }
+
     public function scopeByShift($query, int $shiftId)
     {
         return $query->where('shift_id', $shiftId);

@@ -281,6 +281,31 @@ class BackofficeSalesReturnTest extends TestCase
             ->assertJsonPath('data.items.0.ulid', $manualSale->ulid);
     }
 
+    public function test_index_and_returnable_sales_search_match_customer_name(): void
+    {
+        foreach (['retur-jual.view', 'retur-jual.create'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+        $this->user->givePermissionTo(['retur-jual.view', 'retur-jual.create']);
+        Sanctum::actingAs($this->user);
+
+        $sale = $this->approvedSale();
+        $this->draftReturn($sale, 1);
+
+        $this->getJson('/api/v1/sales-returns?search='.urlencode('Customer Retur'))
+            ->assertOk()
+            ->assertJsonPath('data.pagination.total', 1);
+
+        $this->getJson('/api/v1/sales-returns/returnable-sales?search='.urlencode('Customer Retur'))
+            ->assertOk()
+            ->assertJsonCount(1, 'data.items')
+            ->assertJsonPath('data.items.0.ulid', $sale->ulid);
+
+        $this->getJson('/api/v1/sales-returns?search=ZZZ-NOPE')
+            ->assertOk()
+            ->assertJsonPath('data.pagination.total', 0);
+    }
+
     public function test_free_mode_store_rejects_duplicate_product_and_unit(): void
     {
         foreach (['retur-jual.create'] as $permission) {

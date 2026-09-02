@@ -398,7 +398,7 @@ onMounted(async () => {
             tableStyle="min-width: 75rem"
         >
             <template #header>
-                <DataTableHeader v-model="searchQuery" title="Register Unit Serial" placeholder="Cari kode internal / nomor seri..." @search="doSearch" @clear="clearSearch">
+                <DataTableHeader v-model="searchQuery" title="Register Unit Serial" placeholder="Cari KI / SN / kode / nama produk..." @search="doSearch" @clear="clearSearch">
                     <template #extra>
                         <div class="flex gap-2">
                             <Button icon="pi pi-file-excel" severity="success" outlined :loading="exportingExcel" @click="exportExcel" v-tooltip.top="'Export Excel'" aria-label="Export Excel" />

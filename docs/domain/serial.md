@@ -302,7 +302,7 @@ Produk **retail tak berubah**; produk serial mendapat dimensi SN (kolom `serial_
 - Test: `SerialSalesCheckoutTest`, `SerialSalesReturnVoidTest`.
 
 ### ✅ Selesai — Scan Barcode (UX, tak ubah stok/HPP)
-- **Scan unit** di `SerialUnitPicker.vue` (Transfer/Adjustment/Opname/Retur): scan/ketik **kode internal** (utama) atau nomor seri → tandai unit (cocok client-side ke unit yang sudah dimuat, tanpa endpoint). Tombol **Centang semua** / **Kosongkan** (mis. Opname: kosongkan lalu scan yang hadir).
+- **Scan unit** di `SerialUnitPicker.vue` (Transfer/Adjustment/Opname/Retur): scan/ketik **kode internal** (utama) atau nomor seri → tandai unit (cocok client-side ke unit yang sudah dimuat, tanpa endpoint). Tombol **Centang semua** / **Kosongkan** (mis. Opname: kosongkan lalu scan yang hadir). Checklist per baris = **Checkbox eksplisit** (bukan `Column selectionMode` — hilang di production, sama Print Barcode).
 - **Scan barcode produk** di Adjustment & Stock Opname (mode partial): reuse `getProducts` (cocok exact `barcode`, fallback hasil tunggal). Adjustment → tambah baris / qty+1; Opname → hitung fisik (+1 `qty_physical` per scan). Produk serial → tambah baris lalu arahkan scan SN di pemilih unit.
 
 ### ✅ Selesai — Biaya Kirim + Biaya Lain pada Transfer (opsional masuk HPP)

@@ -301,7 +301,7 @@ class BackofficeSalesReturnController extends BaseApiController
             ])
             ->whereRaw("{$bought} > {$returned}");
         if ($request->filled('search')) {
-            $query->search((string) $request->input('search'));
+            $query->searchWithCustomer((string) $request->input('search'));
         }
         if ($request->filled('customer_id')) {
             $query->where('customer_id', (int) $request->input('customer_id'));

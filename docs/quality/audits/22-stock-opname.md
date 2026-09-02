@@ -1,6 +1,6 @@
 # Audit menu — 22 Inventory → Stock Opname
 
-> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24)  
+> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; SerialUnitPicker checkbox eksplisit 2026-09-02)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/StockOpnamePage.vue` · `StockOpnameFormPage.vue` · `api/modules/opnames.js` · nested `SerialUnitPicker`  
 > - BE: `syilex/app/Http/Controllers/Api/V1/StockOpnameController.php` · `Actions/StockOpname/{Create,Update,Approve}StockOpnameAction.php` · `Models/DocStockOpname*`  
@@ -125,7 +125,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 | ID | Sev | Temuan | Bukti | Usulan |
 |----|-----|--------|-------|--------|
 | SO-U1 | P0 | = **SO-B4** — Tag “N hadir” bisa 0 sementara user belum buka/tunggu picker; Simpan tetap aktif. | Form 860–862, 950 | Disable save / warning serial unhydrated. |
-| SO-U2 | P1 | Reuse bagus: `useTransactionList`, `DetailDialog`, `ListFiltersSheet`, `RowActionButtons`, `useExportPdf`, `SerialUnitPicker`. | Page imports | — |
+| SO-UI-cb | P1 | **FIXED 2026-09-02.** Checklist SN hilang di production — `SerialUnitPicker` `selectionMode="multiple"`. | `SerialUnitPicker.vue` | Checkbox eksplisit (sama Adj) |
 | SO-U3 | P2 | Tidak ada Excel export (hanya PDF client) — inkonsisten Stok/Register. | API module | Optional Excel. |
 | SO-U4 | P2 | Detail adj link teks saja — tidak `router-link` ke Adjustment. | Page 524–528 | Deep-link. |
 | SO-U5 | P2 | Filter status **Cancelled** menyesatkan (SO-B8). | Page 90–94 | Hapus opsi. |

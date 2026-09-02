@@ -1,6 +1,6 @@
 # Audit menu — 24 Inventory → Transfer
 
-> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24)  
+> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; SerialUnitPicker checkbox eksplisit 2026-09-02)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/TransferPage.vue` · `TransferFormPage.vue` · `api/modules/transfers.js` · nested `SerialUnitPicker`  
 > - BE: `syilex/app/Http/Controllers/Api/V1/TransferController.php` · `Actions/Transfer/{Create,Update,Approve}TransferAction.php` · `Models/DocTransfer*`  
@@ -125,7 +125,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 
 | ID | Sev | Temuan | Bukti | Usulan |
 |----|-----|--------|-------|--------|
-| TR-U1 | P1 | Reuse bagus: `useTransactionList`, `DetailDialog`, `ListFiltersSheet`, `RowActionButtons`, `useExportPdf`, `SerialUnitPicker`, gate header `canAddLines`. | Page/Form imports | — |
+| TR-UI-cb | P1 | **FIXED 2026-09-02.** Checklist unit serial = `SerialUnitPicker` `selectionMode` (sama Adj/Opname). | `SerialUnitPicker.vue` | Checkbox eksplisit |
 | TR-U2 | P1 | **Tab Pattern:** `loadPatternSummary` hanya saat tab change **dan** `items.length === 0`. Ganti filter tanggal (atau WH) **tidak** reload pattern; filter WH list **diabaikan** API pattern (hanya date). Operator bisa lihat angka stale/salah konteks. | Page 38–62, 58–62; Controller 406–412 | Reload on filter change; mirror WH filter atau hide WH filters di tab Pattern. |
 | TR-U3 | P2 | PDF **tidak** sertakan biaya / `masuk_hpp` / alokasi baris — detail dialog punya. | Page 161–200 vs 400–405 | Samakan info PDF. |
 | TR-U4 | P2 | Tidak ada Excel export (hanya PDF client) — inkonsisten Stok/Register. | API module | Optional Excel. |

@@ -341,6 +341,20 @@ class SerialUnitRegisterTest extends TestCase
         );
     }
     #[Test]
+    public function search_matches_product_kode_or_nama()
+    {
+        $this->approvedIntakeWithUnits([['serial_number' => 'IMEI-XXXX-999', 'harga_modal' => 1000000]]);
+        $m1 = $this->serialProduct('LAP_M1', 'MacBook Air M1');
+        $orig = $this->produk;
+        $this->produk = $m1;
+        $this->approvedIntakeWithUnits([['serial_number' => 'IMEI-YYYY-888', 'harga_modal' => 1000000]]);
+        $this->produk = $orig;
+
+        $res = $this->getJson('/api/v1/serial-units?search=m1')->assertOk();
+        $res->assertJsonPath('data.pagination.total', 1);
+        $this->assertSame('IMEI-YYYY-888', $res->json('data.items.0.serial_number'));
+    }
+    #[Test]
     public function search_matches_kode_internal()
     {
         $this->approvedIntakeWithUnits([['serial_number' => 'SN-K', 'harga_modal' => 1000000]]);

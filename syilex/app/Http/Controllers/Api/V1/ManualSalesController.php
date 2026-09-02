@@ -39,7 +39,7 @@ class ManualSalesController extends BaseApiController
             ])
             ->withCount('details');
         if ($request->filled('search')) {
-            $query->search((string) $request->input('search'));
+            $query->searchWithCustomer((string) $request->input('search'));
         }
         foreach (['status', 'customer_id', 'warehouse_id'] as $field) {
             if ($request->filled($field)) {

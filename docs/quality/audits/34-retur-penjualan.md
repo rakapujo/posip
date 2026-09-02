@@ -1,6 +1,6 @@
 # Audit menu — 34 Penjualan → Retur Penjualan
 
-> **Status:** patched Wave A P0 (2026-07-25); P1 residual di plan  
+> **Status:** patched Wave A P0 (2026-07-25); P1 residual di plan; list search customer 2026-08-14  
 > **Review:** [00-penjualan-plan-review.md](00-penjualan-plan-review.md)  
 > **SSoT:** `BackofficeSalesReturnController` · `ProcessSalesReturnAction` · `SalesReturnPage` / `SalesReturnFormPage`  
 > **Jika konflik:** ikuti kode.
@@ -24,7 +24,9 @@ POS struk jual (ESC/PDF) + StrukOnline menampilkan KI/SN di riwayat retur; `Sale
 
 `SalesReturnFormPage` `applyPickerSelect` sekarang replace `details[index]` (bukan mutate object lama) supaya input inline sinkron saat pilih produk/satuan dari picker.
 
-## Patched — returnable products search terpadu (2026-07-29)
+## Patched — list search customer (2026-08-14)
+
+Index BO `DocSalesReturn::scopeSearch` + `returnable-sales` (`searchWithCustomer`) match nama/kode customer. POS retur picker tetap `DocSales::scopeSearch` (nomor + notes).
 
 - Tambah endpoint `sales-returns/returnable-products` untuk mode retur bebas.
 - Scope hasil dibatasi ke produk yang benar-benar pernah terjual (customer + warehouse + source manual + masih returnable).

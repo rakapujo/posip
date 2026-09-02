@@ -1,6 +1,6 @@
 # Audit menu — 20 Inventory → Register Unit Serial
 
-> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; nota-jual by `source` + checkbox eksplisit 2026-07-28; label preview align center 2026-07-30)  
+> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; nota-jual by `source` + checkbox eksplisit 2026-07-28; label preview align center 2026-07-30; search produk 2026-08-14)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/SerialUnitRegisterPage.vue` · `api/modules/serialUnits.js` · `components/common/SerialLabelPrintDialog.vue` · `SerialUnitPicker.vue` (konsumen `available`)  
 > - BE: `syilex/app/Http/Controllers/Api/V1/SerialUnitController.php` · `Models/SerialUnit.php` · `Models/SerialUnitMovement.php` · `Exports/SerialUnitExport.php`  
@@ -94,7 +94,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 
 | ID | Sev | Temuan | Bukti | Usulan |
 |----|-----|--------|-------|--------|
-| SU-U1 | P1 | = **SU-B1** silent truncate PDF/print. | FE 161–203, 228–249 | Warning + total vs fetched. |
+| SU-FE-search | P0 | **FIXED 2026-08-14.** Header search hanya SN/`kode_internal` — ketik kode/nama produk (mis. `m1`) cuma unit yang kebetulan match SN/KI. | `SerialUnit::scopeSearch`; tes `search_matches_product_kode_or_nama` | `orWhereHas('product', kode/barcode/nama)` — list + Excel |
 | SU-U2 | P2 | AutoComplete produk **tanpa `forceSelection`** — teks bebas bisa tersisa di model; `selectedProduct?.ulid` falsy → filter produk diam-diam tidak aktif. | FE 273–295 | `forceSelection` + clear on blur. |
 | SU-U3 | P2 | Kolom Status / Terjual / Gudang **tidak sortable** di FE meski BE whitelist `status`, `sold_at`. | FE 380–451 vs Controller 76 | Tambah `sortable` + `field`. |
 | SU-U4 | P2 | `statusSeverity`: hanya tersedia=success, terjual=info; rusak/hilang/retur/pending = secondary seragam. | FE 155–158 | Map severity per status. |

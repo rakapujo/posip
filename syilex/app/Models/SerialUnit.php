@@ -171,7 +171,12 @@ class SerialUnit extends Model
     {
         return $query->where(function ($q) use ($search) {
             $q->where('serial_number', 'like', "%{$search}%")
-                ->orWhere('kode_internal', 'like', "%{$search}%");
+                ->orWhere('kode_internal', 'like', "%{$search}%")
+                ->orWhereHas('product', function ($pq) use ($search) {
+                    $pq->where('kode_produk', 'like', "%{$search}%")
+                        ->orWhere('barcode', 'like', "%{$search}%")
+                        ->orWhere('nama_produk', 'like', "%{$search}%");
+                });
         });
     }
 

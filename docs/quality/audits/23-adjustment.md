@@ -1,6 +1,6 @@
 # Audit menu — 23 Inventory → Adjustment
 
-> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24)  
+> **Status:** patched (scope P0+P1 + review deltas; 2026-07-24; SerialUnitPicker checkbox eksplisit 2026-09-02)  
 > **SSoT kode:**  
 > - FE: `syilex-frontend/src/views/inventory/AdjustmentPage.vue` · `AdjustmentFormPage.vue` · `api/modules/adjustments.js` · nested `SerialUnitPicker`  
 > - BE: `syilex/app/Http/Controllers/Api/V1/AdjustmentController.php` · `Actions/Adjustment/{Create,Update,Approve}AdjustmentAction.php` · `Models/DocAdjustment*`  
@@ -119,7 +119,7 @@ Severity: **P0** harus / keputusan · **P1** kuat · **P2** perbaikan · **P3** 
 
 | ID | Sev | Temuan | Bukti | Usulan |
 |----|-----|--------|-------|--------|
-| AD-U1 | P1 | Reuse bagus: `useTransactionList`, `DetailDialog`, `ListFiltersSheet`, `RowActionButtons`, `useExportPdf`, `SerialUnitPicker`, scan barcode. | Page/Form imports | — |
+| AD-UI-cb | P1 | **FIXED 2026-09-02.** Checklist unit serial hilang di production: `SerialUnitPicker` pakai `Column selectionMode="multiple"` (sama Print Barcode). | `SerialUnitPicker.vue` | Checkbox eksplisit (mirror Register) — 1 komponen, Adj/Opname/Transfer/Retur/Sales |
 | AD-U2 | P1 | **Tidak ada kolom/badge Source** (Manual / Opname) di list & detail — = AD-X5. | Page columns | Tag + link ke Opname. |
 | AD-U3 | P2 | Tidak ada Excel export (hanya PDF client) — inkonsisten Stok/Register. | API module | Optional Excel. |
 | AD-U4 | P2 | Filter status hanya draft/approved (default composable) — **baik** (enum tidak punya cancelled). Tidak ada filter source/jenis. | `useTransactionList` 68–69 | Filter source. |
