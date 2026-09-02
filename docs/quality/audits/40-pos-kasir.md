@@ -1,9 +1,11 @@
 # Audit menu — 40 POS → Kasir / Run Terminal
 
-> **Status:** patched Wave A P0/P1 + Wave R + Wave R2 + Part D email + Wave B (2026-07-26) + payment dialog mobile chip-grid (2026-07-30)  
+> **Status:** patched Wave A P0/P1 + Wave R + Wave R2 + Part D email + Wave B (2026-07-26) + payment dialog mobile chip-grid (2026-07-30) + money max 15,2 (2026-09-02)  
 > **SSoT kode:** `PosController` · `CheckoutSalesAction` · `VoidSalesAction` · `ProcessSalesReturnAction` · `PosCheckoutRules` · `CashTransactionController` · `SalesReturnController` (prefix `pos/`) · `PosKasirPage` · `usePosCart` · routes `api.php` `pos/*`  
 > **Cross:** [38-pos-shift.md](38-pos-shift.md) · [39-pos-terminal.md](39-pos-terminal.md) · [00-penjualan-plan-review.md](00-penjualan-plan-review.md) Q5  
 > **Jika konflik:** ikuti kode.
+
+**Cross 2026-09-02:** nominal disc/biaya POS `max` selaras `decimal(15,2)` (`9999999999999`), bukan `9999999` (7 digit). Lihat `PosController::MONEY_MAX`.
 
 ## Ringkas (post-patch)
 
@@ -31,6 +33,7 @@ Idempotency **wajib** di checkout; `qty_base`/`konversi`/`harga_satuan` di-rebui
 | Wave R2 | Q2=C Katalog\|Cart; Q3=B Drawer Lainnya; header wrap; cart card `<md`; sticky clearance di scroll; tabs 25% `<md` only |
 | Email HTML | Blade `emails/pos-receipt` (+text) tone Opsi A; `TerminalMailer` html+text SMTP/Resend |
 | Part D | `POST .../email-receipt` + tombol Email; body HTML Opsi A (blade) + plain-text + PDF |
+| Money max (2026-09-02) | Disc inline/nota, biaya, `biaya_tambahan`, `payments.nominal` → `MONEY_MAX` = kolom `decimal(15,2)` |
 
 ## Sisa (opsional / deferred)
 

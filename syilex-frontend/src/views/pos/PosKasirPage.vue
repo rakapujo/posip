@@ -90,6 +90,7 @@ const {
     roundSales,
     getCurrencyMinFractionDigits,
     getCurrencyMaxFractionDigits,
+    getCurrencyInputMax,
     getQtyMinFractionDigits,
     getQtyMaxFractionDigits,
     getPercentMinFractionDigits,
@@ -3559,7 +3560,7 @@ const clearAll = () => {
                     v-select-on-focus
                     v-model="discountForm.nilai"
                     :min="0"
-                    :max="discountForm.tipe === 'percent' ? 100 : undefined"
+                    :max="discountForm.tipe === 'percent' ? 100 : getCurrencyInputMax"
                     :locale="getLocale"
                     :prefix="discountForm.tipe === 'nominal' && currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
                     :suffix="discountForm.tipe === 'percent' ? '%' : discountForm.tipe === 'nominal' && currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
@@ -3594,7 +3595,7 @@ const clearAll = () => {
                         v-select-on-focus
                         v-model="biayaForm.kirim_nilai"
                         :min="0"
-                        :max="biayaForm.kirim_tipe === 'percent' ? 100 : undefined"
+                        :max="biayaForm.kirim_tipe === 'percent' ? 100 : getCurrencyInputMax"
                         :locale="getLocale"
                         :prefix="biayaForm.kirim_tipe === 'nominal' && currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
                         :suffix="biayaForm.kirim_tipe === 'percent' ? '%' : biayaForm.kirim_tipe === 'nominal' && currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
@@ -3620,7 +3621,7 @@ const clearAll = () => {
                         v-select-on-focus
                         v-model="biayaForm.lain_nilai"
                         :min="0"
-                        :max="biayaForm.lain_tipe === 'percent' ? 100 : undefined"
+                        :max="biayaForm.lain_tipe === 'percent' ? 100 : getCurrencyInputMax"
                         :locale="getLocale"
                         :prefix="biayaForm.lain_tipe === 'nominal' && currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
                         :suffix="biayaForm.lain_tipe === 'percent' ? '%' : biayaForm.lain_tipe === 'nominal' && currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"
@@ -3661,7 +3662,7 @@ const clearAll = () => {
                     v-select-on-focus
                     v-model="lineDiscountValue"
                     :min="0"
-                    :max="lineDiscountTipe === 'percent' ? 100 : undefined"
+                    :max="lineDiscountTipe === 'percent' ? 100 : getCurrencyInputMax"
                     :locale="getLocale"
                     :prefix="lineDiscountTipe === 'nominal' && currencySettings.position === 'before' ? currencySettings.symbol + ' ' : ''"
                     :suffix="lineDiscountTipe === 'percent' ? '%' : lineDiscountTipe === 'nominal' && currencySettings.position === 'after' ? ' ' + currencySettings.symbol : ''"

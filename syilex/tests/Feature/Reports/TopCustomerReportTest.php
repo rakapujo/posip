@@ -217,7 +217,8 @@ class TopCustomerReportTest extends TestCase
         $this->makeSale($c, 200_000, tanggal: $newTanggal);
 
         $response = $this->actingAs($this->viewer)
-            ->getJson('/api/v1/reports/customer/top')
+            ->getJson('/api/v1/reports/customer/top?date_from=' . now()->subDays(30)->toDateString()
+                . '&date_to=' . now()->toDateString())
             ->assertOk();
 
         $items = $response->json('data.items');

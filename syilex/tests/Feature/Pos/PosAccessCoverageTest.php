@@ -114,6 +114,21 @@ class PosAccessCoverageTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_calculate_accepts_nominal_discount_above_7_digits(): void
+    {
+        $user = User::factory()->create();
+        $user->givePermissionTo('pos.access');
+
+        $this->actingAs($user)
+            ->postJson('/api/v1/pos/calculate', [
+                'subtotal' => 20000000,
+                'discounts' => [
+                    ['tipe' => 'nominal', 'nilai' => 10000000],
+                ],
+            ])
+            ->assertOk();
+    }
+
     public function test_shifts_index_forbidden_without_terminal_view(): void
     {
         $this->actingAs($this->viewer)

@@ -29,6 +29,9 @@ class PosController extends BaseApiController
 {
     use AttachesSerialUnits;
 
+    /** decimal(15,2) integer cap (~10 triliun). Not 9999999 (7 digit). */
+    private const MONEY_MAX = '9999999999999';
+
     /**
      * Get active terminal for the current user.
      */
@@ -278,15 +281,15 @@ class PosController extends BaseApiController
             'subtotal' => 'required|numeric|min:0',
             'discounts' => 'nullable|array|max:3',
             'discounts.*.tipe' => 'required|in:percent,nominal,none',
-            'discounts.*.nilai' => 'nullable|numeric|min:0|max:9999999',
+            'discounts.*.nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'biaya_kirim' => 'nullable|array',
             'biaya_kirim.tipe' => 'nullable|in:percent,nominal,none',
-            'biaya_kirim.nilai' => 'nullable|numeric|min:0|max:9999999',
+            'biaya_kirim.nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'biaya_lain' => 'nullable|array',
             'biaya_lain.tipe' => 'nullable|in:percent,nominal,none',
-            'biaya_lain.nilai' => 'nullable|numeric|min:0|max:9999999',
+            'biaya_lain.nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'payments' => 'nullable|array',
-            'payments.*.biaya_tambahan' => 'nullable|numeric|min:0|max:9999999',
+            'payments.*.biaya_tambahan' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
         ]);
 
         $totals = SalesCalculationService::calculateTotals(
@@ -316,7 +319,7 @@ class PosController extends BaseApiController
             'customer_id' => 'required|exists:master_customer,id',
             'discounts' => 'nullable|array|max:3',
             'discounts.*.tipe' => 'required|in:percent,nominal,none',
-            'discounts.*.nilai' => 'nullable|numeric|min:0|max:9999999',
+            'discounts.*.nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             // Per-slot override flags — when true, kasir explicitly chose to skip
             // auto-derive from customer tipe/kategori. Backend respects this instead
             // of forcing anti-fraud override in buildNotaDiscounts().
@@ -324,10 +327,10 @@ class PosController extends BaseApiController
             'nota_discount_overrides.*' => 'boolean',
             'biaya_kirim' => 'nullable|array',
             'biaya_kirim.tipe' => 'nullable|in:percent,nominal,none',
-            'biaya_kirim.nilai' => 'nullable|numeric|min:0|max:9999999',
+            'biaya_kirim.nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'biaya_lain' => 'nullable|array',
             'biaya_lain.tipe' => 'nullable|in:percent,nominal,none',
-            'biaya_lain.nilai' => 'nullable|numeric|min:0|max:9999999',
+            'biaya_lain.nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'notes' => 'nullable|string',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:master_produk,id',
@@ -335,17 +338,17 @@ class PosController extends BaseApiController
             'items.*.konversi' => 'required|integer|min:1',
             'items.*.qty' => 'required|numeric|min:0.01',
             'items.*.qty_base' => 'required|numeric|min:0.01',
-            'items.*.harga_satuan' => 'required|numeric|min:1|max:9999999999999', // ~10 triliun (batas kolom decimal(15,2))
+            'items.*.harga_satuan' => 'required|numeric|min:1|max:'.self::MONEY_MAX,
             'items.*.diskon_1_tipe' => 'nullable|in:percent,nominal,none',
-            'items.*.diskon_1_nilai' => 'nullable|numeric|min:0|max:9999999',
+            'items.*.diskon_1_nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'items.*.diskon_2_tipe' => 'nullable|in:percent,nominal,none',
-            'items.*.diskon_2_nilai' => 'nullable|numeric|min:0|max:9999999',
+            'items.*.diskon_2_nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'items.*.diskon_3_tipe' => 'nullable|in:percent,nominal,none',
-            'items.*.diskon_3_nilai' => 'nullable|numeric|min:0|max:9999999',
+            'items.*.diskon_3_nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'items.*.diskon_4_tipe' => 'nullable|in:percent,nominal,none',
-            'items.*.diskon_4_nilai' => 'nullable|numeric|min:0|max:9999999',
+            'items.*.diskon_4_nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'items.*.diskon_5_tipe' => 'nullable|in:percent,nominal,none',
-            'items.*.diskon_5_nilai' => 'nullable|numeric|min:0|max:9999999',
+            'items.*.diskon_5_nilai' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'items.*.diskon_total' => 'nullable|numeric|min:0',
             'items.*.jumlah' => 'required|numeric|min:0',
             // When true, skip re-running PromoService for this item — keep whatever
@@ -356,8 +359,8 @@ class PosController extends BaseApiController
             'items.*.serial_unit_ids.*' => 'string',
             'payments' => 'required|array|min:1',
             'payments.*.metode_pembayaran_id' => 'required|exists:master_metode_pembayaran,id',
-            'payments.*.nominal' => 'required|numeric|min:0',
-            'payments.*.biaya_tambahan' => 'nullable|numeric|min:0|max:9999999',
+            'payments.*.nominal' => 'required|numeric|min:0|max:'.self::MONEY_MAX,
+            'payments.*.biaya_tambahan' => 'nullable|numeric|min:0|max:'.self::MONEY_MAX,
             'payments.*.reference' => 'nullable|string|max:100',
         ]);
 

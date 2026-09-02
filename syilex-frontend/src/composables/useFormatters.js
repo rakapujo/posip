@@ -141,6 +141,8 @@ export function useFormatters() {
      * @returns {number}
      */
     const getCurrencyMaxFractionDigits = computed(() => currencySettings.value?.decimalPlaces ?? 0);
+    /** decimal(15,2) integer cap — PrimeVue InputNumber uses :max for maxlength. */
+    const getCurrencyInputMax = computed(() => 9999999999999);
 
     /**
      * Format number with currency symbol for short display (e.g., error messages)
@@ -597,6 +599,7 @@ export function useFormatters() {
         getPercentMaxFractionDigits,
         getCurrencyMinFractionDigits,
         getCurrencyMaxFractionDigits,
+        getCurrencyInputMax,
 
         // Text formatting
         shouldUppercase,
