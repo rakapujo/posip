@@ -52,6 +52,11 @@ const allProductsLoaded = ref(false);
 const currentPage = ref(1);
 const totalPages = ref(1);
 
+const pendingSerialRows = computed(() => form.value.details.filter((d) => d.is_serial && d.serial_unit_ids_present === null));
+const saveBlocked = computed(
+    () => form.value.details.length === 0 || (form.value.mode === 'full' && !allProductsLoaded.value) || pendingSerialRows.value.length > 0
+);
+
 // Refresh stock
 const refreshingStock = ref(false);
 
@@ -82,12 +87,12 @@ function syncExpandedSerial() {
 watch(() => form.value.details.map((d) => `${d._uid}:${d.is_serial ? 1 : 0}`).join('|'), syncExpandedSerial);
 
 // Checklist SN hadir berubah → qty fisik = jumlah hadir; selisih mengikuti
-function onSerialPresentChange(detail, ulids) {
-    const prev = detail.serial_unit_ids_present || [];
-    const same =
-        ulids.length === prev.length &&
-        [...ulids].map(String).sort().join('|') === [...prev].map(String).sort().join('|');
-    if (same && Number(detail.qty_physical) === ulids.length) return;
+function onSerialPresentChange(row, ulids) {
+    const detail = form.value.details.find((d) => d._uid === row._uid) || row;
+    const prev = detail.serial_unit_ids_present;
+    const prevKey = [...(prev || [])].map(String).sort().join('|');
+    const nextKey = [...(ulids || [])].map(String).sort().join('|');
+    if (prev !== null && prev !== undefined && prevKey === nextKey && Number(detail.qty_physical) === ulids.length) return;
 
     detail.serial_unit_ids_present = ulids;
     detail.qty_physical = ulids.length;
@@ -421,6 +426,10 @@ async function loadAllProducts() {
 
     try {
         await loadProductBatch();
+        while (currentPage.value < totalPages.value) {
+            currentPage.value++;
+            await loadProductBatch();
+        }
     } finally {
         loadingAllProducts.value = false;
     }
@@ -454,7 +463,7 @@ async function loadProductBatch() {
                 });
             });
 
-            totalPages.value = pagination.last_page;
+            totalPages.value = pagination?.last_page || 1;
 
             if (currentPage.value >= totalPages.value) {
                 allProductsLoaded.value = true;
@@ -873,7 +882,10 @@ const summary = computed(() => {
                     <Column header="Stok Fisik" style="width: 130px">
                         <template #body="{ data, index }">
                             <div v-if="serialEnabled && data.is_serial">
-                                <Tag :value="`${data.serial_unit_ids_present?.length || 0} hadir`" severity="info" />
+                                <Tag
+                                    :value="data.serial_unit_ids_present === null ? 'SN belum siap' : `${data.serial_unit_ids_present.length} hadir`"
+                                    :severity="data.serial_unit_ids_present === null ? 'warn' : 'info'"
+                                />
                                 <div class="text-xs text-surface-500 mt-1">centang SN ↓</div>
                             </div>
                             <InputNumber
@@ -960,19 +972,16 @@ const summary = computed(() => {
             </div>
 
             <!-- Form Actions -->
+            <Message v-if="saveBlocked && form.details.length > 0" severity="warn" :closable="false" class="mt-4">
+                <span v-if="form.mode === 'full' && !allProductsLoaded" class="text-sm">Mode full: masih memuat produk (halaman {{ currentPage }} / {{ totalPages }}).</span>
+                <span v-else-if="pendingSerialRows.length" class="text-sm">
+                    Checklist serial belum terikat ke form ({{ pendingSerialRows.length }} SKU). Termasuk produk serial tanpa unit tersedia di gudang ini.
+                    Contoh: {{ pendingSerialRows.slice(0, 5).map((d) => d.product?.kode_produk).filter(Boolean).join(', ') }}.
+                </span>
+            </Message>
             <div class="flex flex-wrap justify-end gap-2 mt-6">
                 <Button label="Batal" severity="secondary" outlined @click="cancel" />
-                <Button
-                    label="Simpan"
-                    icon="pi pi-save"
-                    type="submit"
-                    :loading="saving"
-                    :disabled="
-                        form.details.length === 0 ||
-                        (form.mode === 'full' && !allProductsLoaded) ||
-                        (serialEnabled && form.details.some((d) => d.is_serial && d.serial_unit_ids_present === null))
-                    "
-                />
+                <Button label="Simpan" icon="pi pi-save" type="submit" :loading="saving" :disabled="saveBlocked" />
             </div>
         </form>
     </div>

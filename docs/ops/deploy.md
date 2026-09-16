@@ -181,6 +181,12 @@ File: `/etc/cron.d/sipos-backup`
 ### Manual Backup via UI
 Menu **Admin → Backup & Restore** di aplikasi, atau via API `POST /api/v1/backup/download`.
 
+Download ZIP memanggil **`mysqldump` via `proc_open`** (`BackupController`). File ZIP sendiri pakai `ZipArchive` (tidak butuh `proc_open`).
+
+**Hestia PHP-FPM 8.3** mematikan `proc_open` di `/etc/php/8.3/fpm/php.ini`. PHP **tidak bisa** menghidupkan kembali fungsi yang sudah di-disable di php.ini lewat setting per-domain — override pool hanya bisa menambah larangan.
+
+Karena itu `proc_open` dihapus dari php.ini FPM (bukan diaktifkan `exec`/`system`). Template PHP-FPM **`posip`** di-assign ke tiga situs POS (`pos.siapngeweb.com`, `mirzarasa.com`, `applejonstore.com`) — `exec`/`system`/`shell_exec`/`popen` tetap mati. `open_basedir` harus ke `/home/USER/web/DOMAIN` (bukan hanya `public_html/public`) supaya Laravel bisa baca `vendor/` + `storage`. `pos.mirzarasa.com` tidak ikut.
+
 ---
 
 ## Environment Variables Penting

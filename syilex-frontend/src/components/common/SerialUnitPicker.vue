@@ -66,7 +66,9 @@ function applyIdsToSelected(ids) {
 function emitIfChanged(rows) {
     const list = rows || [];
     const ids = list.map((u) => u.ulid);
-    if (idsKey(ids) === idsKey(props.modelValue)) return;
+    // null/undefined parent ≠ [] — jangan anggap sama, atau SKU serial tanpa unit tidak pernah hydrate.
+    const uninit = props.modelValue === null || props.modelValue === undefined;
+    if (!uninit && idsKey(ids) === idsKey(props.modelValue)) return;
     emit('update:modelValue', ids);
     emit('change', list);
 }
@@ -151,10 +153,11 @@ async function load() {
         units.value = res.data?.success ? res.data.data.items : [];
         const uninitialized = props.modelValue === null || props.modelValue === undefined;
         if (props.defaultAll && uninitialized && units.value.length > 0) {
-            onSelectionUpdate([...units.value]);
+            selected.value = [...units.value];
         } else {
             applyIdsToSelected(props.modelValue);
         }
+        if (uninitialized) emitIfChanged(selected.value);
     } catch (e) {
         if (seq !== loadSeq) return;
         notify.apiError(e, 'Gagal memuat unit serial');
