@@ -43,22 +43,27 @@ class UpdateStockOpnameAction
                 }
             }
 
-            // Gudang immutable setelah create (FE sudah disable; tolak bypass API).
-            if (isset($data['warehouse_id']) && (int) $data['warehouse_id'] !== (int) $opname->warehouse_id) {
-                throw ValidationException::withMessages([
-                    'warehouse_id' => ['Gudang stock opname tidak boleh diubah.'],
-                ]);
+            $warehouseId = (int) ($data['warehouse_id'] ?? $opname->warehouse_id);
+            if ($warehouseId !== (int) $opname->warehouse_id) {
+                $existingDraft = DocStockOpname::where('warehouse_id', $warehouseId)
+                    ->where('status', 'draft')
+                    ->where('id', '!=', $opname->id)
+                    ->lockForUpdate()
+                    ->first();
+                if ($existingDraft) {
+                    throw ValidationException::withMessages([
+                        'warehouse_id' => ["Sudah ada draft stock opname untuk warehouse ini: {$existingDraft->nomor_dokumen}. Selesaikan atau hapus draft tersebut terlebih dahulu."],
+                    ]);
+                }
             }
-
-            $warehouseId = (int) $opname->warehouse_id;
 
             // Format notes
             $notes = isset($data['notes'])
                 ? SettingService::formatName($data['notes'])
                 : null;
 
-            // Update header (tanpa ganti warehouse_id)
             $opname->update([
+                'warehouse_id' => $warehouseId,
                 'tanggal_opname' => $data['tanggal_opname'],
                 'mode' => $data['mode'] ?? $opname->mode,
                 'notes' => $notes,

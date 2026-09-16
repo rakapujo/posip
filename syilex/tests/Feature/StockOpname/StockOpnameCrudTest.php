@@ -337,4 +337,35 @@ class StockOpnameCrudTest extends TestCase
         $this->assertSame(45, (int) InventoryStock::where('product_id', $this->product->id)
             ->where('warehouse_id', $this->warehouse->id)->value('qty'));
     }
+
+    #[Test]
+    public function update_draft_boleh_ganti_gudang_jika_tidak_ada_draft_lain()
+    {
+        $otherWh = MasterWarehouse::factory()->create(['status' => 'active']);
+        InventoryStock::updateOrCreate(
+            ['product_id' => $this->product->id, 'warehouse_id' => $otherWh->id],
+            ['qty' => 10, 'avg_cost' => 10000]
+        );
+
+        $opname = $this->createAction->execute($this->baseData(50));
+        $updated = (new \App\Actions\StockOpname\UpdateStockOpnameAction())->execute($opname, $this->baseData(50, [
+            'warehouse_id' => $otherWh->id,
+        ]));
+
+        $this->assertSame($otherWh->id, (int) $updated->warehouse_id);
+        $this->assertSame(10, (int) $updated->details->first()->qty_system);
+    }
+
+    #[Test]
+    public function update_draft_tolak_ganti_gudang_jika_sudah_ada_draft_di_tujuan()
+    {
+        $otherWh = MasterWarehouse::factory()->create(['status' => 'active']);
+        $this->createAction->execute($this->baseData(50, ['warehouse_id' => $otherWh->id]));
+        $opname = $this->createAction->execute($this->baseData(50));
+
+        $this->expectException(ValidationException::class);
+        (new \App\Actions\StockOpname\UpdateStockOpnameAction())->execute($opname, $this->baseData(50, [
+            'warehouse_id' => $otherWh->id,
+        ]));
+    }
 }

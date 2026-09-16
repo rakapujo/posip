@@ -163,6 +163,10 @@ async function loadOpname() {
                     notes: d.notes || ''
                 }))
             };
+            // Draft sudah berisi baris dari server — jangan paksa "Load Lebih Banyak" (itu menumpuk duplikat).
+            allProductsLoaded.value = opname.mode === 'full';
+            currentPage.value = 1;
+            totalPages.value = 1;
         }
     } catch (error) {
         console.error('Failed to load stock opname:', error);
@@ -184,13 +188,19 @@ const existingDraftWarning = ref(null);
 
 // Check for existing draft when warehouse changes
 async function checkExistingDraft(warehouseId) {
-    if (!warehouseId || isEdit.value) return false;
+    if (!warehouseId) return false;
 
     try {
-        const response = await opnamesApi.checkDraft({ warehouse_id: warehouseId });
+        const params = { warehouse_id: warehouseId };
+        if (isEdit.value) params.exclude_ulid = route.params.ulid;
+        const response = await opnamesApi.checkDraft(params);
         if (response.data.success && response.data.data.has_draft) {
             const draft = response.data.data.draft;
             existingDraftWarning.value = draft;
+            if (isEdit.value) {
+                notify.error(`Sudah ada draft stock opname untuk warehouse ini: ${draft.nomor_dokumen}.`);
+                return true;
+            }
 
             confirm.require({
                 message: `Sudah ada draft stock opname untuk warehouse ini: ${draft.nomor_dokumen}. Anda harus menyelesaikan atau menghapus draft tersebut terlebih dahulu.`,
@@ -225,10 +235,12 @@ watch(
         // Skip during initial data loading
         if (isLoadingFormData.value) return;
 
-        // Check for existing draft first (only for new opname)
-        if (newVal && !isEdit.value) {
+        if (newVal) {
             const hasDraft = await checkExistingDraft(newVal);
-            if (hasDraft) return;
+            if (hasDraft) {
+                if (isEdit.value) form.value.warehouse_id = oldVal ?? null;
+                return;
+            }
         }
 
         // If changing warehouse and has details, confirm reset
@@ -448,7 +460,10 @@ async function loadProductBatch() {
             const pagination = response.data.data.pagination;
 
             // Add products to details
+            const existing = new Set(form.value.details.map((d) => String(d.product_id)).filter((id) => id && id !== 'null' && id !== 'undefined'));
             items.forEach((product) => {
+                if (existing.has(String(product.id))) return;
+                existing.add(String(product.id));
                 form.value.details.push({
                     _uid: nextUid(),
                     product_id: product.id,
@@ -516,8 +531,8 @@ function validate() {
     });
 
     // Check for duplicate products
-    const productIds = form.value.details.map((d) => d.product_id).filter(Boolean);
-    const uniqueIds = [...new Set(productIds)];
+    const productIds = form.value.details.map((d) => d.product_id).filter((id) => id != null && id !== '');
+    const uniqueIds = [...new Set(productIds.map((id) => String(id)))];
     if (productIds.length !== uniqueIds.length) {
         errors.value.details = 'Tidak boleh ada produk yang sama dalam satu stock opname';
     }
@@ -722,7 +737,6 @@ const summary = computed(() => {
                         filter
                         class="w-full"
                         :class="{ 'p-invalid': errors.warehouse_id }"
-                        :disabled="isEdit"
                     />
                     <small v-if="errors.warehouse_id" class="text-red-500">{{ errors.warehouse_id }}</small>
                 </div>
@@ -737,7 +751,7 @@ const summary = computed(() => {
                 <!-- Mode -->
                 <div class="flex flex-col gap-2">
                     <label for="mode" class="font-medium">Mode <span class="text-red-500">*</span></label>
-                    <Select id="mode" v-model="form.mode" :options="modeOptions" optionLabel="label" optionValue="value" class="w-full" filter :disabled="isEdit" />
+                    <Select id="mode" v-model="form.mode" :options="modeOptions" optionLabel="label" optionValue="value" class="w-full" filter />
                 </div>
             </div>
 

@@ -526,10 +526,12 @@ class StockOpnameController extends BaseApiController
 
         $request->validate([
             'warehouse_id' => 'required|exists:master_warehouse,id',
+            'exclude_ulid' => 'nullable|string',
         ]);
 
         $existingDraft = DocStockOpname::where('warehouse_id', $request->warehouse_id)
             ->where('status', 'draft')
+            ->when($request->exclude_ulid, fn ($q) => $q->where('ulid', '!=', $request->exclude_ulid))
             ->select('ulid', 'nomor_dokumen', 'created_at')
             ->with('createdBy:id,name')
             ->first();
